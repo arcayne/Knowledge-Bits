@@ -40,6 +40,16 @@ importers:
         specifier: 3.24.1
         version: 3.24.1
 
+  packages/pipeline:
+    dependencies:
+      '@knowledge-bits/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: 24.1.0
+        version: 24.1.0
+
 packages:
 
   '@esbuild/aix-ppc64@0.25.12':
