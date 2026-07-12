@@ -14,6 +14,9 @@ model Run {
   brief           Json
   currentStage    String
   currentRevision Int        @default(1)
+  packageChecksum String?
+  approvedChecksum String?
+  reviewStatus    String     @default("pending")
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
   stages          Stage[]

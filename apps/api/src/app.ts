@@ -4,6 +4,7 @@ import { createEngineAuthConfig, type EngineAuthEnv } from './auth.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerJobRoutes } from './routes/jobs.js';
 import { registerRunRoutes } from './routes/runs.js';
+import { registerReviewRoutes } from './routes/reviews.js';
 import type { WorkflowRepository } from './repositories/workflow-repository.js';
 import { type ArtifactStorageAdapter, UnavailableArtifactStorageAdapter } from './services/artifacts.js';
 
@@ -20,6 +21,7 @@ export function createApp(options: CreateAppOptions): Hono {
     auth: createEngineAuthConfig(options.env ?? (process.env as EngineAuthEnv)),
   };
   registerRunRoutes(app, dependencies);
+  registerReviewRoutes(app, dependencies);
   registerJobRoutes(app, dependencies);
   registerArtifactRoutes(app, {
     ...dependencies,

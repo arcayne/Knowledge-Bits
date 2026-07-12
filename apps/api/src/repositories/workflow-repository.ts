@@ -4,10 +4,12 @@ import { isDeepStrictEqual } from 'node:util';
 import type {
   JobClaim,
   JobResult,
+  ReviewDecision,
+  ReviewStatus,
   StageState,
   WorkflowStage,
 } from '@knowledge-bits/contracts';
-import type { TransitionResult } from '@knowledge-bits/pipeline';
+import { nextTransition, type TransitionResult } from '@knowledge-bits/pipeline';
 import { Prisma, PrismaClient } from '@prisma/client';
 
 type JsonObject = Record<string, unknown>;
@@ -33,6 +35,9 @@ export interface WorkflowRun {
   brief: JsonObject;
   currentStage: WorkflowStage;
   currentRevision: number;
+  packageChecksum: string | null;
+  approvedChecksum: string | null;
+  reviewStatus: ReviewStatus;
   stages: Partial<Record<WorkflowStage, WorkflowStageSnapshot>>;
   nextRetryAt: Date | null;
   createdAt: Date;
@@ -111,6 +116,9 @@ export interface CreateRunInput {
   brief: JsonObject;
   currentStage?: WorkflowStage;
   currentRevision?: number;
+  packageChecksum?: string | null;
+  approvedChecksum?: string | null;
+  reviewStatus?: ReviewStatus;
   stages?: Array<{
     name: WorkflowStage;
     state: StageState;
@@ -206,6 +214,19 @@ export interface RecordReviewInput {
   comment: string | null;
 }
 
+export interface ReviewRunInput {
+  runId: string;
+  packageChecksum: string;
+  decision: ReviewDecision;
+  reviewerId: string;
+  comment?: string;
+}
+
+export interface RecordPackageChangeInput {
+  runId: string;
+  packageChecksum: string;
+}
+
 export interface RecordDeliveryInput {
   id?: string;
   runId: string;
@@ -234,10 +255,13 @@ export interface WorkflowStore {
   recordArtifactForActiveLease(input: RecordArtifactForActiveLeaseInput): Promise<WorkflowArtifact>;
   recordReview(input: RecordReviewInput): Promise<WorkflowReview>;
   recordDelivery(input: RecordDeliveryInput): Promise<WorkflowDelivery>;
+  reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
+  recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
 }
 
 export class WorkflowConflictError extends Error {}
 export class WorkflowValidationError extends Error {}
+export class WorkflowNotFoundError extends Error {}
 
 export class WorkflowRepository implements WorkflowStore {
   constructor(private readonly store: WorkflowStore) {}
@@ -305,6 +329,14 @@ export class WorkflowRepository implements WorkflowStore {
   recordDelivery(input: RecordDeliveryInput): Promise<WorkflowDelivery> {
     return this.store.recordDelivery(input);
   }
+
+  reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
+    return this.store.reviewRun(input);
+  }
+
+  recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun> {
+    return this.store.recordPackageChange(input);
+  }
 }
 
 export function createWorkflowRepository(prisma: PrismaClient): WorkflowRepository {
@@ -332,8 +364,11 @@ export class PrismaWorkflowStore implements WorkflowStore {
         title: input.title,
         locale: input.locale,
         brief: toPrismaJson(input.brief),
-        currentStage,
-        currentRevision: input.currentRevision ?? 1,
+          currentStage,
+          currentRevision: input.currentRevision ?? 1,
+          packageChecksum: input.packageChecksum,
+          approvedChecksum: input.approvedChecksum,
+          reviewStatus: input.reviewStatus ?? 'pending',
         stages: {
           create: stages.map((stage) => ({
             name: stage.name,
@@ -359,6 +394,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
           locale: input.locale,
           brief: toPrismaJson(input.brief),
           currentStage: 'research',
+          reviewStatus: 'pending',
           stages: {
             create: BOOTSTRAP_STAGES.map((name) => ({ name, state: 'queued' })),
           },
@@ -411,8 +447,8 @@ export class PrismaWorkflowStore implements WorkflowStore {
       job: toWorkflowJob(job),
       run,
       stage,
-      packageChecksum: latestPackageChecksum(job.run.jobs),
-      approvedChecksum: null,
+      packageChecksum: job.run.packageChecksum,
+      approvedChecksum: job.run.approvedChecksum,
     };
   }
 
@@ -636,7 +672,13 @@ export class PrismaWorkflowStore implements WorkflowStore {
       });
       await transaction.run.update({
         where: { id: job.runId },
-        data: { currentStage: transition.stage, currentRevision: nextRevision },
+        data: {
+          currentStage: transition.stage,
+          currentRevision: nextRevision,
+          packageChecksum: transition.packageChecksum,
+          approvedChecksum: transition.approvedChecksum,
+          reviewStatus: reviewStatusForTransition(job.run.reviewStatus as ReviewStatus, transition),
+        },
       });
       for (const [index, effect] of transition.effects.entries()) {
         await transaction.workflowEffect.create({
@@ -648,23 +690,23 @@ export class PrismaWorkflowStore implements WorkflowStore {
             payload: toPrismaJson(effect as unknown as JsonObject),
           },
         });
-        if (effect.type === 'queue_stage') {
-          if (effect.stage === 'human_review') {
-            throw new WorkflowConflictError('Human review cannot be queued as a worker job');
-          }
-          await queueTransitionJob(transaction, {
-            runId: job.runId,
-            stage: effect.stage,
-            revision: nextRevision,
-            input: job.run.brief as JsonObject,
-          });
+          if (effect.type === 'queue_stage') {
+            if (effect.stage === 'human_review') {
+              throw new WorkflowConflictError('Human review cannot be queued as a worker job');
+            }
+            await queueTransitionJob(transaction, {
+              runId: job.runId,
+              stage: effect.stage,
+              revision: nextRevision,
+              input: { brief: job.run.brief as JsonObject },
+            });
         }
         if (effect.type === 'queue_delivery') {
           await queueTransitionJob(transaction, {
-            runId: job.runId,
-            stage: 'deliver',
-            revision: nextRevision,
-            input: job.run.brief as JsonObject,
+              runId: job.runId,
+              stage: 'deliver',
+              revision: nextRevision,
+              input: { brief: job.run.brief as JsonObject, packageChecksum: effect.packageChecksum },
           });
         }
         if (effect.type === 'request_review') {
@@ -860,6 +902,153 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
     return toWorkflowDelivery(delivery);
   }
+
+  async reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
+    try {
+      return await this.prisma.$transaction(async (transaction) => {
+        const run = await transaction.run.findUnique({
+          where: { id: input.runId },
+          include: { stages: true },
+        });
+        if (!run) throw new WorkflowNotFoundError('Run not found');
+        if (run.packageChecksum !== input.packageChecksum) {
+          throw new WorkflowConflictError('Review checksum must match the current package checksum');
+        }
+
+        const reviewInput = toRecordReviewInput(run, input);
+        const existing = await transaction.review.findUnique({
+          where: { runId_revision_packageChecksum: reviewIdentityWhere(reviewInput) },
+        });
+        if (existing) {
+          resolveExistingReview(existing, reviewInput);
+          return toWorkflowRun(run);
+        }
+
+        const stage = run.stages.find((candidate) => candidate.name === run.currentStage);
+        if (!stage) throw new WorkflowConflictError('Current stage does not exist');
+        const transition = nextTransition({
+          stage: run.currentStage as WorkflowStage,
+          state: stage.state as StageState,
+          revisionAttempts: stage.revisionAttempt,
+          packageChecksum: run.packageChecksum as `${string}`,
+          approvedChecksum: run.approvedChecksum as `${string}` | null,
+          reason: stage.reason ?? undefined,
+        }, reviewEvent(input));
+        const nextRevision = run.currentRevision + Number(input.decision === 'request_changes');
+        const review = await transaction.review.create({ data: reviewInput });
+
+        if (transition.stage !== run.currentStage) {
+          await transaction.stage.update({
+            where: { runId_name: { runId: run.id, name: run.currentStage } },
+            data: { state: 'done', reason: null },
+          });
+        }
+        await transaction.stage.upsert({
+          where: { runId_name: { runId: run.id, name: transition.stage } },
+          update: { state: transition.state, reason: transition.reason ?? null, revisionAttempt: transition.revisionAttempts },
+          create: {
+            runId: run.id,
+            name: transition.stage,
+            state: transition.state,
+            reason: transition.reason ?? null,
+            revisionAttempt: transition.revisionAttempts,
+          },
+        });
+        await transaction.run.update({
+          where: { id: run.id },
+          data: {
+            currentStage: transition.stage,
+            currentRevision: nextRevision,
+            packageChecksum: transition.packageChecksum,
+            approvedChecksum: transition.approvedChecksum,
+            reviewStatus: input.decision === 'approve' ? 'approved' : 'changes_requested',
+          },
+        });
+        for (const [index, effect] of transition.effects.entries()) {
+          await transaction.workflowEffect.create({
+            data: {
+              runId: run.id,
+              jobId: `review:${review.id}`,
+              effectKey: `review:${review.id}:effect:${index}`,
+              type: effect.type,
+              payload: toPrismaJson(effect as unknown as JsonObject),
+            },
+          });
+          if (effect.type === 'queue_delivery') {
+            await queueTransitionJob(transaction, {
+              runId: run.id,
+              stage: 'deliver',
+              revision: nextRevision,
+              input: { brief: run.brief as JsonObject, packageChecksum: effect.packageChecksum },
+            });
+          }
+          if (effect.type === 'queue_stage') {
+            if (effect.stage === 'human_review') {
+              throw new WorkflowConflictError('Human review cannot be queued as a worker job');
+            }
+            await queueTransitionJob(transaction, {
+              runId: run.id,
+              stage: effect.stage,
+              revision: nextRevision,
+              input: {
+                brief: run.brief as JsonObject,
+                review: { comment: input.comment!, packageChecksum: input.packageChecksum },
+              },
+            });
+          }
+        }
+        const updated = await transaction.run.findUniqueOrThrow({
+          where: { id: run.id },
+          include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+        });
+        return toWorkflowRun(updated);
+      });
+    } catch (error) {
+      if (!isPrismaUniqueConflict(error)) throw error;
+      const run = await this.prisma.run.findUnique({ where: { id: input.runId }, include: { stages: true } });
+      const existing = await this.prisma.review.findFirst({
+        where: { runId: input.runId, packageChecksum: input.packageChecksum },
+        orderBy: { revision: 'desc' },
+      });
+      if (!run || !existing) throw error;
+      resolveExistingReview(existing, { ...toRecordReviewInput(run, input), revision: existing.revision });
+      return toWorkflowRun(run);
+    }
+  }
+
+  async recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun> {
+    return this.prisma.$transaction(async (transaction) => {
+      const run = await transaction.run.findUnique({ where: { id: input.runId }, include: { stages: true } });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      if (run.packageChecksum === input.packageChecksum) return toWorkflowRun(run);
+      const stage = run.stages.find((candidate) => candidate.name === run.currentStage);
+      if (!stage) throw new WorkflowConflictError('Current stage does not exist');
+      const transition = nextTransition({
+        stage: run.currentStage as WorkflowStage,
+        state: stage.state as StageState,
+        revisionAttempts: stage.revisionAttempt,
+        packageChecksum: run.packageChecksum as `${string}` | null,
+        approvedChecksum: run.approvedChecksum as `${string}` | null,
+        reason: stage.reason ?? undefined,
+      }, { type: 'package_changed', packageChecksum: input.packageChecksum as `${string}` });
+      await transaction.stage.upsert({
+        where: { runId_name: { runId: run.id, name: transition.stage } },
+        update: { state: transition.state, reason: transition.reason ?? null, revisionAttempt: transition.revisionAttempts },
+        create: { runId: run.id, name: transition.stage, state: transition.state, reason: transition.reason ?? null, revisionAttempt: transition.revisionAttempts },
+      });
+      const updated = await transaction.run.update({
+        where: { id: run.id },
+        data: {
+          currentStage: transition.stage,
+          packageChecksum: transition.packageChecksum,
+          approvedChecksum: transition.approvedChecksum,
+          reviewStatus: reviewStatusForTransition(run.reviewStatus as ReviewStatus, transition),
+        },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      });
+      return toWorkflowRun(updated);
+    });
+  }
 }
 
 export interface InMemoryWorkflowStoreOptions {
@@ -900,6 +1089,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
       brief: input.brief,
       currentStage: input.currentStage ?? 'research',
       currentRevision: input.currentRevision ?? 1,
+      packageChecksum: input.packageChecksum ?? null,
+      approvedChecksum: input.approvedChecksum ?? null,
+      reviewStatus: input.reviewStatus ?? 'pending',
       stages: toStageMap(stages),
       nextRetryAt: null,
       createdAt: now,
@@ -924,6 +1116,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
       brief: input.brief,
       currentStage: 'research',
       currentRevision: 1,
+      packageChecksum: null,
+      approvedChecksum: null,
+      reviewStatus: 'pending',
       stages: toStageMap(BOOTSTRAP_STAGES.map((name) => ({ name, state: 'queued' }))),
       nextRetryAt: null,
       createdAt: now,
@@ -968,8 +1163,8 @@ class InMemoryWorkflowStore implements WorkflowStore {
       job,
       run: { ...run, nextRetryAt: this.nextRetryAt(run) },
       stage,
-      packageChecksum: latestPackageChecksum([...this.jobs.values()].filter((candidate) => candidate.runId === run.id)),
-      approvedChecksum: null,
+      packageChecksum: run.packageChecksum,
+      approvedChecksum: run.approvedChecksum,
     };
   }
 
@@ -1168,6 +1363,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
     nextStage.revisionAttempts = transition.revisionAttempts;
     run.currentStage = transition.stage;
     run.currentRevision = nextRevision;
+    run.packageChecksum = transition.packageChecksum;
+    run.approvedChecksum = transition.approvedChecksum;
+    run.reviewStatus = reviewStatusForTransition(run.reviewStatus, transition);
     run.updatedAt = completedAt;
 
     for (const [index, effect] of transition.effects.entries()) {
@@ -1327,6 +1525,123 @@ class InMemoryWorkflowStore implements WorkflowStore {
     return delivery;
   }
 
+  async reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
+    const run = this.requireRun(input.runId);
+    if (run.packageChecksum !== input.packageChecksum) {
+      throw new WorkflowConflictError('Review checksum must match the current package checksum');
+    }
+    const reviewInput = toRecordReviewInput(run, input);
+    const identity = reviewIdentity(reviewInput);
+    const existing = this.reviewsByIdentity.get(identity);
+    if (existing) {
+      resolveExistingReview(existing, reviewInput);
+      return { ...run, nextRetryAt: this.nextRetryAt(run) };
+    }
+    const stage = run.stages[run.currentStage];
+    if (!stage) throw new WorkflowConflictError('Current stage does not exist');
+    const transition = nextTransition({
+      stage: run.currentStage,
+      state: stage.state,
+      revisionAttempts: stage.revisionAttempts,
+      packageChecksum: run.packageChecksum as `${string}`,
+      approvedChecksum: run.approvedChecksum as `${string}` | null,
+      reason: stage.reason ?? undefined,
+    }, reviewEvent(input));
+    const review: WorkflowReview = {
+      ...reviewInput,
+      id: this.idGenerator(),
+      createdAt: this.clock(),
+    };
+    this.reviewsByIdentity.set(identity, review);
+    if (transition.stage !== run.currentStage) {
+      stage.state = 'done';
+      stage.reason = null;
+    }
+    const nextStage = run.stages[transition.stage] ?? {
+      name: transition.stage,
+      state: transition.state,
+      reason: null,
+      attempt: 0,
+      revisionAttempts: 0,
+    };
+    run.stages[transition.stage] = nextStage;
+    nextStage.state = transition.state;
+    nextStage.reason = transition.reason ?? null;
+    nextStage.revisionAttempts = transition.revisionAttempts;
+    run.currentStage = transition.stage;
+    run.currentRevision += Number(input.decision === 'request_changes');
+    run.packageChecksum = transition.packageChecksum;
+    run.approvedChecksum = transition.approvedChecksum;
+    run.reviewStatus = input.decision === 'approve' ? 'approved' : 'changes_requested';
+    run.updatedAt = this.clock();
+
+    for (const [index, effect] of transition.effects.entries()) {
+      this.effectsByKey.set(`review:${review.id}:effect:${index}`, {
+        runId: run.id,
+        jobId: `review:${review.id}`,
+        type: effect.type,
+        payload: effect as unknown as JsonObject,
+      });
+      if (effect.type === 'queue_delivery') {
+        await this.queueJob({
+          runId: run.id,
+          stage: 'deliver',
+          action: ACTION_BY_STAGE.deliver,
+          idempotencyKey: transitionJobIdempotencyKey(run.id, 'deliver', run.currentRevision),
+          input: { brief: run.brief, packageChecksum: effect.packageChecksum },
+        });
+      }
+      if (effect.type === 'queue_stage') {
+        if (effect.stage === 'human_review') {
+          throw new WorkflowConflictError('Human review cannot be queued as a worker job');
+        }
+        await this.queueJob({
+          runId: run.id,
+          stage: effect.stage,
+          action: ACTION_BY_STAGE[effect.stage],
+          idempotencyKey: transitionJobIdempotencyKey(run.id, effect.stage, run.currentRevision),
+          input: {
+            brief: run.brief,
+            review: { comment: input.comment!, packageChecksum: input.packageChecksum },
+          },
+        });
+      }
+    }
+    return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
+  async recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun> {
+    const run = this.requireRun(input.runId);
+    if (run.packageChecksum === input.packageChecksum) return { ...run, nextRetryAt: this.nextRetryAt(run) };
+    const stage = run.stages[run.currentStage];
+    if (!stage) throw new WorkflowConflictError('Current stage does not exist');
+    const transition = nextTransition({
+      stage: run.currentStage,
+      state: stage.state,
+      revisionAttempts: stage.revisionAttempts,
+      packageChecksum: run.packageChecksum as `${string}` | null,
+      approvedChecksum: run.approvedChecksum as `${string}` | null,
+      reason: stage.reason ?? undefined,
+    }, { type: 'package_changed', packageChecksum: input.packageChecksum as `${string}` });
+    const nextStage = run.stages[transition.stage] ?? {
+      name: transition.stage,
+      state: transition.state,
+      reason: null,
+      attempt: 0,
+      revisionAttempts: 0,
+    };
+    run.stages[transition.stage] = nextStage;
+    nextStage.state = transition.state;
+    nextStage.reason = transition.reason ?? null;
+    nextStage.revisionAttempts = transition.revisionAttempts;
+    run.currentStage = transition.stage;
+    run.packageChecksum = transition.packageChecksum;
+    run.approvedChecksum = transition.approvedChecksum;
+    run.reviewStatus = reviewStatusForTransition(run.reviewStatus, transition);
+    run.updatedAt = this.clock();
+    return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
   private requireRun(runId: string): WorkflowRun {
     const run = this.runs.get(runId);
     if (!run) throw new Error(`Run does not exist: ${runId}`);
@@ -1379,6 +1694,43 @@ function reviewIdentity(input: RecordReviewInput): string {
   return `${input.runId}:${input.revision}:${input.packageChecksum}`;
 }
 
+function reviewIdentityWhere(input: RecordReviewInput) {
+  return {
+    runId: input.runId,
+    revision: input.revision,
+    packageChecksum: input.packageChecksum,
+  };
+}
+
+function toRecordReviewInput(run: Pick<WorkflowRun, 'id' | 'currentRevision'>, input: ReviewRunInput): RecordReviewInput {
+  if (input.decision === 'request_changes' && !input.comment?.trim()) {
+    throw new WorkflowValidationError('Changes requested require a comment');
+  }
+  if (input.decision === 'approve' && input.comment !== undefined) {
+    throw new WorkflowValidationError('Approval does not accept a comment');
+  }
+  return {
+    runId: run.id,
+    revision: run.currentRevision,
+    packageChecksum: input.packageChecksum,
+    decision: input.decision,
+    reviewerId: input.reviewerId,
+    comment: input.comment?.trim() ?? null,
+  };
+}
+
+function reviewEvent(input: ReviewRunInput) {
+  return input.decision === 'approve'
+    ? { type: 'review_approved' as const, packageChecksum: input.packageChecksum as `${string}`, reviewerId: input.reviewerId }
+    : { type: 'changes_requested' as const, reason: input.comment!.trim(), reviewerId: input.reviewerId };
+}
+
+function reviewStatusForTransition(current: ReviewStatus, transition: TransitionResult): ReviewStatus {
+  if (transition.stage === 'human_review' && transition.state === 'needs_human') return 'pending';
+  if (transition.approvedChecksum !== null) return 'approved';
+  return current;
+}
+
 function initialJobIdempotencyKey(runId: string): string {
   return `workflow:${runId}:research:1`;
 }
@@ -1417,7 +1769,7 @@ async function queueTransitionJob(
       action: ACTION_BY_STAGE[input.stage],
       state: 'queued',
       idempotencyKey: transitionJobIdempotencyKey(input.runId, input.stage, input.revision),
-      input: toPrismaJson({ brief: input.input }),
+      input: toPrismaJson(input.input),
     },
   });
 }
@@ -1441,15 +1793,6 @@ function toStageMap(
   }])) as Partial<Record<WorkflowStage, WorkflowStageSnapshot>>;
 }
 
-function latestPackageChecksum(jobs: Array<{ result: unknown }>): string | null {
-  for (const job of jobs) {
-    if (isJsonObject(job.result) && typeof job.result.outputChecksum === 'string') {
-      return job.result.outputChecksum;
-    }
-  }
-  return null;
-}
-
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1465,6 +1808,9 @@ function toWorkflowRun(run: {
   brief: Prisma.JsonValue;
   currentStage: string;
   currentRevision: number;
+  packageChecksum: string | null;
+  approvedChecksum: string | null;
+  reviewStatus: string;
   stages?: Array<{
     name: string;
     state: string;
@@ -1482,6 +1828,7 @@ function toWorkflowRun(run: {
     ...base,
     brief: base.brief as JsonObject,
     currentStage: base.currentStage as WorkflowStage,
+    reviewStatus: base.reviewStatus as ReviewStatus,
     stages,
     nextRetryAt: stages[base.currentStage as WorkflowStage]?.state === 'waiting'
       ? jobs?.[0]?.availableAt ?? null

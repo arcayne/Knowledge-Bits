@@ -1,0 +1,18 @@
+---
+const runId = Astro.url.searchParams.get('runId');
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Bits review</title>
+  </head>
+  <body>
+    <main>
+      <h1>Knowledge Bits review</h1>
+      {runId ? <a href={`/runs/${encodeURIComponent(runId)}`}>Open review</a> : <p>Open a review from its run link.</p>}
+    </main>
+  </body>
+</html>

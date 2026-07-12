@@ -1,0 +1,154 @@
+---
+const { runId } = Astro.params;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Content review</title>
+    <style>
+      :root { color: #15211e; background: #f5f7f5; font-family: Arial, sans-serif; }
+      body { margin: 0; padding-bottom: 9rem; }
+      main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem; }
+      header { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; border-bottom: 1px solid #b9c6c0; padding-bottom: 1rem; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1 { font-size: 1.45rem; }
+      h2 { font-size: 1rem; margin-bottom: .75rem; }
+      .status { color: #46625b; font-size: .875rem; }
+      .review-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(260px, .8fr); gap: 1.25rem; margin-top: 1.25rem; }
+      .review-section { border-top: 2px solid #3b665a; padding-top: .75rem; margin-bottom: 1.25rem; }
+      .review-section ul { padding-left: 1.15rem; }
+      .muted { color: #596a64; }
+      .asset { border: 1px solid #b9c6c0; min-height: 6rem; padding: .75rem; margin-bottom: .75rem; background: #fff; }
+      .decision-bar { position: fixed; inset: auto 0 0; background: #10251f; color: #fff; border-top: 1px solid #0b1a16; padding: .75rem 1.25rem; }
+      .decision-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+      button { border: 1px solid transparent; padding: .55rem .8rem; font: inherit; cursor: pointer; }
+      button[data-decision="approve"] { background: #c8ee78; color: #142119; }
+      button[data-decision="request_changes"] { background: transparent; color: #fff; border-color: #c5d2cd; }
+      #change-form { display: none; flex: 1 1 100%; gap: .5rem; align-items: end; }
+      #change-form[data-open="true"] { display: flex; }
+      textarea { flex: 1; min-height: 3.5rem; font: inherit; }
+      #error { color: #9b2424; }
+      @media (max-width: 720px) { .review-grid { grid-template-columns: 1fr; } header { display: block; } }
+    </style>
+  </head>
+  <body>
+    <main data-run-id={runId}>
+      <header>
+        <div><h1 id="title">Content review</h1><p class="status" id="status">Loading review data...</p></div>
+        <p class="status" id="checksum">Checksum unavailable</p>
+      </header>
+      <p id="error" role="alert" hidden></p>
+      <div class="review-grid" id="review" hidden>
+        <section>
+          <section class="review-section"><h2>Learner preview</h2><h3 id="preview-title">Missing learner preview</h3><p id="preview-copy" class="muted">The package does not include preview copy.</p></section>
+          <section class="review-section"><h2>Evidence</h2><p class="muted">Loading evidence...</p><ul id="evidence"><li>Missing source and citation details.</li></ul></section>
+          <section class="review-section"><h2>QA</h2><p id="qa" class="muted">Loading QA status...</p></section>
+        </section>
+        <aside aria-label="Generated assets">
+          <section class="review-section"><h2>Hero</h2><div class="asset" id="hero">Missing hero preview.</div></section>
+          <section class="review-section"><h2>Infographic</h2><div class="asset" id="infographic">Missing infographic preview.</div></section>
+          <section class="review-section"><h2>Audio</h2><div class="asset" id="audio">Missing audio preview.</div></section>
+        </aside>
+      </div>
+    </main>
+    <footer class="decision-bar" aria-label="Overall review decision">
+      <div class="decision-inner">
+        <span id="decision-status">One overall package decision</span>
+        <button type="button" data-decision="approve">Approve</button>
+        <button type="button" data-decision="request_changes">Request changes</button>
+        <form id="change-form">
+          <label for="comment">Required comment</label>
+          <textarea id="comment" name="comment" required></textarea>
+          <button type="submit">Send changes</button>
+        </form>
+      </div>
+    </footer>
+    <script>
+      type Stage = { reason?: string | null };
+      type ReviewRun = {
+        title: string;
+        brief: Record<string, unknown>;
+        currentStage: string;
+        reviewStatus: string;
+        packageChecksum: string | null;
+        stages: { check?: Stage };
+      };
+      type ReviewPayload = { run?: ReviewRun; error?: string };
+      type DecisionPayload = { reviewStatus?: string; error?: string };
+
+      function required<T extends Element>(selector: string): T {
+        const element = document.querySelector<T>(selector);
+        if (!element) throw new Error(`Review page is missing ${selector}`);
+        return element;
+      }
+
+      const root = required<HTMLElement>('main[data-run-id]');
+      const runId = root.dataset.runId;
+      const status = required<HTMLElement>('#status');
+      const error = required<HTMLElement>('#error');
+      const changeForm = required<HTMLFormElement>('#change-form');
+      const commentField = required<HTMLTextAreaElement>('#comment');
+      const decisionStatus = required<HTMLElement>('#decision-status');
+      let run: ReviewRun | undefined;
+
+      const showError = (message: string) => {
+        error.textContent = message;
+        error.hidden = false;
+      };
+
+      const load = async () => {
+        try {
+          if (!runId) throw new Error('A run id is required.');
+          const response = await fetch(`/api/review?runId=${encodeURIComponent(runId)}`);
+          const payload = await response.json() as ReviewPayload;
+          if (!response.ok) throw new Error(payload.error || 'Could not load the review.');
+          if (!payload.run) throw new Error('The review service returned no run data.');
+          run = payload.run;
+          required<HTMLElement>('#title').textContent = run.title;
+          required<HTMLElement>('#status').textContent = `${run.currentStage.replace('_', ' ')}: ${run.reviewStatus}`;
+          required<HTMLElement>('#checksum').textContent = run.packageChecksum || 'Package checksum missing';
+          required<HTMLElement>('#preview-title').textContent = run.title;
+          required<HTMLElement>('#preview-copy').textContent = typeof run.brief.objective === 'string'
+            ? run.brief.objective
+            : 'The package does not include preview copy.';
+          required<HTMLElement>('#qa').textContent = run.stages.check?.reason || 'No QA findings were recorded.';
+          required<HTMLElement>('#review').hidden = false;
+        } catch (loadError) {
+          status.textContent = 'Review data unavailable';
+          showError(loadError instanceof Error ? loadError.message : 'Could not load the review.');
+        }
+      };
+
+      const submit = async (decision: 'approve' | 'request_changes', comment?: string) => {
+        if (!run?.packageChecksum) return showError('A current package checksum is required.');
+        if (!runId) return showError('A run id is required.');
+        const response = await fetch('/api/review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runId, decision, packageChecksum: run.packageChecksum, ...(comment ? { comment } : {}) }),
+        });
+        const payload = await response.json() as DecisionPayload;
+        if (!response.ok) return showError(payload.error || 'Could not record the review decision.');
+        decisionStatus.textContent = `Recorded: ${payload.reviewStatus}`;
+        changeForm.dataset.open = 'false';
+        await load();
+      };
+
+      required<HTMLButtonElement>('[data-decision="approve"]').addEventListener('click', () => void submit('approve'));
+      required<HTMLButtonElement>('[data-decision="request_changes"]').addEventListener('click', () => {
+        changeForm.dataset.open = 'true';
+        commentField.focus();
+      });
+      changeForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const comment = new FormData(changeForm).get('comment');
+        if (typeof comment !== 'string' || !comment.trim()) return showError('A comment is required to request changes.');
+        void submit('request_changes', comment.trim());
+      });
+      void load();
+    </script>
+  </body>
+</html>

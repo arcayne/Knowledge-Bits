@@ -40,6 +40,9 @@ export function registerRunRoutes(
 function toRunResponse(run: WorkflowRun) {
   return {
     ...run,
+    packageChecksum: run.packageChecksum,
+    approvedChecksum: run.approvedChecksum,
+    reviewStatus: run.reviewStatus,
     nextRetryAt: run.nextRetryAt?.toISOString() ?? null,
     createdAt: run.createdAt.toISOString(),
     updatedAt: run.updatedAt.toISOString(),

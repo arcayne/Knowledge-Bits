@@ -324,6 +324,29 @@ test(
     assert.equal(reviewed.stages.human_review?.state, 'needs_human');
     assert.equal(await prisma.workflowEffect.count({ where: { runId, type: 'request_review' } }), 1);
 
+    const approved = await repository.reviewRun({
+      runId,
+      packageChecksum: checksum,
+      decision: 'approve',
+      reviewerId: 'database-editor',
+    });
+    assert.equal(approved.currentStage, 'deliver');
+    assert.equal(approved.reviewStatus, 'approved');
+    assert.equal(approved.approvedChecksum, checksum);
+    await repository.reviewRun({
+      runId,
+      packageChecksum: checksum,
+      decision: 'approve',
+      reviewerId: 'database-editor',
+    });
+    assert.equal(await prisma.review.count({ where: { runId, revision: 1, packageChecksum: checksum } }), 1);
+    assert.equal(await prisma.job.count({ where: { runId, stage: 'deliver', state: 'queued' } }), 1);
+
+    const invalidated = await repository.recordPackageChange({ runId, packageChecksum: 'b'.repeat(64) });
+    assert.equal(invalidated.currentStage, 'human_review');
+    assert.equal(invalidated.reviewStatus, 'pending');
+    assert.equal(invalidated.approvedChecksum, null);
+
     const retryRunId = 'c0a8012e-7b5d-4e73-95e3-4873b519b38c';
     await repository.createRun({
       id: retryRunId,
