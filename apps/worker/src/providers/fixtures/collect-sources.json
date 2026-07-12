@@ -1,0 +1,9 @@
+{
+  "claims": [
+    {
+      "statement": "A short reset can make it easier to return to one task.",
+      "source": "https://example.test/attention-reset"
+    }
+  ],
+  "schemaVersion": "fixture.research.v1"
+}

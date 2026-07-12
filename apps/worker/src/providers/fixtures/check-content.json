@@ -1,0 +1,9 @@
+{
+  "checks": [
+    {
+      "name": "citation-coverage",
+      "status": "passed"
+    }
+  ],
+  "schemaVersion": "fixture.check.v1"
+}

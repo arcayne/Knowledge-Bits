@@ -35,6 +35,23 @@ export function registerJobRoutes(
     return context.json(claim);
   });
 
+  app.post('/jobs/:id/heartbeat', async (context) => {
+    const principal = requireWorkerPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    try {
+      await dependencies.repository.renewJobLease({
+        jobId: context.req.param('id'),
+        workerId: principal.workerId,
+      });
+      return new Response(null, { status: 204 });
+    } catch (error) {
+      if (error instanceof WorkflowConflictError) {
+        return context.json({ error: error.message }, 409);
+      }
+      throw error;
+    }
+  });
+
   app.post('/jobs/:id/result', async (context) => {
     const principal = requireWorkerPrincipal(context, dependencies.auth);
     if (principal instanceof Response) return principal;

@@ -100,6 +100,30 @@ test('derives worker identity and capabilities from the worker credential', asyn
   assert.equal(impersonatedResult.status, 400);
 });
 
+test('renews only the current worker lease through the heartbeat endpoint', async () => {
+  const app = createPrincipalBoundTestApp();
+  await createRun(app);
+  const claimResponse = await app.request('/jobs/claim', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer research-worker-token' },
+    body: JSON.stringify({ leaseSeconds: 120 }),
+  });
+  assert.equal(claimResponse.status, 200);
+  const claim = await claimResponse.json() as { jobId: string };
+
+  const renewed = await app.request(`/jobs/${claim.jobId}/heartbeat`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer research-worker-token' },
+  });
+  assert.equal(renewed.status, 204);
+
+  const rejected = await app.request(`/jobs/${claim.jobId}/heartbeat`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer asset-worker-token' },
+  });
+  assert.equal(rejected.status, 409);
+});
+
 test('replays an identical completed result and rejects a conflicting retry', async () => {
   const app = createPrincipalBoundTestApp();
   await createRun(app);

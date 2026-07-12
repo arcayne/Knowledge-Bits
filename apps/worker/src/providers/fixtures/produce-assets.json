@@ -1,0 +1,10 @@
+{
+  "assets": [
+    {
+      "alt": "A single task written on a note",
+      "kind": "infographic",
+      "mediaType": "image/webp"
+    }
+  ],
+  "schemaVersion": "fixture.assets.v1"
+}

@@ -147,6 +147,22 @@ test(
     `;
     assert.equal(constraints[0]?.conname, 'Job_leaseOwner_nonempty');
 
+    const leaseBeforeHeartbeat = await prisma.job.findUniqueOrThrow({
+      where: { id: claim!.jobId },
+      select: { leaseExpiresAt: true },
+    });
+    await delay(10);
+    await repository.renewJobLease({ jobId: claim!.jobId, workerId: claim!.claimedBy });
+    const leaseAfterHeartbeat = await prisma.job.findUniqueOrThrow({
+      where: { id: claim!.jobId },
+      select: { leaseExpiresAt: true },
+    });
+    assert.ok(leaseAfterHeartbeat.leaseExpiresAt! > leaseBeforeHeartbeat.leaseExpiresAt!);
+    await assert.rejects(
+      repository.renewJobLease({ jobId: claim!.jobId, workerId: 'worker-not-owner' }),
+      WorkflowConflictError,
+    );
+
     await prisma.$executeRaw`
       UPDATE "Job"
       SET "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second'

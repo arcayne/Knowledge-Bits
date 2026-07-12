@@ -121,6 +121,23 @@ test('claimJob leases one eligible job once', async () => {
   assert.equal(second, null);
 });
 
+test('renewJobLease extends the active lease by its original duration', async () => {
+  const { repository, setNow } = createRepository();
+  await createRun(repository);
+  const queuedJob = await queueJob(repository);
+  await repository.claimJob({ workerId: 'worker-a', leaseSeconds: 90 });
+
+  setNow(new Date('2026-07-12T12:00:30.000Z'));
+  await repository.renewJobLease({ jobId: queuedJob.id, workerId: 'worker-a' });
+
+  const context = await repository.getJobContext(queuedJob.id);
+  assert.equal(context?.job.leaseExpiresAt?.toISOString(), '2026-07-12T12:02:00.000Z');
+  await assert.rejects(
+    repository.renewJobLease({ jobId: queuedJob.id, workerId: 'worker-b' }),
+    /lease/i,
+  );
+});
+
 test('claimJob filters actions by worker capability', async () => {
   const { repository } = createRepository();
   await createRun(repository);

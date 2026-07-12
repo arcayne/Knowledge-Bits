@@ -135,6 +135,11 @@ export interface ClaimJobInput {
   now?: Date;
 }
 
+export interface RenewJobLeaseInput {
+  jobId: string;
+  workerId: string;
+}
+
 export interface CompleteJobInput {
   workerId: string;
   result: JobResult;
@@ -217,6 +222,7 @@ export interface WorkflowStore {
   getJobContext(jobId: string): Promise<WorkflowJobContext | null>;
   queueJob(input: QueueJobInput): Promise<WorkflowJob>;
   claimJob(input: ClaimJobInput): Promise<JobClaim | null>;
+  renewJobLease(input: RenewJobLeaseInput): Promise<void>;
   hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean>;
   hasActiveArtifactLease(input: HasActiveArtifactLeaseInput): Promise<boolean>;
   completeJob(input: CompleteJobInput): Promise<JobResult>;
@@ -256,6 +262,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
     return this.store.claimJob(input);
+  }
+
+  renewJobLease(input: RenewJobLeaseInput): Promise<void> {
+    return this.store.renewJobLease(input);
   }
 
   hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean> {
@@ -471,6 +481,23 @@ export class PrismaWorkflowStore implements WorkflowStore {
         attempt: row.attempt,
       };
     });
+  }
+
+  async renewJobLease(input: RenewJobLeaseInput): Promise<void> {
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      UPDATE "Job"
+      SET "leaseExpiresAt" = CURRENT_TIMESTAMP + ("Job"."leaseExpiresAt" - "Job"."updatedAt"),
+          "updatedAt" = CURRENT_TIMESTAMP
+      FROM "Run"
+      WHERE "Job"."id" = ${input.jobId}
+        AND "Job"."runId" = "Run"."id"
+        AND "Job"."state" = 'running'
+        AND "Job"."leaseOwner" = ${input.workerId}
+        AND "Job"."leaseExpiresAt" > CURRENT_TIMESTAMP
+        AND "Run"."currentStage" = "Job"."stage"
+      RETURNING "Job"."id"
+    `);
+    if (!rows[0]) throw new WorkflowConflictError('Job lease is no longer valid');
   }
 
   async completeJob(input: CompleteJobInput): Promise<JobResult> {
@@ -987,6 +1014,28 @@ class InMemoryWorkflowStore implements WorkflowStore {
       leaseExpiresAt: job.leaseExpiresAt.toISOString(),
       attempt: job.attempt,
     };
+  }
+
+  async renewJobLease(input: RenewJobLeaseInput): Promise<void> {
+    const job = this.jobs.get(input.jobId);
+    const now = this.clock();
+    const run = job ? this.runs.get(job.runId) : undefined;
+    if (
+      !job
+      || !run
+      || job.state !== 'running'
+      || job.leaseOwner !== input.workerId
+      || !job.leaseExpiresAt
+      || job.leaseExpiresAt <= now
+      || run.currentStage !== job.stage
+    ) {
+      throw new WorkflowConflictError('Job lease is no longer valid');
+    }
+
+    const leaseDuration = job.leaseExpiresAt.getTime() - job.updatedAt.getTime();
+    if (leaseDuration <= 0) throw new WorkflowConflictError('Job lease is no longer valid');
+    job.leaseExpiresAt = new Date(now.getTime() + leaseDuration);
+    job.updatedAt = now;
   }
 
   async completeJob(input: CompleteJobInput): Promise<JobResult> {
