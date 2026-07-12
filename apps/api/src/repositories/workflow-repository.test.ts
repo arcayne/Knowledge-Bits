@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { JobResult } from '@knowledge-bits/contracts';
+import { nextTransition } from '@knowledge-bits/pipeline';
 
 import {
   createInMemoryWorkflowStore,
@@ -66,6 +67,29 @@ test('creates and retrieves a workflow run', async () => {
   assert.equal(await repository.getRun('missing'), null);
 });
 
+test('bootstraps all workflow stages and the initial research job atomically', async () => {
+  const { repository } = createRepository();
+  const run = await repository.bootstrapRun({
+    id: runId,
+    title: 'Build a rainy day fund',
+    locale: 'en',
+    brief: { lessonSlug: 'build-a-rainy-day-fund' },
+  });
+
+  assert.equal(run.currentStage, 'research');
+  assert.deepEqual(Object.keys(run.stages), [
+    'research', 'create', 'check', 'produce_assets', 'human_review', 'deliver',
+  ]);
+  assert.equal(run.stages.research?.state, 'queued');
+
+  const claim = await repository.claimJob({
+    workerId: 'research-worker',
+    capabilities: ['collect_sources'],
+    leaseSeconds: 60,
+  });
+  assert.equal(claim?.stage, 'research');
+});
+
 test('claimJob leases one eligible job once', async () => {
   const { repository } = createRepository();
   await createRun(repository);
@@ -76,6 +100,23 @@ test('claimJob leases one eligible job once', async () => {
 
   assert.equal(first?.jobId, queuedJob.id);
   assert.equal(second, null);
+});
+
+test('claimJob filters actions by worker capability', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  await queueJob(repository);
+
+  assert.equal(await repository.claimJob({
+    workerId: 'asset-worker',
+    capabilities: ['produce_assets'],
+    leaseSeconds: 120,
+  }), null);
+  assert.equal((await repository.claimJob({
+    workerId: 'research-worker',
+    capabilities: ['collect_sources'],
+    leaseSeconds: 120,
+  }))?.stage, 'research');
 });
 
 test('claimJob rejects a blank worker id before creating a lease', async () => {
@@ -143,6 +184,48 @@ test('completeJob uses the repository clock instead of the worker completion tim
     await repository.completeJob({ workerId: 'worker-a', result }),
     result,
   );
+});
+
+test('applies a persisted transition and queues its declarative next-stage effect', async () => {
+  const { repository, now } = createRepository();
+  await repository.bootstrapRun({
+    id: runId,
+    title: 'Build a rainy day fund',
+    locale: 'en',
+    brief: { lessonSlug: 'build-a-rainy-day-fund' },
+  });
+  const claim = await repository.claimJob({
+    workerId: 'research-worker',
+    capabilities: ['collect_sources'],
+    leaseSeconds: 60,
+  });
+  assert.ok(claim);
+
+  const transition = nextTransition({
+    stage: 'research',
+    state: 'running',
+    revisionAttempts: 0,
+    packageChecksum: null,
+    approvedChecksum: null,
+  }, {
+    type: 'stage_completed',
+    packageChecksum: checksum,
+  });
+  const run = await repository.applyJobResult({
+    workerId: 'research-worker',
+    result: completedResult(claim.jobId, now),
+    transition,
+  });
+
+  assert.equal(run.currentStage, 'create');
+  assert.equal(run.stages.research?.state, 'done');
+  assert.equal(run.stages.create?.state, 'queued');
+  const createClaim = await repository.claimJob({
+    workerId: 'create-worker',
+    capabilities: ['create_content'],
+    leaseSeconds: 60,
+  });
+  assert.equal(createClaim?.stage, 'create');
 });
 
 test('recordArtifact rejects a duplicate storage key', async () => {

@@ -17,12 +17,24 @@ importers:
 
   apps/api:
     dependencies:
+      '@hono/node-server':
+        specifier: 2.0.8
+        version: 2.0.8(hono@4.12.29)
       '@knowledge-bits/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@knowledge-bits/pipeline':
+        specifier: workspace:*
+        version: link:../../packages/pipeline
       '@prisma/client':
         specifier: 6.15.0
         version: 6.15.0(prisma@6.15.0(typescript@6.0.3))(typescript@6.0.3)
+      hono:
+        specifier: 4.12.29
+        version: 4.12.29
+      zod:
+        specifier: 3.24.1
+        version: 3.24.1
     devDependencies:
       '@types/node':
         specifier: 24.1.0
@@ -208,6 +220,12 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@hono/node-server@2.0.8':
+    resolution: {integrity: sha512-GuCWzLxwg218fy1JaHculFsdcuY12hxit83V+algozTPnwhNjLrRL/Alg9OYjLZLoUZ1rw/S4CdTMsnkSKCmFA==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: ^4
+
   '@prisma/client@6.15.0':
     resolution: {integrity: sha512-wR2LXUbOH4cL/WToatI/Y2c7uzni76oNFND7+23ypLllBmIS8e3ZHhO+nud9iXSXKFt1SoM3fTZvHawg63emZw==}
     engines: {node: '>=18.18'}
@@ -343,6 +361,10 @@ packages:
   giget@2.0.0:
     resolution: {integrity: sha512-L5bGsVkxJbJgdnwyuheIunkGatUF/zssUoxxjACCseZYAVbaqdh9Tsmmlkl8vYan09H7sbvKt4pS8GqKLBrEzA==}
     hasBin: true
+
+  hono@4.12.29:
+    resolution: {integrity: sha512-1hNiRjawYrLq/4m3DQQjPGFg0VZkk4RjQJDff/excI6Dm9BiL75qxGrd7/c6YOxPdq6AscP3LiXhQ6fKFC1Waw==}
+    engines: {node: '>=16.9.0'}
 
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
@@ -494,6 +516,10 @@ snapshots:
 
   '@esbuild/win32-x64@0.25.12':
     optional: true
+
+  '@hono/node-server@2.0.8(hono@4.12.29)':
+    dependencies:
+      hono: 4.12.29
 
   '@prisma/client@6.15.0(prisma@6.15.0(typescript@6.0.3))(typescript@6.0.3)':
     optionalDependencies:
@@ -648,6 +674,8 @@ snapshots:
       node-fetch-native: 1.6.7
       nypm: 0.6.8
       pathe: 2.0.3
+
+  hono@4.12.29: {}
 
   jiti@2.7.0: {}
 
