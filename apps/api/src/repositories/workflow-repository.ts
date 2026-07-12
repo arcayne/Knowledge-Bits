@@ -545,8 +545,16 @@ export class PrismaWorkflowStore implements WorkflowStore {
       where: {
         id: input.jobId,
         runId: input.runId,
-        stage: 'produce_assets',
-        action: 'produce_assets',
+        OR: [
+          { stage: 'produce_assets', action: 'produce_assets' },
+          ...(AUDIT_ARTIFACT_KINDS.has(input.kind) ? [
+            { stage: 'research', action: 'collect_sources' },
+            { stage: 'create', action: 'create_content' },
+            { stage: 'check', action: 'check_content' },
+            { stage: 'produce_assets', action: 'produce_assets' },
+            { stage: 'deliver', action: 'deliver_package' },
+          ] : []),
+        ],
         state: 'running',
         leaseOwner: input.workerId,
         leaseExpiresAt: { gt: input.now ?? new Date() },

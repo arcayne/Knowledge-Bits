@@ -129,6 +129,44 @@ test(
       WHERE "id" = ${artifactJob.id}
     `;
 
+    const auditRunId = '62c83c04-2c87-45fc-b3ef-95ed47c80aa5';
+    await repository.createRun({
+      id: auditRunId,
+      title: 'Database audit artifact authorization',
+      locale: 'en',
+      brief: { source: 'audit-artifact-test' },
+      currentStage: 'deliver',
+      currentRevision: 2,
+      stages: [{ name: 'deliver', state: 'queued' }],
+    });
+    const auditJob = await repository.queueJob({
+      runId: auditRunId,
+      stage: 'deliver',
+      action: 'deliver_package',
+      idempotencyKey: 'integration-audit-artifact-job',
+      input: { packageChecksum: checksum },
+    });
+    const auditClaim = await repository.claimJob({
+      workerId: 'audit-worker',
+      capabilities: ['deliver_package'],
+      leaseSeconds: 120,
+    });
+    assert.equal(auditClaim?.jobId, auditJob.id);
+    assert.equal(await repository.hasActiveArtifactLease({
+      workerId: 'audit-worker',
+      jobId: auditJob.id,
+      runId: auditRunId,
+      revision: 2,
+      kind: 'raw_response',
+    }), true);
+    assert.equal(await repository.hasActiveArtifactLease({
+      workerId: 'audit-worker',
+      jobId: auditJob.id,
+      runId: auditRunId,
+      revision: 2,
+      kind: 'evidence',
+    }), false);
+
     const claims = await Promise.all([
       repository.claimJob({ workerId: 'worker-a', leaseSeconds: 120 }),
       repository.claimJob({ workerId: 'worker-b', leaseSeconds: 120 }),
