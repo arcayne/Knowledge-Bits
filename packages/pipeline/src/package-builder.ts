@@ -87,6 +87,10 @@ function canonicalJson(value: unknown): string {
       throw new TypeError(`Canonical JSON rejects ${typeof value} values`);
     case 'object':
       if (Array.isArray(value)) {
+        if (Object.getPrototypeOf(value) !== Array.prototype) {
+          throw new TypeError('Canonical JSON accepts only plain arrays');
+        }
+
         const items = Array.from({ length: value.length }, (_, index) => {
           if (!Object.hasOwn(value, index)) {
             throw new TypeError('Canonical JSON rejects sparse arrays');

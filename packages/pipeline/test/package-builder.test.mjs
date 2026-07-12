@@ -132,6 +132,15 @@ test('rejects Date instances in checksum material', () => {
   );
 });
 
+test('rejects Array subclasses in checksum material', () => {
+  class UsageRights extends Array {}
+
+  assert.throws(
+    () => calculatePackageChecksum(input({ usageRights: new UsageRights('restricted') })),
+    /plain arrays/i,
+  );
+});
+
 test('builds a contract-valid unapproved package', () => {
   const result = buildKnowledgeBits(input());
 
