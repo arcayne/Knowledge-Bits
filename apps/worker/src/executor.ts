@@ -149,7 +149,7 @@ export class WorkerExecutor {
     const parsedBytes = canonicalJsonBytes(execution.parsedOutput);
     const parsedChecksum = checksum(parsedBytes);
     const artifacts = [
-      { kind: 'raw_response', body: execution.rawResponse, inputChecksum: null },
+      { kind: 'raw_response', body: execution.rawResponse, inputChecksum: execution.inputChecksum ?? null },
       { kind: 'parsed_output', body: parsedBytes, inputChecksum: rawChecksum },
       { kind: 'execution_report', body: reportBytes, inputChecksum: parsedChecksum },
     ] as const;

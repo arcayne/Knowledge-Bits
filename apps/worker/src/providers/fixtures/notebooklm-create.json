@@ -1,0 +1,24 @@
+{
+  "conversationId": "conversation_fixture_02",
+  "answer": {
+    "action": "Write one next task on paper and work on it for five minutes.",
+    "claims": [
+      {
+        "statement": "A concrete next step reduces the effort of returning to work.",
+        "citations": [
+          {
+            "sourceId": "11111111-1111-4111-8111-111111111111",
+            "excerpt": "A defined next action lowers restart friction."
+          }
+        ]
+      }
+    ],
+    "depths": {
+      "core": "Choose the task that matters now, then define the next visible step.",
+      "deep": "Restart friction often comes from having to decide what to do again. A written next step removes that decision.",
+      "quick": "Name the next step before you switch tasks."
+    },
+    "takeaway": "A written next step makes returning easier.",
+    "title": "Return to one task"
+  }
+}

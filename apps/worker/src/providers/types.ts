@@ -24,6 +24,7 @@ export type ProviderExecution =
     rawResponse: Uint8Array;
     parsedOutput: unknown;
     executionReport: unknown;
+    inputChecksum?: string;
   }
   | {
     kind: 'waiting';
