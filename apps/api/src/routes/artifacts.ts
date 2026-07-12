@@ -12,6 +12,8 @@ import {
   ArtifactLeaseError,
   ArtifactMetadataMismatchError,
   ArtifactService,
+  ArtifactStorageObjectNotFoundError,
+  ArtifactStorageOperationError,
   ArtifactStorageUnavailableError,
   type ArtifactStorageAdapter,
 } from '../services/artifacts.js';
@@ -64,7 +66,10 @@ function artifactErrorResponse(context: Context, error: unknown) {
   if (error instanceof ArtifactMetadataMismatchError) {
     return context.json({ error: error.message }, 422);
   }
-  if (error instanceof ArtifactStorageUnavailableError) {
+  if (error instanceof ArtifactStorageObjectNotFoundError) {
+    return context.json({ error: error.message }, 404);
+  }
+  if (error instanceof ArtifactStorageOperationError || error instanceof ArtifactStorageUnavailableError) {
     return context.json({ error: error.message }, 503);
   }
   throw error;

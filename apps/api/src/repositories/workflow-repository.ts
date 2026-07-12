@@ -147,6 +147,10 @@ export interface HasActiveJobLeaseInput {
   now?: Date;
 }
 
+export interface HasActiveArtifactLeaseInput extends HasActiveJobLeaseInput {
+  revision: number;
+}
+
 export interface BootstrapRunInput {
   id?: string;
   title: string;
@@ -180,6 +184,11 @@ export interface RecordArtifactInput {
   inputChecksum: string | null;
 }
 
+export interface RecordArtifactForActiveLeaseInput extends RecordArtifactInput {
+  jobId: string;
+  workerId: string;
+}
+
 export interface RecordReviewInput {
   id?: string;
   runId: string;
@@ -209,10 +218,12 @@ export interface WorkflowStore {
   queueJob(input: QueueJobInput): Promise<WorkflowJob>;
   claimJob(input: ClaimJobInput): Promise<JobClaim | null>;
   hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean>;
+  hasActiveArtifactLease(input: HasActiveArtifactLeaseInput): Promise<boolean>;
   completeJob(input: CompleteJobInput): Promise<JobResult>;
   applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun>;
   releaseExpiredLeases(input?: { now?: Date }): Promise<number>;
   recordArtifact(input: RecordArtifactInput): Promise<WorkflowArtifact>;
+  recordArtifactForActiveLease(input: RecordArtifactForActiveLeaseInput): Promise<WorkflowArtifact>;
   recordReview(input: RecordReviewInput): Promise<WorkflowReview>;
   recordDelivery(input: RecordDeliveryInput): Promise<WorkflowDelivery>;
 }
@@ -251,6 +262,10 @@ export class WorkflowRepository implements WorkflowStore {
     return this.store.hasActiveJobLease(input);
   }
 
+  hasActiveArtifactLease(input: HasActiveArtifactLeaseInput): Promise<boolean> {
+    return this.store.hasActiveArtifactLease(input);
+  }
+
   completeJob(input: CompleteJobInput): Promise<JobResult> {
     return this.store.completeJob(input);
   }
@@ -265,6 +280,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   recordArtifact(input: RecordArtifactInput): Promise<WorkflowArtifact> {
     return this.store.recordArtifact(input);
+  }
+
+  recordArtifactForActiveLease(input: RecordArtifactForActiveLeaseInput): Promise<WorkflowArtifact> {
+    return this.store.recordArtifactForActiveLease(input);
   }
 
   recordReview(input: RecordReviewInput): Promise<WorkflowReview> {
@@ -489,6 +508,23 @@ export class PrismaWorkflowStore implements WorkflowStore {
     return Boolean(job);
   }
 
+  async hasActiveArtifactLease(input: HasActiveArtifactLeaseInput): Promise<boolean> {
+    const job = await this.prisma.job.findFirst({
+      where: {
+        id: input.jobId,
+        runId: input.runId,
+        stage: 'produce_assets',
+        action: 'produce_assets',
+        state: 'running',
+        leaseOwner: input.workerId,
+        leaseExpiresAt: { gt: input.now ?? new Date() },
+        run: { currentRevision: input.revision },
+      },
+      select: { id: true },
+    });
+    return Boolean(job);
+  }
+
   async applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun> {
     return this.prisma.$transaction(async (transaction) => {
       const now = new Date();
@@ -693,7 +729,38 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
       return toWorkflowArtifact(artifact);
     } catch (error) {
-      throwUniqueConflict(error, 'Artifact storage key already exists');
+      throwArtifactUniqueConflict(error);
+    }
+  }
+
+  async recordArtifactForActiveLease(input: RecordArtifactForActiveLeaseInput): Promise<WorkflowArtifact> {
+    const artifactId = input.id ?? randomUUID();
+    try {
+      const artifacts = await this.prisma.$queryRaw<WorkflowArtifact[]>(Prisma.sql`
+        INSERT INTO "Artifact" (
+          "id", "runId", "revision", "kind", "mediaType", "checksum", "storageKey", "byteSize", "provenance", "inputChecksum"
+        )
+        SELECT
+          ${artifactId}, ${input.runId}, ${input.revision}, ${input.kind}, ${input.mediaType}, ${input.checksum},
+          ${input.storageKey}, ${input.byteSize}, CAST(${JSON.stringify(input.provenance)} AS jsonb), ${input.inputChecksum}
+        FROM "Job"
+        INNER JOIN "Run" ON "Run"."id" = "Job"."runId"
+        WHERE "Job"."id" = ${input.jobId}
+          AND "Job"."runId" = ${input.runId}
+          AND "Job"."stage" = 'produce_assets'
+          AND "Job"."action" = 'produce_assets'
+          AND "Job"."state" = 'running'
+          AND "Job"."leaseOwner" = ${input.workerId}
+          AND "Job"."leaseExpiresAt" > CURRENT_TIMESTAMP
+          AND "Run"."currentRevision" = ${input.revision}
+        RETURNING
+          "id", "runId", "revision", "kind", "mediaType", "checksum", "storageKey", "byteSize", "provenance", "inputChecksum", "createdAt"
+      `);
+      const artifact = artifacts[0];
+      if (!artifact) throw new WorkflowConflictError('Artifact-producing job lease is no longer valid');
+      return artifact;
+    } catch (error) {
+      throwArtifactUniqueConflict(error);
     }
   }
 
@@ -759,6 +826,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
   private readonly runs = new Map<string, WorkflowRun>();
   private readonly jobs = new Map<string, WorkflowJob>();
   private readonly jobsByIdempotencyKey = new Map<string, string>();
+  private readonly artifactsById = new Map<string, WorkflowArtifact>();
   private readonly artifactsByStorageKey = new Map<string, WorkflowArtifact>();
   private readonly reviewsByIdentity = new Map<string, WorkflowReview>();
   private readonly deliveriesByIdempotencyKey = new Map<string, WorkflowDelivery>();
@@ -957,6 +1025,28 @@ class InMemoryWorkflowStore implements WorkflowStore {
     );
   }
 
+  async hasActiveArtifactLease(input: HasActiveArtifactLeaseInput): Promise<boolean> {
+    return this.isActiveArtifactLease(input);
+  }
+
+  private isActiveArtifactLease(input: HasActiveArtifactLeaseInput): boolean {
+    const job = this.jobs.get(input.jobId);
+    const run = job ? this.runs.get(job.runId) : undefined;
+    const now = input.now ?? this.clock();
+    return Boolean(
+      job
+      && run
+      && job.runId === input.runId
+      && job.stage === 'produce_assets'
+      && job.action === 'produce_assets'
+      && job.state === 'running'
+      && job.leaseOwner === input.workerId
+      && job.leaseExpiresAt
+      && job.leaseExpiresAt > now
+      && run.currentRevision === input.revision,
+    );
+  }
+
   async applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun> {
     const completedAt = this.clock();
     const job = this.jobs.get(input.result.jobId);
@@ -1100,17 +1190,30 @@ class InMemoryWorkflowStore implements WorkflowStore {
 
   async recordArtifact(input: RecordArtifactInput): Promise<WorkflowArtifact> {
     this.requireRun(input.runId);
+    const artifactId = input.id ?? this.idGenerator();
+    if (this.artifactsById.has(artifactId)) {
+      throw new WorkflowConflictError('Artifact ID already exists');
+    }
     if (this.artifactsByStorageKey.has(input.storageKey)) {
       throw new WorkflowConflictError('Artifact storage key already exists');
     }
 
     const artifact: WorkflowArtifact = {
       ...input,
-      id: input.id ?? this.idGenerator(),
+      id: artifactId,
       createdAt: this.clock(),
     };
+    this.artifactsById.set(artifact.id, artifact);
     this.artifactsByStorageKey.set(artifact.storageKey, artifact);
     return artifact;
+  }
+
+  async recordArtifactForActiveLease(input: RecordArtifactForActiveLeaseInput): Promise<WorkflowArtifact> {
+    if (!this.isActiveArtifactLease(input)) {
+      throw new WorkflowConflictError('Artifact-producing job lease is no longer valid');
+    }
+    const { jobId: _jobId, workerId: _workerId, ...artifact } = input;
+    return this.recordArtifact(artifact);
   }
 
   async recordReview(input: RecordReviewInput): Promise<WorkflowReview> {
@@ -1437,8 +1540,36 @@ function throwUniqueConflict(error: unknown, message: string): never {
   throw error;
 }
 
+function throwArtifactUniqueConflict(error: unknown): never {
+  if (isPrismaUniqueConflict(error)) {
+    const detail = uniqueConflictDetail(error);
+    if (detail.includes('Artifact_pkey') || /\bid\b/i.test(detail)) {
+      throw new WorkflowConflictError('Artifact ID already exists');
+    }
+    throw new WorkflowConflictError('Artifact storage key already exists');
+  }
+
+  throw error;
+}
+
 function isPrismaUniqueConflict(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+  if (error.code === 'P2002') return true;
+  return error.code === 'P2010'
+    && 'meta' in error
+    && typeof error.meta === 'object'
+    && error.meta !== null
+    && 'code' in error.meta
+    && error.meta.code === '23505';
+}
+
+function uniqueConflictDetail(error: unknown): string {
+  if (typeof error !== 'object' || error === null) return '';
+  const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+  const meta = 'meta' in error && typeof error.meta === 'object' && error.meta !== null ? error.meta : {};
+  const target = 'target' in meta ? meta.target : '';
+  const detail = 'message' in meta && typeof meta.message === 'string' ? meta.message : '';
+  return `${message} ${detail} ${Array.isArray(target) ? target.join(' ') : String(target)}`;
 }
 
 function resolveExistingReview(

@@ -23,7 +23,9 @@ export interface ArtifactStorageAdapter {
 
 export class ArtifactLeaseError extends Error {}
 export class ArtifactMetadataMismatchError extends Error {}
-export class ArtifactStorageUnavailableError extends Error {}
+export class ArtifactStorageObjectNotFoundError extends Error {}
+export class ArtifactStorageOperationError extends Error {}
+export class ArtifactStorageUnavailableError extends ArtifactStorageOperationError {}
 
 export class UnavailableArtifactStorageAdapter implements ArtifactStorageAdapter {
   async preparePut(): Promise<never> {
@@ -45,7 +47,7 @@ export class ArtifactService {
   ) {}
 
   async prepare(workerId: string, input: ArtifactPrepareRequest) {
-    await this.requireActiveLease(workerId, input.jobId, input.runId);
+    await this.requireActiveArtifactLease(workerId, input.jobId, input.runId, input.revision);
     const artifactId = (this.dependencies.idGenerator ?? randomUUID)();
     const storageKey = artifactStorageKey(input.runId, input.revision, artifactId);
     const upload = await this.dependencies.storage.preparePut({
@@ -57,7 +59,7 @@ export class ArtifactService {
   }
 
   async complete(workerId: string, input: ArtifactCompleteRequest) {
-    await this.requireActiveLease(workerId, input.jobId, input.runId);
+    await this.requireActiveArtifactLease(workerId, input.jobId, input.runId, input.revision);
     const storageKey = artifactStorageKey(input.runId, input.revision, input.artifactId);
     const inspected = await this.dependencies.storage.inspect(storageKey);
     if (
@@ -67,7 +69,9 @@ export class ArtifactService {
     ) {
       throw new ArtifactMetadataMismatchError('Artifact metadata does not match storage inspection');
     }
-    const artifact = await this.dependencies.repository.recordArtifact({
+    const artifact = await this.dependencies.repository.recordArtifactForActiveLease({
+      workerId,
+      jobId: input.jobId,
       id: input.artifactId,
       runId: input.runId,
       revision: input.revision,
@@ -82,8 +86,13 @@ export class ArtifactService {
     return toArtifactReference(artifact, input.provider);
   }
 
-  private async requireActiveLease(workerId: string, jobId: string, runId: string): Promise<void> {
-    if (!await this.dependencies.repository.hasActiveJobLease({ jobId, runId, workerId })) {
+  private async requireActiveArtifactLease(
+    workerId: string,
+    jobId: string,
+    runId: string,
+    revision: number,
+  ): Promise<void> {
+    if (!await this.dependencies.repository.hasActiveArtifactLease({ jobId, runId, workerId, revision })) {
       throw new ArtifactLeaseError('Artifact-producing job lease is no longer valid');
     }
   }

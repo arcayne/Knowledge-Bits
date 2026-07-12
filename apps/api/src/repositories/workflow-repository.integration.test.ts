@@ -41,6 +41,94 @@ test(
     });
     assert.equal(bootstrapped.stages.human_review, undefined);
 
+    const duplicateArtifact = {
+      id: '4a3f4c12-5139-4e1d-8ca0-971d380cb8a7',
+      runId,
+      revision: 1,
+      kind: 'evidence',
+      mediaType: 'application/json',
+      checksum,
+      storageKey: 'integration/artifacts/evidence.json',
+      byteSize: 128,
+      provenance: { provider: 'integration' },
+      inputChecksum: null,
+    };
+    await repository.recordArtifact(duplicateArtifact);
+    await assert.rejects(repository.recordArtifact({
+      ...duplicateArtifact,
+      revision: 2,
+      storageKey: 'integration/artifacts/revision-2/evidence.json',
+    }), /artifact id/i);
+    await assert.rejects(repository.recordArtifact({
+      ...duplicateArtifact,
+      id: 'eb2b0dd0-6d02-4f04-b3e5-82cc17f0547d',
+    }), /storage key/i);
+
+    const artifactRunId = 'f2db3276-82f5-4ec6-93d0-4d873a4dce01';
+    await repository.createRun({
+      id: artifactRunId,
+      title: 'Database artifact authorization',
+      locale: 'en',
+      brief: { source: 'artifact-test' },
+      currentStage: 'produce_assets',
+      currentRevision: 2,
+      stages: [{ name: 'produce_assets', state: 'queued' }],
+    });
+    const artifactJob = await repository.queueJob({
+      runId: artifactRunId,
+      stage: 'produce_assets',
+      action: 'produce_assets',
+      idempotencyKey: 'integration-artifact-job',
+      input: { kind: 'evidence' },
+    });
+    await repository.claimJob({
+      workerId: 'asset-worker',
+      capabilities: ['produce_assets'],
+      leaseSeconds: 120,
+    });
+    const authorizedArtifact = {
+      id: '7cc77a84-7d6b-4ef3-b05b-b47cfe8c857b',
+      runId: artifactRunId,
+      revision: 2,
+      kind: 'evidence',
+      mediaType: 'application/json',
+      checksum,
+      storageKey: 'integration/artifacts/authorized.json',
+      byteSize: 256,
+      provenance: { provider: 'integration' },
+      inputChecksum: null,
+    };
+    assert.equal((await repository.recordArtifactForActiveLease({
+      workerId: 'asset-worker',
+      jobId: artifactJob.id,
+      ...authorizedArtifact,
+    })).id, authorizedArtifact.id);
+    await assert.rejects(repository.recordArtifactForActiveLease({
+      workerId: 'asset-worker',
+      jobId: artifactJob.id,
+      ...authorizedArtifact,
+      id: '9e108d27-0ff5-4ce6-a357-254b9dceab70',
+      revision: 1,
+      storageKey: 'integration/artifacts/stale.json',
+    }), /lease/i);
+    await prisma.$executeRaw`
+      UPDATE "Job"
+      SET "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second'
+      WHERE "id" = ${artifactJob.id}
+    `;
+    await assert.rejects(repository.recordArtifactForActiveLease({
+      workerId: 'asset-worker',
+      jobId: artifactJob.id,
+      ...authorizedArtifact,
+      id: '05b2c914-e551-4529-8c02-760e31c6ab90',
+      storageKey: 'integration/artifacts/expired.json',
+    }), /lease/i);
+    await prisma.$executeRaw`
+      UPDATE "Job"
+      SET "state" = 'done', "leaseOwner" = NULL, "leaseExpiresAt" = NULL
+      WHERE "id" = ${artifactJob.id}
+    `;
+
     const claims = await Promise.all([
       repository.claimJob({ workerId: 'worker-a', leaseSeconds: 120 }),
       repository.claimJob({ workerId: 'worker-b', leaseSeconds: 120 }),

@@ -369,7 +369,7 @@ test('applies a persisted transition and queues its declarative next-stage effec
   assert.equal(createClaim?.stage, 'create');
 });
 
-test('recordArtifact rejects a duplicate storage key', async () => {
+test('recordArtifact rejects duplicate artifact IDs and storage keys', async () => {
   const { repository } = createRepository();
   await createRun(repository);
   const artifact = {
@@ -384,8 +384,20 @@ test('recordArtifact rejects a duplicate storage key', async () => {
     inputChecksum: null,
   };
 
-  await repository.recordArtifact(artifact);
-  await assert.rejects(repository.recordArtifact(artifact), /storage key/i);
+  const first = await repository.recordArtifact({
+    ...artifact,
+    id: '4a3f4c12-5139-4e1d-8ca0-971d380cb8a7',
+  });
+  await assert.rejects(repository.recordArtifact({
+    ...artifact,
+    id: first.id,
+    revision: 2,
+    storageKey: 'runs/one/revision-2/evidence.json',
+  }), /artifact id/i);
+  await assert.rejects(repository.recordArtifact({
+    ...artifact,
+    id: 'eb2b0dd0-6d02-4f04-b3e5-82cc17f0547d',
+  }), /storage key/i);
 });
 
 test('recordReview returns the existing review for an identical request', async () => {
