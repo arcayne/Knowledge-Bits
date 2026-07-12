@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { workflowRunResponseSchema } from '@knowledge-bits/contracts';
+import { nextTransition } from '@knowledge-bits/pipeline';
+
 import { createApp } from '../app.js';
 import {
   createInMemoryWorkflowStore,
@@ -17,7 +20,6 @@ function createTestApp() {
     repository: new WorkflowRepository(createInMemoryWorkflowStore()),
     env: {
       ENGINE_API_TOKEN: 'engine-api-test',
-      ENGINE_WORKER_TOKEN: 'engine-worker-test',
       ENGINE_REVIEW_TOKEN: 'engine-review-test',
     },
   });
@@ -33,11 +35,19 @@ test('creates a run with all stages and research queued', async () => {
 
   assert.equal(response.status, 201);
   const body = await response.json();
+  assert.deepEqual(workflowRunResponseSchema.parse(body), body);
   assert.equal(body.currentStage, 'research');
   assert.equal(body.stages.research.state, 'queued');
-  assert.deepEqual(Object.keys(body.stages), [
-    'research', 'create', 'check', 'produce_assets', 'human_review', 'deliver',
-  ]);
+  assert.equal(body.stages.human_review, undefined);
+  for (const stage of Object.values(body.stages) as Array<{ name: string; state: string }>) {
+    assert.doesNotThrow(() => nextTransition({
+      stage: stage.name as 'research',
+      state: stage.state as 'queued',
+      revisionAttempts: 0,
+      packageChecksum: null,
+      approvedChecksum: null,
+    }, { type: 'package_changed', packageChecksum: 'a'.repeat(64) }));
+  }
 });
 
 test('requires the engine API token to create and inspect runs', async () => {
@@ -65,6 +75,33 @@ test('rejects malformed run input', async () => {
   });
 
   assert.equal(response.status, 400);
+});
+
+test('rejects malformed JSON and maps repository bootstrap conflicts', async () => {
+  const store = createInMemoryWorkflowStore({ idGenerator: () => '0f8fad5b-d9cb-469f-a165-70867728950e' });
+  const app = createApp({
+    repository: new WorkflowRepository(store),
+    env: { ENGINE_API_TOKEN: 'engine-api-test', ENGINE_REVIEW_TOKEN: 'engine-review-test' },
+  });
+  const malformed = await app.request('/runs', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test', 'Content-Type': 'application/json' },
+    body: '{',
+  });
+  assert.equal(malformed.status, 400);
+
+  const first = await app.request('/runs', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test' },
+    body: JSON.stringify({ title: 'Attention recovery', locale: 'en', brief: validBrief }),
+  });
+  assert.equal(first.status, 201);
+  const conflict = await app.request('/runs', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test' },
+    body: JSON.stringify({ title: 'Attention recovery', locale: 'en', brief: validBrief }),
+  });
+  assert.equal(conflict.status, 409);
 });
 
 test('retrieves the persisted run state', async () => {

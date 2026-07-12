@@ -21,6 +21,7 @@ model Run {
   artifacts       Artifact[]
   reviews         Review[]
   deliveries      Delivery[]
+  workflowEffects WorkflowEffect[]
 }
 
 model Stage {
@@ -30,6 +31,7 @@ model Stage {
   state     String
   reason    String?
   attempt   Int      @default(0)
+  revisionAttempt Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
@@ -50,11 +52,25 @@ model Job {
   attempt        Int      @default(0)
   input          Json
   result         Json?
+  completionReceipt Json?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   run            Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([state, availableAt])
+}
+
+model WorkflowEffect {
+  id        String   @id @default(uuid())
+  runId     String
+  jobId     String
+  effectKey String   @unique
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
 }
 
 model Artifact {

@@ -1,39 +1,49 @@
-import { z } from 'zod';
+import { createRunRequestSchema, workflowRunResponseSchema } from '@knowledge-bits/contracts';
 
 import type { Hono } from 'hono';
 
-import type { EngineAuthEnv } from '../auth.js';
+import type { EngineAuthConfig } from '../auth.js';
 import { requireEngineScope } from '../auth.js';
-import type { WorkflowRepository } from '../repositories/workflow-repository.js';
-
-const createRunSchema = z.object({
-  title: z.string().trim().min(1),
-  locale: z.string().trim().min(1),
-  brief: z.record(z.unknown()),
-}).strict();
+import { WorkflowConflictError, type WorkflowRepository, type WorkflowRun } from '../repositories/workflow-repository.js';
 
 export function registerRunRoutes(
   app: Hono,
-  dependencies: { repository: WorkflowRepository; env: EngineAuthEnv },
+  dependencies: { repository: WorkflowRepository; auth: EngineAuthConfig },
 ): void {
   app.post('/runs', async (context) => {
-    const authFailure = requireEngineScope(context, dependencies.env, 'api');
+    const authFailure = requireEngineScope(context, dependencies.auth, 'api');
     if (authFailure) return authFailure;
-    const input = createRunSchema.safeParse(await readJson(context.req.raw));
+    const input = createRunRequestSchema.safeParse(await readJson(context.req.raw));
     if (!input.success) return context.json({ error: 'Invalid run input' }, 400);
 
-    const run = await dependencies.repository.bootstrapRun(input.data);
-    return context.json(run, 201);
+    try {
+      const run = await dependencies.repository.bootstrapRun(input.data);
+      return context.json(workflowRunResponseSchema.parse(toRunResponse(run)), 201);
+    } catch (error) {
+      if (error instanceof WorkflowConflictError) {
+        return context.json({ error: error.message }, 409);
+      }
+      throw error;
+    }
   });
 
   app.get('/runs/:id', async (context) => {
-    const authFailure = requireEngineScope(context, dependencies.env, 'api');
+    const authFailure = requireEngineScope(context, dependencies.auth, 'api');
     if (authFailure) return authFailure;
 
     const run = await dependencies.repository.getRun(context.req.param('id'));
     if (!run) return context.json({ error: 'Run not found' }, 404);
-    return context.json(run);
+    return context.json(workflowRunResponseSchema.parse(toRunResponse(run)));
   });
+}
+
+function toRunResponse(run: WorkflowRun) {
+  return {
+    ...run,
+    nextRetryAt: run.nextRetryAt?.toISOString() ?? null,
+    createdAt: run.createdAt.toISOString(),
+    updatedAt: run.updatedAt.toISOString(),
+  };
 }
 
 async function readJson(request: Request): Promise<unknown> {

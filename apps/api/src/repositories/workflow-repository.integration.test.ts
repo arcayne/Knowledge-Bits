@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 import test from 'node:test';
 
+import { nextTransition } from '@knowledge-bits/pipeline';
+
 import { createIsolatedPrismaClient } from '../config.js';
 import {
   createWorkflowRepository,
@@ -16,7 +18,7 @@ const apiRoot = fileURLToPath(new URL('../../', import.meta.url));
 const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0;
 
 test(
-  'local PostgreSQL migration atomically claims jobs and validates leases with the database clock',
+  'local PostgreSQL migration preserves bootstrap, effects, leases, retries, and idempotent results',
   { skip: dockerUnavailable ? 'Docker is unavailable; migration SQL contract test still runs' : false, timeout: 120_000 },
   async (t) => {
     const containerName = `knowledge-bits-api-test-${randomUUID()}`;
@@ -24,34 +26,20 @@ test(
     const databaseUrl = await startPostgres(containerName, databaseName);
     t.after(() => removeContainer(containerName));
 
-    run('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
-      cwd: apiRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: '',
-        ENGINE_DATABASE_URL: databaseUrl,
-      },
-    });
+    await deployMigrations(databaseUrl);
 
     const prisma = createIsolatedPrismaClient({ ENGINE_DATABASE_URL: databaseUrl });
     t.after(() => prisma.$disconnect());
     const repository = createWorkflowRepository(prisma);
     const runId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
-    await repository.createRun({
+    const bootstrapped = await repository.bootstrapRun({
       id: runId,
-      title: 'Database lease integration',
+      title: 'Database workflow integration',
       locale: 'en',
       brief: { source: 'integration-test' },
-      currentStage: 'research',
     });
-    const queuedJob = await repository.queueJob({
-      runId,
-      stage: 'research',
-      action: 'collect_sources',
-      idempotencyKey: 'integration-claim-job',
-      input: { query: 'lease integration' },
-    });
+    assert.equal(bootstrapped.stages.human_review, undefined);
 
     const claims = await Promise.all([
       repository.claimJob({ workerId: 'worker-a', leaseSeconds: 120 }),
@@ -59,10 +47,10 @@ test(
     ]);
     const claim = claims.find((candidate) => candidate !== null);
 
-    assert.equal(claim?.jobId, queuedJob.id);
+    assert.ok(claim);
     assert.equal(claims.filter((candidate) => candidate !== null).length, 1);
     await assert.rejects(
-      prisma.$executeRaw`UPDATE "Job" SET "leaseOwner" = ${'   '} WHERE "id" = ${queuedJob.id}`,
+      prisma.$executeRaw`UPDATE "Job" SET "leaseOwner" = ${'   '} WHERE "id" = ${claim!.jobId}`,
       /leaseOwner_nonempty|check constraint/i,
     );
 
@@ -74,25 +62,206 @@ test(
     await prisma.$executeRaw`
       UPDATE "Job"
       SET "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second'
-      WHERE "id" = ${queuedJob.id}
+      WHERE "id" = ${claim!.jobId}
     `;
+    assert.equal(await repository.releaseExpiredLeases({ now: new Date() }), 1);
+    assert.equal((await repository.getRun(runId))?.stages.research?.state, 'queued');
+
+    const reclaimed = await repository.claimJob({
+      workerId: 'worker-c',
+      capabilities: ['collect_sources'],
+      leaseSeconds: 120,
+    });
+    assert.equal(reclaimed?.jobId, claim!.jobId);
+    const researchTransition = nextTransition({
+      stage: 'research',
+      state: 'running',
+      revisionAttempts: 0,
+      packageChecksum: null,
+      approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum });
+    const result = {
+      jobId: reclaimed!.jobId,
+      packageId: runId,
+      stage: 'research' as const,
+      state: 'done' as const,
+      completedAt: '2026-07-12T12:00:00.000Z',
+      outputChecksum: checksum,
+      error: null,
+    };
+    const [first, replay] = await Promise.all([
+      repository.applyJobResult({ workerId: 'worker-c', result, transition: researchTransition }),
+      repository.applyJobResult({ workerId: 'worker-c', result, transition: researchTransition }),
+    ]);
+    assert.equal(first.currentStage, 'create');
+    assert.deepEqual(replay, first);
     await assert.rejects(
-      repository.completeJob({
-        workerId: claim!.claimedBy,
-        result: {
-          jobId: queuedJob.id,
-          packageId: runId,
-          stage: 'research',
-          state: 'done',
-          completedAt: '2000-01-01T00:00:00.000Z',
-          outputChecksum: null,
-          error: null,
-        },
+      repository.applyJobResult({
+        workerId: 'worker-c',
+        result: { ...result, outputChecksum: 'b'.repeat(64) },
       }),
       WorkflowConflictError,
     );
+    const queuedEffects = await prisma.workflowEffect.count({ where: { runId, type: 'queue_stage' } });
+    assert.equal(queuedEffects, 1);
+
+    const createClaim = await repository.claimJob({
+      workerId: 'worker-c',
+      capabilities: ['create_content'],
+      leaseSeconds: 120,
+    });
+    const createTransition = nextTransition({
+      stage: 'create',
+      state: 'running',
+      revisionAttempts: 0,
+      packageChecksum: checksum,
+      approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum });
+    await repository.applyJobResult({
+      workerId: 'worker-c',
+      result: {
+        jobId: createClaim!.jobId,
+        packageId: runId,
+        stage: 'create',
+        state: 'done',
+        completedAt: '2026-07-12T12:01:00.000Z',
+        outputChecksum: checksum,
+        error: null,
+      },
+      transition: createTransition,
+    });
+    const checkClaim = await repository.claimJob({
+      workerId: 'worker-c',
+      capabilities: ['check_content'],
+      leaseSeconds: 120,
+    });
+    const checkTransition = nextTransition({
+      stage: 'check',
+      state: 'running',
+      revisionAttempts: 0,
+      packageChecksum: checksum,
+      approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum });
+    await repository.applyJobResult({
+      workerId: 'worker-c',
+      result: {
+        jobId: checkClaim!.jobId,
+        packageId: runId,
+        stage: 'check',
+        state: 'done',
+        completedAt: '2026-07-12T12:02:00.000Z',
+        outputChecksum: checksum,
+        error: null,
+      },
+      transition: checkTransition,
+    });
+    const assetsClaim = await repository.claimJob({
+      workerId: 'worker-c',
+      capabilities: ['produce_assets'],
+      leaseSeconds: 120,
+    });
+    const reviewed = await repository.applyJobResult({
+      workerId: 'worker-c',
+      result: {
+        jobId: assetsClaim!.jobId,
+        packageId: runId,
+        stage: 'produce_assets',
+        state: 'done',
+        completedAt: '2026-07-12T12:02:30.000Z',
+        outputChecksum: checksum,
+        error: null,
+      },
+      transition: nextTransition({
+        stage: 'produce_assets',
+        state: 'running',
+        revisionAttempts: 0,
+        packageChecksum: checksum,
+        approvedChecksum: null,
+      }, { type: 'stage_completed', packageChecksum: checksum }),
+    });
+    assert.equal(reviewed.stages.human_review?.state, 'needs_human');
+    assert.equal(await prisma.workflowEffect.count({ where: { runId, type: 'request_review' } }), 1);
+
+    const retryRunId = 'c0a8012e-7b5d-4e73-95e3-4873b519b38c';
+    await repository.createRun({
+      id: retryRunId,
+      title: 'Database retry integration',
+      locale: 'en',
+      brief: { source: 'retry-test' },
+    });
+    const retryJob = await repository.queueJob({
+      runId: retryRunId,
+      stage: 'research',
+      action: 'collect_sources',
+      idempotencyKey: 'integration-retry-job',
+      input: { query: 'retry integration' },
+    });
+    await repository.claimJob({ workerId: 'retry-worker', capabilities: ['collect_sources'], leaseSeconds: 120 });
+    const retryAt = new Date(Date.now() + 60_000);
+    const waiting = await repository.applyJobResult({
+      workerId: 'retry-worker',
+      result: {
+        jobId: retryJob.id,
+        packageId: retryRunId,
+        stage: 'research',
+        state: 'waiting',
+        completedAt: '2026-07-12T12:03:00.000Z',
+        outputChecksum: null,
+        error: 'provider_cooldown',
+      },
+      retryAt,
+      transition: nextTransition({
+        stage: 'research',
+        state: 'running',
+        revisionAttempts: 0,
+        packageChecksum: null,
+        approvedChecksum: null,
+      }, { type: 'job_waiting', reason: 'provider_cooldown' }),
+    });
+    assert.equal(waiting.nextRetryAt?.toISOString(), retryAt.toISOString());
+
+    const deliveryRunId = '7b5d4e73-95e3-4873-b519-c0a8012e7b5d';
+    await repository.createRun({
+      id: deliveryRunId,
+      title: 'Database delivery integration',
+      locale: 'en',
+      brief: { source: 'delivery-test' },
+      currentStage: 'deliver',
+      stages: [{ name: 'deliver', state: 'queued' }],
+    });
+    const deliveryJob = await repository.queueJob({
+      runId: deliveryRunId,
+      stage: 'deliver',
+      action: 'deliver_package',
+      idempotencyKey: 'integration-delivery-job',
+      input: { packageChecksum: checksum },
+    });
+    await repository.claimJob({ workerId: 'delivery-worker', capabilities: ['deliver_package'], leaseSeconds: 120 });
+    const delivered = await repository.applyJobResult({
+      workerId: 'delivery-worker',
+      result: {
+        jobId: deliveryJob.id,
+        packageId: deliveryRunId,
+        stage: 'deliver',
+        state: 'done',
+        completedAt: '2026-07-12T12:04:00.000Z',
+        outputChecksum: checksum,
+        error: null,
+      },
+      transition: nextTransition({
+        stage: 'deliver',
+        state: 'running',
+        revisionAttempts: 0,
+        packageChecksum: checksum,
+        approvedChecksum: checksum,
+      }, { type: 'delivery_succeeded' }),
+    });
+    assert.equal(delivered.stages.deliver?.state, 'done');
+    assert.equal(await prisma.workflowEffect.count({ where: { runId: deliveryRunId, type: 'record_delivery' } }), 1);
   },
 );
+
+const checksum = 'a'.repeat(64);
 
 async function startPostgres(containerName: string, databaseName: string): Promise<string> {
   run('docker', [
@@ -125,6 +294,27 @@ async function startPostgres(containerName: string, databaseName: string): Promi
   }
 
   throw new Error('Local PostgreSQL test container did not become ready');
+}
+
+async function deployMigrations(databaseUrl: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      run('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
+        cwd: apiRoot,
+        env: {
+          ...process.env,
+          DATABASE_URL: '',
+          ENGINE_DATABASE_URL: databaseUrl,
+        },
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      await delay(250);
+    }
+  }
+  throw lastError;
 }
 
 function removeContainer(containerName: string): void {

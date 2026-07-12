@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import type {
   JobClaim,
@@ -14,6 +15,7 @@ type JsonObject = Record<string, unknown>;
 const WORKFLOW_STAGES: readonly WorkflowStage[] = [
   'research', 'create', 'check', 'produce_assets', 'human_review', 'deliver',
 ];
+const BOOTSTRAP_STAGES = WORKFLOW_STAGES.filter((stage) => stage !== 'human_review');
 
 const ACTION_BY_STAGE: Readonly<Record<Exclude<WorkflowStage, 'human_review'>, string>> = {
   research: 'collect_sources',
@@ -41,6 +43,7 @@ export interface WorkflowStageSnapshot {
   state: StageState;
   reason: string | null;
   attempt: number;
+  revisionAttempts: number;
 }
 
 export interface WorkflowJob {
@@ -56,6 +59,7 @@ export interface WorkflowJob {
   attempt: number;
   input: JsonObject;
   result: JobResult | null;
+  completionReceipt: CompletionReceipt | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -152,7 +156,7 @@ export interface WorkflowJobContext {
 }
 
 export interface ApplyJobResultInput extends CompleteJobInput {
-  transition: TransitionResult;
+  transition?: TransitionResult;
   retryAt?: Date;
 }
 
@@ -206,6 +210,7 @@ export interface WorkflowStore {
 }
 
 export class WorkflowConflictError extends Error {}
+export class WorkflowValidationError extends Error {}
 
 export class WorkflowRepository implements WorkflowStore {
   constructor(private readonly store: WorkflowStore) {}
@@ -291,6 +296,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
             state: stage.state,
             reason: stage.reason,
             attempt: stage.attempt ?? 0,
+            revisionAttempt: 0,
           })),
         },
       },
@@ -310,7 +316,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
           brief: toPrismaJson(input.brief),
           currentStage: 'research',
           stages: {
-            create: WORKFLOW_STAGES.map((name) => ({ name, state: 'queued' })),
+            create: BOOTSTRAP_STAGES.map((name) => ({ name, state: 'queued' })),
           },
         },
         include: { stages: true },
@@ -459,11 +465,16 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
   async applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun> {
     return this.prisma.$transaction(async (transaction) => {
+      const now = new Date();
+      assertRetryAtInFuture(input.retryAt, now);
       const job = await transaction.job.findUnique({
         where: { id: input.result.jobId },
         include: { run: { include: { stages: true } } },
       });
-      const now = new Date();
+      const receiptInput = completionReceiptInput(input);
+      if (job?.completionReceipt) return replayCompletionReceipt(job.completionReceipt, receiptInput);
+      const transition = input.transition;
+      if (!transition) throw new WorkflowConflictError('A new job result requires a transition');
       if (
         !job
         || job.runId !== input.result.packageId
@@ -480,7 +491,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       const currentStage = job.run.stages.find((stage) => stage.name === job.stage);
       if (!currentStage) throw new WorkflowConflictError('Current stage does not exist');
       const nextRevision = job.run.currentRevision
-        + Number(input.transition.revisionAttempts > currentStage.attempt);
+        + Number(transition.revisionAttempts > currentStage.revisionAttempt);
       const completed = await transaction.$executeRaw(Prisma.sql`
         UPDATE "Job"
         SET "state" = ${input.result.state},
@@ -493,26 +504,48 @@ export class PrismaWorkflowStore implements WorkflowStore {
           AND "leaseOwner" = ${input.workerId}
           AND "leaseExpiresAt" > CURRENT_TIMESTAMP
       `);
-      if (completed !== 1) throw new WorkflowConflictError('Job lease is no longer valid');
-      if (input.transition.stage !== job.stage) {
+      if (completed !== 1) {
+        const completedJob = await transaction.job.findUnique({ where: { id: input.result.jobId } });
+        if (completedJob?.completionReceipt) {
+          return replayCompletionReceipt(completedJob.completionReceipt, receiptInput);
+        }
+        throw new WorkflowConflictError('Job lease is no longer valid');
+      }
+      if (transition.stage !== job.stage) {
         await transaction.stage.update({
           where: { runId_name: { runId: job.runId, name: job.stage } },
           data: { state: 'done', reason: null },
         });
       }
-      await transaction.stage.update({
-        where: { runId_name: { runId: job.runId, name: input.transition.stage } },
-        data: {
-          state: input.transition.state,
-          reason: input.transition.reason ?? null,
-          attempt: input.transition.revisionAttempts,
+      await transaction.stage.upsert({
+        where: { runId_name: { runId: job.runId, name: transition.stage } },
+        update: {
+          state: transition.state,
+          reason: transition.reason ?? null,
+          revisionAttempt: transition.revisionAttempts,
+        },
+        create: {
+          runId: job.runId,
+          name: transition.stage,
+          state: transition.state,
+          reason: transition.reason ?? null,
+          revisionAttempt: transition.revisionAttempts,
         },
       });
       await transaction.run.update({
         where: { id: job.runId },
-        data: { currentStage: input.transition.stage, currentRevision: nextRevision },
+        data: { currentStage: transition.stage, currentRevision: nextRevision },
       });
-      for (const effect of input.transition.effects) {
+      for (const [index, effect] of transition.effects.entries()) {
+        await transaction.workflowEffect.create({
+          data: {
+            runId: job.runId,
+            jobId: job.id,
+            effectKey: workflowEffectKey(job.id, index),
+            type: effect.type,
+            payload: toPrismaJson(effect as unknown as JsonObject),
+          },
+        });
         if (effect.type === 'queue_stage') {
           if (effect.stage === 'human_review') {
             throw new WorkflowConflictError('Human review cannot be queued as a worker job');
@@ -531,6 +564,24 @@ export class PrismaWorkflowStore implements WorkflowStore {
             revision: nextRevision,
             input: job.run.brief as JsonObject,
           });
+        }
+        if (effect.type === 'request_review') {
+          assertDurableEffect(
+            transition.stage === 'human_review' && transition.state === 'needs_human',
+            'Review request was not represented by the human-review stage',
+          );
+        }
+        if (effect.type === 'request_human') {
+          assertDurableEffect(
+            transition.stage === 'check' && transition.state === 'needs_human',
+            'Human request was not represented by the check stage',
+          );
+        }
+        if (effect.type === 'record_delivery') {
+          assertDurableEffect(
+            transition.stage === 'deliver' && transition.state === 'done',
+            'Delivery record was not represented by the delivery stage',
+          );
         }
       }
       if (input.retryAt) {
@@ -553,22 +604,48 @@ export class PrismaWorkflowStore implements WorkflowStore {
           jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 },
         },
       });
-      return toWorkflowRun(run);
+      const workflowRun = toWorkflowRun(run);
+      await transaction.job.update({
+        where: { id: job.id },
+        data: { completionReceipt: toPrismaJson(createCompletionReceipt(receiptInput, workflowRun) as unknown as JsonObject) },
+      });
+      return workflowRun;
     });
   }
 
-  releaseExpiredLeases(input: { now?: Date } = {}): Promise<number> {
+  async releaseExpiredLeases(input: { now?: Date } = {}): Promise<number> {
     const now = input.now ?? new Date();
 
-    return this.prisma.$executeRaw(Prisma.sql`
-      UPDATE "Job"
-      SET "state" = 'queued',
-          "leaseOwner" = NULL,
-          "leaseExpiresAt" = NULL,
-          "availableAt" = ${now},
-          "updatedAt" = ${now}
-      WHERE "state" = 'running' AND "leaseExpiresAt" <= ${now}
+    const rows = await this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+      WITH released AS (
+        UPDATE "Job"
+        SET "state" = 'queued',
+            "leaseOwner" = NULL,
+            "leaseExpiresAt" = NULL,
+            "availableAt" = ${now},
+            "updatedAt" = ${now}
+        WHERE "state" = 'running' AND "leaseExpiresAt" <= ${now}
+        RETURNING "id", "runId", "stage"
+      ), synchronized AS (
+        UPDATE "Stage"
+        SET "state" = 'queued',
+            "reason" = NULL,
+            "updatedAt" = ${now}
+        FROM (SELECT DISTINCT "runId", "stage" FROM released) AS "released"
+        WHERE "Stage"."runId" = "released"."runId"
+          AND "Stage"."name" = "released"."stage"
+          AND "Stage"."state" = 'running'
+          AND NOT EXISTS (
+            SELECT 1 FROM "Job"
+            WHERE "Job"."runId" = "Stage"."runId"
+              AND "Job"."stage" = "Stage"."name"
+              AND "Job"."state" = 'running'
+              AND "Job"."id" NOT IN (SELECT "id" FROM released)
+          )
+      )
+      SELECT count(*)::bigint AS "count" FROM released
     `);
+    return Number(rows[0]?.count ?? 0n);
   }
 
   async recordArtifact(input: RecordArtifactInput): Promise<WorkflowArtifact> {
@@ -659,6 +736,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
   private readonly artifactsByStorageKey = new Map<string, WorkflowArtifact>();
   private readonly reviewsByIdentity = new Map<string, WorkflowReview>();
   private readonly deliveriesByIdempotencyKey = new Map<string, WorkflowDelivery>();
+  private readonly effectsByKey = new Map<string, { runId: string; jobId: string; type: string; payload: JsonObject }>();
   private readonly clock: () => Date;
   private readonly idGenerator: () => string;
 
@@ -682,24 +760,51 @@ class InMemoryWorkflowStore implements WorkflowStore {
       createdAt: now,
       updatedAt: now,
     };
+    if (this.runs.has(run.id)) throw new WorkflowConflictError('Run already exists');
     this.runs.set(run.id, run);
     return run;
   }
 
   async bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun> {
-    const run = await this.createRun({
-      ...input,
+    const now = this.clock();
+    const runId = input.id ?? this.idGenerator();
+    const initialJobKey = initialJobIdempotencyKey(runId);
+    if (this.runs.has(runId) || this.jobsByIdempotencyKey.has(initialJobKey)) {
+      throw new WorkflowConflictError('Run or initial job already exists');
+    }
+    const run: WorkflowRun = {
+      id: runId,
+      title: input.title,
+      locale: input.locale,
+      brief: input.brief,
       currentStage: 'research',
-      stages: WORKFLOW_STAGES.map((name) => ({ name, state: 'queued' })),
-    });
-    await this.queueJob({
-      runId: run.id,
+      currentRevision: 1,
+      stages: toStageMap(BOOTSTRAP_STAGES.map((name) => ({ name, state: 'queued' }))),
+      nextRetryAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const job: WorkflowJob = {
+      id: this.idGenerator(),
+      runId,
       stage: 'research',
       action: ACTION_BY_STAGE.research,
-      idempotencyKey: initialJobIdempotencyKey(run.id),
+      state: 'queued',
+      idempotencyKey: initialJobKey,
+      availableAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      attempt: 0,
       input: { brief: input.brief },
-    });
-    return this.requireRun(run.id);
+      result: null,
+      completionReceipt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.runs.set(run.id, run);
+    this.jobs.set(job.id, job);
+    this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
+    return run;
   }
 
   async getRun(id: string): Promise<WorkflowRun | null> {
@@ -742,6 +847,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       attempt: 0,
       input: input.input,
       result: null,
+      completionReceipt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -814,7 +920,12 @@ class InMemoryWorkflowStore implements WorkflowStore {
 
   async applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun> {
     const completedAt = this.clock();
+    assertRetryAtInFuture(input.retryAt, completedAt);
     const job = this.jobs.get(input.result.jobId);
+    const receiptInput = completionReceiptInput(input);
+    if (job?.completionReceipt) return replayCompletionReceipt(job.completionReceipt, receiptInput);
+    const transition = input.transition;
+    if (!transition) throw new WorkflowConflictError('A new job result requires a transition');
     if (
       !job
       || job.runId !== input.result.packageId
@@ -829,8 +940,15 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const run = this.requireRun(job.runId);
     if (run.currentStage !== job.stage) throw new WorkflowConflictError('Job is not for the current stage');
     const currentStage = run.stages[job.stage];
-    const nextStage = run.stages[input.transition.stage];
-    if (!currentStage || !nextStage) throw new WorkflowConflictError('Current stage does not exist');
+    if (!currentStage) throw new WorkflowConflictError('Current stage does not exist');
+    const nextStage = run.stages[transition.stage] ?? {
+      name: transition.stage,
+      state: transition.state,
+      reason: null,
+      attempt: 0,
+      revisionAttempts: 0,
+    };
+    run.stages[transition.stage] = nextStage;
 
     job.state = input.result.state;
     job.result = input.result;
@@ -838,19 +956,25 @@ class InMemoryWorkflowStore implements WorkflowStore {
     job.leaseExpiresAt = null;
     job.updatedAt = completedAt;
     const nextRevision = run.currentRevision
-      + Number(input.transition.revisionAttempts > currentStage.attempt);
-    if (input.transition.stage !== job.stage) {
+      + Number(transition.revisionAttempts > currentStage.revisionAttempts);
+    if (transition.stage !== job.stage) {
       currentStage.state = 'done';
       currentStage.reason = null;
     }
-    nextStage.state = input.transition.state;
-    nextStage.reason = input.transition.reason ?? null;
-    nextStage.attempt = input.transition.revisionAttempts;
-    run.currentStage = input.transition.stage;
+    nextStage.state = transition.state;
+    nextStage.reason = transition.reason ?? null;
+    nextStage.revisionAttempts = transition.revisionAttempts;
+    run.currentStage = transition.stage;
     run.currentRevision = nextRevision;
     run.updatedAt = completedAt;
 
-    for (const effect of input.transition.effects) {
+    for (const [index, effect] of transition.effects.entries()) {
+      this.effectsByKey.set(workflowEffectKey(job.id, index), {
+        runId: job.runId,
+        jobId: job.id,
+        type: effect.type,
+        payload: effect as unknown as JsonObject,
+      });
       if (effect.type === 'queue_stage') {
         if (effect.stage === 'human_review') {
           throw new WorkflowConflictError('Human review cannot be queued as a worker job');
@@ -872,6 +996,24 @@ class InMemoryWorkflowStore implements WorkflowStore {
           input: { brief: run.brief },
         });
       }
+      if (effect.type === 'request_review') {
+        assertDurableEffect(
+          transition.stage === 'human_review' && transition.state === 'needs_human',
+          'Review request was not represented by the human-review stage',
+        );
+      }
+      if (effect.type === 'request_human') {
+        assertDurableEffect(
+          transition.stage === 'check' && transition.state === 'needs_human',
+          'Human request was not represented by the check stage',
+        );
+      }
+      if (effect.type === 'record_delivery') {
+        assertDurableEffect(
+          transition.stage === 'deliver' && transition.state === 'done',
+          'Delivery record was not represented by the delivery stage',
+        );
+      }
     }
     if (input.retryAt) {
       await this.queueJob({
@@ -883,7 +1025,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
         input: job.input,
       });
     }
-    return { ...run, nextRetryAt: this.nextRetryAt(run) };
+    const workflowRun = { ...run, nextRetryAt: this.nextRetryAt(run) };
+    job.completionReceipt = createCompletionReceipt(receiptInput, workflowRun);
+    return workflowRun;
   }
 
   async releaseExpiredLeases(input: { now?: Date } = {}): Promise<number> {
@@ -897,6 +1041,17 @@ class InMemoryWorkflowStore implements WorkflowStore {
         job.leaseExpiresAt = null;
         job.availableAt = now;
         job.updatedAt = now;
+        const run = this.requireRun(job.runId);
+        const stage = run.stages[job.stage];
+        const hasAnotherActiveJob = [...this.jobs.values()].some((candidate) => candidate.id !== job.id
+          && candidate.runId === job.runId
+          && candidate.stage === job.stage
+          && candidate.state === 'running');
+        if (stage?.state === 'running' && !hasAnotherActiveJob) {
+          stage.state = 'queued';
+          stage.reason = null;
+          run.updatedAt = now;
+        }
         released += 1;
       }
     }
@@ -988,6 +1143,16 @@ function assertCapabilities(capabilities: string[] | undefined): void {
   }
 }
 
+function assertRetryAtInFuture(retryAt: Date | undefined, now: Date): void {
+  if (retryAt && retryAt <= now) {
+    throw new WorkflowValidationError('retryAt must be in the future');
+  }
+}
+
+function assertDurableEffect(condition: boolean, message: string): void {
+  if (!condition) throw new WorkflowConflictError(message);
+}
+
 function reviewIdentity(input: RecordReviewInput): string {
   return `${input.runId}:${input.revision}:${input.packageChecksum}`;
 }
@@ -1006,6 +1171,10 @@ function transitionJobIdempotencyKey(
 
 function retryJobIdempotencyKey(jobId: string, attempt: number): string {
   return `workflow:${jobId}:retry:${attempt}`;
+}
+
+function workflowEffectKey(jobId: string, index: number): string {
+  return `job:${jobId}:effect:${index}`;
 }
 
 async function queueTransitionJob(
@@ -1032,13 +1201,21 @@ async function queueTransitionJob(
 }
 
 function toStageMap(
-  stages: Array<{ name: WorkflowStage | string; state: StageState | string; reason?: string | null; attempt?: number }>,
+  stages: Array<{
+    name: WorkflowStage | string;
+    state: StageState | string;
+    reason?: string | null;
+    attempt?: number;
+    revisionAttempt?: number;
+    revisionAttempts?: number;
+  }>,
 ): Partial<Record<WorkflowStage, WorkflowStageSnapshot>> {
   return Object.fromEntries(stages.map((stage) => [stage.name, {
     name: stage.name as WorkflowStage,
     state: stage.state as StageState,
     reason: stage.reason ?? null,
     attempt: stage.attempt ?? 0,
+    revisionAttempts: stage.revisionAttempts ?? stage.revisionAttempt ?? 0,
   }])) as Partial<Record<WorkflowStage, WorkflowStageSnapshot>>;
 }
 
@@ -1066,19 +1243,26 @@ function toWorkflowRun(run: {
   brief: Prisma.JsonValue;
   currentStage: string;
   currentRevision: number;
-  stages?: Array<{ name: string; state: string; reason: string | null; attempt: number }>;
+  stages?: Array<{
+    name: string;
+    state: string;
+    reason: string | null;
+    attempt: number;
+    revisionAttempt: number;
+  }>;
   jobs?: Array<{ availableAt: Date }>;
   createdAt: Date;
   updatedAt: Date;
 }): WorkflowRun {
-  const stages = run.stages ? toStageMap(run.stages) : {};
+  const { stages: stageRows, jobs, ...base } = run;
+  const stages = stageRows ? toStageMap(stageRows) : {};
   return {
-    ...run,
-    brief: run.brief as JsonObject,
-    currentStage: run.currentStage as WorkflowStage,
+    ...base,
+    brief: base.brief as JsonObject,
+    currentStage: base.currentStage as WorkflowStage,
     stages,
-    nextRetryAt: stages[run.currentStage as WorkflowStage]?.state === 'waiting'
-      ? run.jobs?.[0]?.availableAt ?? null
+    nextRetryAt: stages[base.currentStage as WorkflowStage]?.state === 'waiting'
+      ? jobs?.[0]?.availableAt ?? null
       : null,
   };
 }
@@ -1096,6 +1280,7 @@ function toWorkflowJob(job: {
   attempt: number;
   input: Prisma.JsonValue;
   result: Prisma.JsonValue | null;
+  completionReceipt: Prisma.JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
 }): WorkflowJob {
@@ -1105,7 +1290,72 @@ function toWorkflowJob(job: {
     state: job.state as StageState,
     input: job.input as JsonObject,
     result: job.result as JobResult | null,
+    completionReceipt: parseCompletionReceipt(job.completionReceipt),
   };
+}
+
+interface CompletionReceiptInput {
+  workerId: string;
+  result: JobResult;
+  retryAt: string | null;
+}
+
+interface CompletionReceipt {
+  input: CompletionReceiptInput;
+  run: SerializedWorkflowRun;
+}
+
+interface SerializedWorkflowRun extends Omit<WorkflowRun, 'createdAt' | 'updatedAt' | 'nextRetryAt'> {
+  createdAt: string;
+  updatedAt: string;
+  nextRetryAt: string | null;
+}
+
+function completionReceiptInput(input: ApplyJobResultInput): CompletionReceiptInput {
+  return {
+    workerId: input.workerId,
+    result: input.result,
+    retryAt: input.retryAt?.toISOString() ?? null,
+  };
+}
+
+function createCompletionReceipt(input: CompletionReceiptInput, run: WorkflowRun): CompletionReceipt {
+  return {
+    input,
+    run: {
+      ...run,
+      createdAt: run.createdAt.toISOString(),
+      updatedAt: run.updatedAt.toISOString(),
+      nextRetryAt: run.nextRetryAt?.toISOString() ?? null,
+    },
+  };
+}
+
+function replayCompletionReceipt(value: unknown, expected: CompletionReceiptInput): WorkflowRun {
+  const receipt = parseCompletionReceipt(value);
+  if (!receipt || !isDeepStrictEqual(receipt.input, expected)) {
+    throw new WorkflowConflictError('Job result conflicts with the completed result');
+  }
+  return {
+    ...receipt.run,
+    createdAt: new Date(receipt.run.createdAt),
+    updatedAt: new Date(receipt.run.updatedAt),
+    nextRetryAt: receipt.run.nextRetryAt ? new Date(receipt.run.nextRetryAt) : null,
+  };
+}
+
+function parseCompletionReceipt(value: unknown): CompletionReceipt | null {
+  if (!isJsonObject(value) || !isJsonObject(value.input) || !isJsonObject(value.run)) return null;
+  const { input, run } = value;
+  if (typeof input.workerId !== 'string'
+    || !isJsonObject(input.result)
+    || (typeof input.retryAt !== 'string' && input.retryAt !== null)
+    || typeof run.createdAt !== 'string'
+    || typeof run.updatedAt !== 'string'
+    || (typeof run.nextRetryAt !== 'string' && run.nextRetryAt !== null)) {
+    return null;
+  }
+  return value as unknown as CompletionReceipt;
 }
 
 function toWorkflowArtifact(artifact: {

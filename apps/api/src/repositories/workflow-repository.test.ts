@@ -77,9 +77,7 @@ test('bootstraps all workflow stages and the initial research job atomically', a
   });
 
   assert.equal(run.currentStage, 'research');
-  assert.deepEqual(Object.keys(run.stages), [
-    'research', 'create', 'check', 'produce_assets', 'human_review', 'deliver',
-  ]);
+  assert.equal(run.stages.human_review, undefined);
   assert.equal(run.stages.research?.state, 'queued');
 
   const claim = await repository.claimJob({
@@ -88,6 +86,20 @@ test('bootstraps all workflow stages and the initial research job atomically', a
     leaseSeconds: 60,
   });
   assert.equal(claim?.stage, 'research');
+});
+
+test('bootstrap rejects an existing run without overwriting it or its initial job', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  await queueJob(repository, `workflow:${runId}:research:1`);
+
+  await assert.rejects(repository.bootstrapRun({
+    id: runId,
+    title: 'Replacement run',
+    locale: 'en',
+    brief: { lessonSlug: 'replacement-run' },
+  }));
+  assert.equal((await repository.getRun(runId))?.title, 'Build a rainy day fund');
 });
 
 test('claimJob leases one eligible job once', async () => {
@@ -138,6 +150,7 @@ test('releaseExpiredLeases makes an expired job eligible for another worker', as
 
   const reclaimedAt = new Date(now.getTime() + 1_001);
   assert.equal(await repository.releaseExpiredLeases({ now: reclaimedAt }), 1);
+  assert.equal((await repository.getRun(runId))?.stages.research?.state, 'queued');
 
   const reclaimed = await repository.claimJob({
     workerId: 'worker-b',
@@ -146,6 +159,86 @@ test('releaseExpiredLeases makes an expired job eligible for another worker', as
   });
   assert.equal(reclaimed?.jobId, queuedJob.id);
   assert.equal(reclaimed?.attempt, 2);
+});
+
+test('keeps quality revision attempts separate from expired execution leases', async () => {
+  const { repository, now } = createRepository();
+  await repository.createRun({
+    id: runId,
+    title: 'Check retry independence',
+    locale: 'en',
+    brief: { lessonSlug: 'check-retry-independence' },
+    currentStage: 'check',
+    stages: [
+      { name: 'create', state: 'queued' },
+      { name: 'check', state: 'queued' },
+    ],
+  });
+  const job = await repository.queueJob({
+    runId,
+    stage: 'check',
+    action: 'check_content',
+    idempotencyKey: 'check-retry-independence',
+    input: { brief: 'check retry independence' },
+  });
+  await repository.claimJob({ workerId: 'check-worker', leaseSeconds: 1 });
+  const retryAt = new Date(now.getTime() + 1_001);
+  await repository.releaseExpiredLeases({ now: retryAt });
+  const claim = await repository.claimJob({ workerId: 'check-worker', leaseSeconds: 60, now: retryAt });
+  assert.equal(claim?.attempt, 2);
+
+  const context = await repository.getJobContext(job.id);
+  assert.equal(context?.stage.revisionAttempts, 0);
+  const transition = nextTransition({
+    stage: 'check',
+    state: 'running',
+    revisionAttempts: context!.stage.revisionAttempts,
+    packageChecksum: null,
+    approvedChecksum: null,
+  }, { type: 'quality_failed', reason: 'missing citations' });
+  const run = await repository.applyJobResult({
+    workerId: 'check-worker',
+    result: {
+      jobId: job.id,
+      packageId: runId,
+      stage: 'check',
+      state: 'needs_human',
+      completedAt: retryAt.toISOString(),
+      outputChecksum: null,
+      error: 'missing citations',
+    },
+    transition,
+  });
+
+  assert.equal(run.currentStage, 'create');
+  assert.equal(run.stages.create?.revisionAttempts, 1);
+  assert.equal(run.stages.human_review, undefined);
+});
+
+test('rejects a retry timestamp at or before the repository clock', async () => {
+  const { repository, now } = createRepository();
+  await createRun(repository);
+  const job = await queueJob(repository);
+  await repository.claimJob({ workerId: 'worker-a', leaseSeconds: 60 });
+  const transition = nextTransition({
+    stage: 'research',
+    state: 'running',
+    revisionAttempts: 0,
+    packageChecksum: null,
+    approvedChecksum: null,
+  }, { type: 'job_waiting', reason: 'provider_cooldown' });
+
+  await assert.rejects(repository.applyJobResult({
+    workerId: 'worker-a',
+    result: {
+      ...completedResult(job.id, now),
+      state: 'waiting',
+      outputChecksum: null,
+      error: 'provider_cooldown',
+    },
+    transition,
+    retryAt: now,
+  }), /retry.*future/i);
 });
 
 test('completeJob requires the current unexpired lease owner', async () => {

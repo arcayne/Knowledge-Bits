@@ -1,57 +1,49 @@
-import { jobResultSchema } from '@knowledge-bits/contracts';
+import {
+  claimJobRequestSchema,
+  reportJobResultRequestSchema,
+} from '@knowledge-bits/contracts';
 import { nextTransition, WorkflowTransitionError } from '@knowledge-bits/pipeline';
 import { z } from 'zod';
 
 import type { Hono } from 'hono';
 
-import type { EngineAuthEnv } from '../auth.js';
-import { requireEngineScope } from '../auth.js';
+import type { EngineAuthConfig } from '../auth.js';
+import { requireWorkerPrincipal } from '../auth.js';
 import {
   type WorkflowJobContext,
   WorkflowConflictError,
+  WorkflowValidationError,
   type WorkflowRepository,
 } from '../repositories/workflow-repository.js';
 
-const claimJobSchema = z.object({
-  workerId: z.string().trim().min(1),
-  capabilities: z.array(z.string().trim().min(1)).min(1),
-  leaseSeconds: z.number().int().positive(),
-}).strict();
-
-const reportResultSchema = z.object({
-  workerId: z.string().trim().min(1),
-  result: jobResultSchema,
-  retryAt: z.string().datetime().optional(),
-}).strict().superRefine((input, refinement) => {
-  if (input.result.state === 'waiting' && !input.retryAt) {
-    refinement.addIssue({ code: z.ZodIssueCode.custom, message: 'Waiting results require retryAt' });
-  }
-  if (input.result.state !== 'waiting' && input.retryAt) {
-    refinement.addIssue({ code: z.ZodIssueCode.custom, message: 'Only waiting results may include retryAt' });
-  }
-});
-
 export function registerJobRoutes(
   app: Hono,
-  dependencies: { repository: WorkflowRepository; env: EngineAuthEnv },
+  dependencies: { repository: WorkflowRepository; auth: EngineAuthConfig },
 ): void {
   app.post('/jobs/claim', async (context) => {
-    const authFailure = requireEngineScope(context, dependencies.env, 'worker');
-    if (authFailure) return authFailure;
-    const input = claimJobSchema.safeParse(await readJson(context.req.raw));
+    const principal = requireWorkerPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const input = claimJobRequestSchema.safeParse(await readJson(context.req.raw));
     if (!input.success) return context.json({ error: 'Invalid job claim input' }, 400);
 
-    const claim = await dependencies.repository.claimJob(input.data);
+    const claim = await dependencies.repository.claimJob({
+      workerId: principal.workerId,
+      capabilities: principal.capabilities,
+      leaseSeconds: input.data.leaseSeconds,
+    });
     if (!claim) return new Response(null, { status: 204 });
     return context.json(claim);
   });
 
   app.post('/jobs/:id/result', async (context) => {
-    const authFailure = requireEngineScope(context, dependencies.env, 'worker');
-    if (authFailure) return authFailure;
-    const input = reportResultSchema.safeParse(await readJson(context.req.raw));
+    const principal = requireWorkerPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const input = reportJobResultRequestSchema.safeParse(await readJson(context.req.raw));
     if (!input.success || input.data.result.jobId !== context.req.param('id')) {
       return context.json({ error: 'Invalid job result input' }, 400);
+    }
+    if (input.data.retryAt && new Date(input.data.retryAt) <= new Date()) {
+      return context.json({ error: 'retryAt must be in the future' }, 400);
     }
 
     const jobContext = await dependencies.repository.getJobContext(input.data.result.jobId);
@@ -61,17 +53,19 @@ export function registerJobRoutes(
     }
 
     try {
-      const transition = transitionForResult(jobContext, input.data.result);
       const run = await dependencies.repository.applyJobResult({
-        workerId: input.data.workerId,
+        workerId: principal.workerId,
         result: input.data.result,
-        transition,
+        transition: jobContext.job.completionReceipt ? undefined : transitionForResult(jobContext, input.data.result),
         retryAt: input.data.retryAt ? new Date(input.data.retryAt) : undefined,
       });
       return context.json(run);
     } catch (error) {
       if (error instanceof WorkflowConflictError) {
         return context.json({ error: error.message }, 409);
+      }
+      if (error instanceof WorkflowValidationError) {
+        return context.json({ error: error.message }, 400);
       }
       if (error instanceof WorkflowTransitionError || error instanceof ResultMappingError) {
         return context.json({ error: error.message }, 422);
@@ -83,12 +77,12 @@ export function registerJobRoutes(
 
 function transitionForResult(
   context: WorkflowJobContext,
-  result: z.infer<typeof jobResultSchema>,
+  result: z.infer<typeof reportJobResultRequestSchema>['result'],
 ) {
   const snapshot = {
     stage: context.stage.name,
     state: context.stage.state,
-    revisionAttempts: context.stage.attempt,
+    revisionAttempts: context.stage.revisionAttempts,
     packageChecksum: context.packageChecksum,
     approvedChecksum: context.approvedChecksum,
     reason: context.stage.reason ?? undefined,
