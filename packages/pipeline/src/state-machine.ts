@@ -9,6 +9,15 @@ export const STAGES = [
   'deliver',
 ] as const satisfies readonly WorkflowStage[];
 
+const LEGAL_STATES_BY_STAGE = {
+  research: ['queued', 'running', 'waiting'],
+  create: ['queued', 'running', 'waiting'],
+  check: ['queued', 'running', 'waiting', 'needs_human'],
+  produce_assets: ['queued', 'running', 'waiting'],
+  human_review: ['needs_human'],
+  deliver: ['queued', 'running', 'waiting', 'done'],
+} as const satisfies Record<WorkflowStage, readonly StageState[]>;
+
 export interface WorkflowSnapshot {
   stage: WorkflowStage;
   state: StageState;
@@ -51,6 +60,7 @@ export function nextTransition(
   snapshot: WorkflowSnapshot,
   event: WorkflowEvent,
 ): TransitionResult {
+  validateSnapshot(snapshot);
   rejectProviderSelectedStage(event);
 
   switch (event.type) {
@@ -182,7 +192,21 @@ function transition(
   changes: Partial<WorkflowSnapshot>,
   effects: WorkflowEffect[] = [],
 ): TransitionResult {
-  return { ...snapshot, ...changes, effects };
+  const result = { ...snapshot, ...changes, effects };
+  validateSnapshot(result);
+  return result;
+}
+
+function validateSnapshot(snapshot: WorkflowSnapshot): void {
+  const legalStates: readonly StageState[] | undefined = Object.hasOwn(LEGAL_STATES_BY_STAGE, snapshot.stage)
+    ? LEGAL_STATES_BY_STAGE[snapshot.stage]
+    : undefined;
+
+  if (!legalStates?.includes(snapshot.state)) {
+    throw new WorkflowTransitionError(
+      `Invalid workflow snapshot: ${snapshot.stage}/${snapshot.state}`,
+    );
+  }
 }
 
 function requireSnapshot(

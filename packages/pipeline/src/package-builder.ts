@@ -86,11 +86,31 @@ function canonicalJson(value: unknown): string {
     case 'symbol':
       throw new TypeError(`Canonical JSON rejects ${typeof value} values`);
     case 'object':
-      if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+      if (Array.isArray(value)) {
+        const items = Array.from({ length: value.length }, (_, index) => {
+          if (!Object.hasOwn(value, index)) {
+            throw new TypeError('Canonical JSON rejects sparse arrays');
+          }
+
+          return canonicalJson(value[index]);
+        });
+
+        return `[${items.join(',')}]`;
+      }
+
+      if (!isPlainObject(value)) {
+        throw new TypeError('Canonical JSON accepts only plain objects');
+      }
+
       return `{${Object.keys(value).sort().map((key) => (
         `${JSON.stringify(key)}:${canonicalJson(value[key as keyof typeof value])}`
       )).join(',')}}`;
   }
 
   throw new TypeError('Canonical JSON received an unsupported value');
+}
+
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }

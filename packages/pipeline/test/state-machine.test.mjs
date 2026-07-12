@@ -47,6 +47,22 @@ test('restarts waiting work without changing its stage', () => {
   assert.deepEqual(result.effects, []);
 });
 
+test('rejects malformed human review snapshots before starting work', () => {
+  assert.throws(
+    () => nextTransition(snapshot({ stage: 'human_review', state: 'queued' }), { type: 'job_started' }),
+    /invalid workflow snapshot.*human_review\/queued/i,
+  );
+});
+
+test('validates stage and state combinations for package changes', () => {
+  assert.throws(
+    () => nextTransition(snapshot({ state: 'needs_human' }), {
+      type: 'package_changed', packageChecksum: CHANGED_CHECKSUM,
+    }),
+    /invalid workflow snapshot.*research\/needs_human/i,
+  );
+});
+
 test('marks running work as waiting', () => {
   const result = nextTransition(snapshot({ state: 'running' }), {
     type: 'job_waiting', reason: 'source rate limit',

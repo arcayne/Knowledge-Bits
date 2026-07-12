@@ -115,6 +115,23 @@ test('rejects undefined checksum material', () => {
   );
 });
 
+test('rejects sparse arrays in checksum material', () => {
+  const sparseArray = [];
+  sparseArray.length = 1;
+
+  assert.throws(
+    () => calculatePackageChecksum(input({ usageRights: sparseArray })),
+    /sparse arrays/i,
+  );
+});
+
+test('rejects Date instances in checksum material', () => {
+  assert.throws(
+    () => calculatePackageChecksum(input({ usageRights: new Date('2026-07-12T12:00:00.000Z') })),
+    /plain objects/i,
+  );
+});
+
 test('builds a contract-valid unapproved package', () => {
   const result = buildKnowledgeBits(input());
 
