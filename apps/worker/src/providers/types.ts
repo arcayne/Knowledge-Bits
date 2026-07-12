@@ -18,6 +18,13 @@ export interface ProviderExecutionInput {
   signal: AbortSignal;
 }
 
+export interface ProviderBinaryAsset {
+  kind: string;
+  mediaType: string;
+  body: Uint8Array;
+  inputChecksum: string;
+}
+
 export type ProviderExecution =
   | {
     kind: 'success';
@@ -25,6 +32,7 @@ export type ProviderExecution =
     parsedOutput: unknown;
     executionReport: unknown;
     inputChecksum?: string;
+    assets?: readonly ProviderBinaryAsset[];
   }
   | {
     kind: 'waiting';

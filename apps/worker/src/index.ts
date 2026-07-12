@@ -1,13 +1,13 @@
 import { HttpEngineClient } from './engine-client.js';
 import { WorkerExecutor } from './executor.js';
-import { FixtureProvider } from './providers/fixture.js';
+import { composeWorkerProviders } from './runtime.js';
 
 const baseUrl = requiredEnvironment('ENGINE_API_BASE_URL');
 const workerToken = requiredEnvironment('ENGINE_WORKER_TOKEN');
 const leaseSeconds = positiveInteger(process.env.ENGINE_WORKER_LEASE_SECONDS ?? '90');
 
 const client = new HttpEngineClient({ baseUrl, workerToken });
-const executor = new WorkerExecutor({ client, providers: [new FixtureProvider()] });
+const executor = new WorkerExecutor({ client, providers: composeWorkerProviders({ env: process.env }) });
 const job = await client.claim(leaseSeconds);
 
 if (job) await executor.execute(job);

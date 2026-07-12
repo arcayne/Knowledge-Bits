@@ -99,6 +99,13 @@ export class WorkerExecutor {
         idempotencyKey: operationIdempotencyKey(job, action),
       });
       const outputChecksum = checksum(reportBytes);
+      if (execution.assets?.length && job.stage !== 'produce_assets') {
+        await this.reportTypedResult(job, this.normalizedFailure(job, {
+          kind: 'needs_human',
+          reason: 'provider_assets_not_allowed_for_stage',
+        }), controller.signal);
+        return;
+      }
       await this.uploadExecutionArtifacts(job, provider.name, execution, reportBytes, controller.signal);
       if (!reportingAllowed || controller.signal.aborted) return;
 
@@ -148,11 +155,17 @@ export class WorkerExecutor {
     const rawChecksum = checksum(execution.rawResponse);
     const parsedBytes = canonicalJsonBytes(execution.parsedOutput);
     const parsedChecksum = checksum(parsedBytes);
-    const artifacts = [
+    const artifacts: ExecutionArtifact[] = [
+      ...(execution.assets ?? []).map((asset) => ({
+        kind: asset.kind,
+        body: asset.body,
+        mediaType: asset.mediaType,
+        inputChecksum: asset.inputChecksum,
+      })),
       { kind: 'raw_response', body: execution.rawResponse, inputChecksum: execution.inputChecksum ?? null },
       { kind: 'parsed_output', body: parsedBytes, inputChecksum: rawChecksum },
       { kind: 'execution_report', body: reportBytes, inputChecksum: parsedChecksum },
-    ] as const;
+    ];
 
     for (const artifact of artifacts) {
       if (signal?.aborted) return;
@@ -161,7 +174,7 @@ export class WorkerExecutor {
         runId: job.packageId,
         revision: job.revision,
         kind: artifact.kind,
-        mediaType: 'application/json',
+        mediaType: artifact.mediaType ?? 'application/json',
       }, signal);
       if (signal?.aborted) return;
       await this.options.client.uploadArtifact(prepared, artifact.body, signal);
@@ -172,7 +185,7 @@ export class WorkerExecutor {
         runId: job.packageId,
         revision: job.revision,
         kind: artifact.kind,
-        mediaType: 'application/json',
+        mediaType: artifact.mediaType ?? 'application/json',
         checksum: checksum(artifact.body),
         byteSize: artifact.body.byteLength,
         provider,
@@ -229,6 +242,13 @@ export class WorkerExecutor {
       : { kind: 'waiting', reason, retryAt: new Date(this.now().getTime() + 60_000).toISOString() };
     await this.reportTypedResult(job, execution, signal);
   }
+}
+
+interface ExecutionArtifact {
+  kind: string;
+  body: Uint8Array;
+  mediaType?: string;
+  inputChecksum: string | null;
 }
 
 export function actionForStage(stage: WorkflowStage): WorkerAction | null {

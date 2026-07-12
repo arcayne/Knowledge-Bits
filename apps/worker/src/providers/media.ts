@@ -52,6 +52,9 @@ export class MediaProviderAdapter implements MediaProvider {
       kinds,
     });
     if (generated.length === 0) throw new ProviderNeedsHumanError('media_empty_response');
+    if (generated.length !== kinds.length || kinds.some((kind) => generated.filter((asset) => asset.kind === kind).length !== 1)) {
+      throw new ProviderNeedsHumanError('media_assets_incomplete');
+    }
     if (generated.some((asset) => asset.inputChecksum !== context.contentChecksum)) {
       throw new ProviderNeedsHumanError('media_input_checksum_mismatch');
     }
@@ -68,6 +71,12 @@ export class MediaProviderAdapter implements MediaProvider {
       inputChecksum: context.contentChecksum,
       rawResponse: Buffer.from(JSON.stringify(assets)),
       parsedOutput: { assets },
+      assets: generated.map((asset) => ({
+        kind: asset.kind,
+        mediaType: asset.mediaType,
+        body: asset.bytes,
+        inputChecksum: asset.inputChecksum,
+      })),
       executionReport: {
         assetInputChecksum: context.contentChecksum,
         provider: this.name,

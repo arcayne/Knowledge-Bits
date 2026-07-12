@@ -62,6 +62,7 @@ test('media requires a passed check and records the current content checksum on 
   const provider = new MediaProviderAdapter({
     client,
     context: async () => ({ passedCheck: true, content: candidate, contentChecksum: checksum }),
+    kinds: ['hero'],
   });
 
   const result = await provider.execute(mediaInput());
@@ -70,7 +71,7 @@ test('media requires a passed check and records the current content checksum on 
   if (result.kind !== 'success') return;
   assert.equal(result.inputChecksum, checksum);
   assert.equal((result.parsedOutput as { assets: Array<{ inputChecksum: string }> }).assets[0]?.inputChecksum, checksum);
-  assert.deepEqual(calls, [{ content: candidate, inputChecksum: checksum, kinds: ['hero', 'infographic', 'audio'] }]);
+  assert.deepEqual(calls, [{ content: candidate, inputChecksum: checksum, kinds: ['hero'] }]);
 });
 
 test('media rejects a failed check or an asset bound to a different content checksum', async () => {
@@ -87,6 +88,7 @@ test('media rejects a failed check or an asset bound to a different content chec
       },
     },
     context: async () => ({ passedCheck: true, content: candidate, contentChecksum: checksum }),
+    kinds: ['hero'],
   });
   await assert.rejects(() => mismatchProvider.execute(mediaInput()), /media_input_checksum_mismatch/);
 });

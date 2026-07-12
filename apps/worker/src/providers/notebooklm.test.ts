@@ -116,7 +116,7 @@ test('rejects citations that do not resolve to a returned source', async () => {
   await assert.rejects(() => provider.execute(input('collect_sources')), /citation.*source/i);
 });
 
-test('enforces process timeouts and the automatic two-revision limit', async () => {
+test('classifies process timeouts as a typed wait', async () => {
   const timeoutProcess: NotebookLmProcess = {
     async run() {
       return { stdout: '', stderr: '', exitCode: null, timedOut: true };
@@ -128,12 +128,52 @@ test('enforces process timeouts and the automatic two-revision limit', async () 
     context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
   });
   await assert.rejects(() => provider.execute(input('collect_sources')), /notebooklm_timeout/);
+});
 
-  const revisionProvider = new NotebookLmProvider({
-    process: processWith([], []),
-    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
+test('allows a fourth revision because revision policy belongs to the state machine', async () => {
+  const provider = new NotebookLmProvider({
+    process: processWith([], [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: await fixture('notebooklm-create.json'), stderr: '', exitCode: 0 },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: 'focus',
+      evidence: { sources: [{ sourceId, title: 'Accepted source' }] },
+    }),
   });
-  await assert.rejects(() => revisionProvider.execute(input('create_content', 4)), /notebooklm_revision_limit/);
+  const result = await provider.execute(input('create_content', 4));
+
+  assert.equal(result.kind, 'success');
+});
+
+test('does not let a create response authorize citations with its recommended sources', async () => {
+  const selfAuthorizedSource = '22222222-2222-4222-8222-222222222222';
+  const provider = new NotebookLmProvider({
+    process: processWith([], [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify({
+          conversationId: 'conversation_fixture_01',
+          answer: {
+            claims: [{ statement: 'An unsupported claim.', citations: [{ sourceId: selfAuthorizedSource, excerpt: 'Invented support.' }] }],
+            sources: [{ sourceId: selfAuthorizedSource, title: 'Candidate source' }],
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: 'focus',
+      evidence: { sources: [{ sourceId, title: 'Accepted source' }] },
+    }),
+  });
+
+  await assert.rejects(() => provider.execute(input('create_content')), /notebooklm_citation_source_missing/);
 });
 
 function input(action: ProviderExecutionInput['action'], revision = 1): ProviderExecutionInput {

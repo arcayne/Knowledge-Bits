@@ -53,10 +53,6 @@ export class NotebookLmProvider implements ContentProvider {
     if (input.action !== 'collect_sources' && input.action !== 'create_content') {
       throw new ProviderNeedsHumanError(`notebooklm_unsupported_action:${input.action}`);
     }
-    if (input.action === 'create_content' && input.job.revision > 3) {
-      throw new ProviderNeedsHumanError('notebooklm_revision_limit');
-    }
-
     const context = await this.options.context(input);
     const cliVersion = await this.version(input.signal);
     await this.importSources(context, input.signal);
@@ -68,7 +64,7 @@ export class NotebookLmProvider implements ContentProvider {
       : NOTEBOOKLM_CREATE_PROMPT_VERSION;
     const response = await this.query(context.notebookId, prompt, input.signal);
     const parsed = await this.parseOrRepair(context.notebookId, prompt, response, input.signal);
-    validateCitations(parsed.answer, context.evidence);
+    validateCitations(parsed.answer, input.action === 'create_content' ? context.evidence : undefined);
     const parsedOutput = input.action === 'collect_sources' ? markSourceCandidates(parsed.answer) : parsed.answer;
 
     return {
@@ -164,12 +160,12 @@ function parseStructuredResponse(raw: string): { raw: string; conversationId: st
   }
 }
 
-function validateCitations(answer: Record<string, unknown>, evidence?: EvidenceManifest): void {
+function validateCitations(answer: Record<string, unknown>, acceptedEvidence?: EvidenceManifest): void {
   const claims = Array.isArray(answer.claims) ? answer.claims as GroundedClaim[] : [];
   const responseSources = Array.isArray(answer.sources)
     ? answer.sources.map((source) => source as { sourceId?: unknown }).map(({ sourceId }) => sourceId).filter((sourceId): sourceId is string => typeof sourceId === 'string')
     : [];
-  const sourceIds = new Set([...responseSources, ...(evidence?.sources.map((source) => source.sourceId) ?? [])]);
+  const sourceIds = new Set(acceptedEvidence ? acceptedEvidence.sources.map((source) => source.sourceId) : responseSources);
   for (const claim of claims) {
     if (!Array.isArray(claim.citations)) throw new ProviderNeedsHumanError('notebooklm_citation_missing');
     for (const citation of claim.citations) {

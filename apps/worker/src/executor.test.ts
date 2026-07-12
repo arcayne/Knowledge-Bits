@@ -76,6 +76,52 @@ test('uploads raw response, parsed output, and execution report before a success
   assert.match(client.results[0]?.result.outputChecksum ?? '', /^[a-f0-9]{64}$/);
 });
 
+test('uploads generated media bytes with their media metadata and content checksum before audit artifacts', async () => {
+  const client = new FakeEngineClient();
+  const contentChecksum = 'a'.repeat(64);
+  const hero = Buffer.from([1, 2, 3]);
+  const infographic = Buffer.from([4, 5]);
+  const audio = Buffer.from([6, 7, 8, 9]);
+  const provider = providerFor('produce_assets', {
+    ...successOutput(),
+    inputChecksum: contentChecksum,
+    assets: [
+      { kind: 'hero', mediaType: 'image/webp', body: hero, inputChecksum: contentChecksum },
+      { kind: 'infographic', mediaType: 'image/png', body: infographic, inputChecksum: contentChecksum },
+      { kind: 'audio', mediaType: 'audio/mpeg', body: audio, inputChecksum: contentChecksum },
+    ],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('produce_assets'));
+
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'hero',
+    'infographic',
+    'audio',
+    'raw_response',
+    'parsed_output',
+    'execution_report',
+  ]);
+  assert.deepEqual(client.uploadedArtifacts.slice(0, 3).map(({ body }) => Buffer.from(body)), [hero, infographic, audio]);
+  assert.deepEqual(client.completedArtifacts.slice(0, 3).map(({ mediaType }) => mediaType), [
+    'image/webp',
+    'image/png',
+    'audio/mpeg',
+  ]);
+  assert.deepEqual(client.completedArtifacts.slice(0, 3).map(({ checksum }) => checksum), [
+    checksum(hero),
+    checksum(infographic),
+    checksum(audio),
+  ]);
+  assert.deepEqual(client.completedArtifacts.slice(0, 3).map(({ inputChecksum }) => inputChecksum), [
+    contentChecksum,
+    contentChecksum,
+    contentChecksum,
+  ]);
+  assert.equal(client.events.at(-1), 'report:done');
+});
+
 test('uploads the audit artifact triplet before reporting a non-asset success', async () => {
   const client = new FakeEngineClient();
   const provider = providerFor('collect_sources', successOutput());
@@ -236,7 +282,7 @@ function job(
   };
 }
 
-function successOutput(): ProviderExecution {
+function successOutput(): Extract<ProviderExecution, { kind: 'success' }> {
   return {
     kind: 'success',
     rawResponse: Buffer.from('{"fixture":"response"}\n'),
