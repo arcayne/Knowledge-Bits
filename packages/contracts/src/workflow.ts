@@ -109,7 +109,6 @@ export const reviewDecisionSchema = z.enum(['approve', 'request_changes']);
 export const reviewRunRequestSchema = z.object({
   decision: reviewDecisionSchema,
   packageChecksum: checksumSchema,
-  reviewerId: z.string().trim().min(1),
   comment: z.string().trim().min(1).optional(),
 }).strict().superRefine((input, refinement) => {
   if (input.decision === 'request_changes' && !input.comment) {
@@ -129,6 +128,7 @@ export const reviewRunResponseSchema = z.object({
   packageChecksum: checksumSchema,
   approvedChecksum: checksumSchema.nullable(),
 }).strict();
+
 
 export type WorkflowStage = z.infer<typeof workflowStageSchema>;
 export type StageState = z.infer<typeof stageStateSchema>;

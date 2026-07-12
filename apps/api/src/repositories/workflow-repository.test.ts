@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { JobResult } from '@knowledge-bits/contracts';
-import { nextTransition } from '@knowledge-bits/pipeline';
+import { calculatePackageChecksum, nextTransition } from '@knowledge-bits/pipeline';
 
 import {
   createInMemoryWorkflowStore,
+  type RecordPackageVersionInput,
   WorkflowRepository,
 } from './workflow-repository.js';
 import {
@@ -64,6 +65,22 @@ function completedResult(jobId: string, completedAt: Date): JobResult {
     outputChecksum: checksum,
     error: null,
   };
+}
+
+function packageVersionInput(variant: string, revision = 1): RecordPackageVersionInput {
+  const material = {
+    runId,
+    revision,
+    adapterVersion: 'review-package@1',
+    locale: 'en',
+    owner: 'knowledge-bits-engine',
+    usageRights: { scope: 'internal-review' },
+    content: { schemaVersion: 'knowledge-bits.content.v1' as const, target: { kind: 'nuglet.lesson.v1' as const, payload: { title: `One task ${variant}` } } },
+    evidence: { schemaVersion: 'knowledge-bits.evidence.v1' as const, sources: [], claims: [] },
+    qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Ready', findings: [] } },
+    artifactInventory: [],
+  };
+  return { ...material, packageChecksum: calculatePackageChecksum({ ...material, assetInventory: material.artifactInventory }) };
 }
 
 test('creates and retrieves a workflow run', async () => {
@@ -546,6 +563,79 @@ test('recordReview allows a new package checksum for the same revision', async (
   });
 
   assert.equal(revisionWithNewChecksum.packageChecksum, 'b'.repeat(64));
+});
+
+test('request changes replays by immutable package identity and compares every decision field', async () => {
+  const { repository } = createRepository();
+  const packageA = packageVersionInput('A');
+  await repository.createRun({
+    id: runId,
+    title: 'Review replay',
+    locale: 'en',
+    brief: {},
+    currentStage: 'human_review',
+    packageChecksum: packageA.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  await repository.recordPackageVersion(packageA);
+  const decision = {
+    runId,
+    packageChecksum: packageA.packageChecksum,
+    decision: 'request_changes' as const,
+    reviewerId: 'review-principal',
+    comment: 'Clarify the practical action.',
+  };
+
+  const first = await repository.reviewRun(decision);
+  const replay = await repository.reviewRun(decision);
+
+  assert.equal(first.currentRevision, 2);
+  assert.equal(replay.currentRevision, 2);
+  await assert.rejects(repository.reviewRun({ ...decision, comment: 'Use a different source.' }), /conflict/i);
+  await assert.rejects(repository.reviewRun({ ...decision, reviewerId: 'other-principal' }), /conflict/i);
+});
+
+test('rejects a package version whose checksum does not match its canonical contents', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  const version = packageVersionInput('canonical');
+
+  await assert.rejects(repository.recordPackageVersion({
+    ...version,
+    packageChecksum: checksum,
+  }), /canonical package contents/i);
+});
+
+test('reapproval supersedes stale delivery and claims the newly approved package version', async () => {
+  const { repository } = createRepository();
+  const packageA = packageVersionInput('A');
+  const packageB = packageVersionInput('B');
+  await repository.createRun({
+    id: runId,
+    title: 'Review replacement',
+    locale: 'en',
+    brief: {},
+    currentStage: 'human_review',
+    packageChecksum: packageA.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  const persistedA = await repository.recordPackageVersion(packageA);
+  await repository.reviewRun({ runId, packageChecksum: packageA.packageChecksum, decision: 'approve', reviewerId: 'review-principal' });
+
+  const persistedB = await repository.recordPackageVersion(packageB);
+  await repository.reviewRun({ runId, packageChecksum: packageB.packageChecksum, decision: 'approve', reviewerId: 'review-principal' });
+  const claim = await repository.claimJob({ workerId: 'delivery-worker', capabilities: ['deliver_package'], leaseSeconds: 60 });
+  assert.ok(claim);
+  const context = await repository.getJobContext(claim.jobId);
+
+  assert.notEqual(persistedA.id, persistedB.id);
+  assert.deepEqual(context?.job.input, {
+    brief: {},
+    packageChecksum: packageB.packageChecksum,
+    packageVersionId: persistedB.id,
+  });
+  assert.equal(context?.approvedChecksum, packageB.packageChecksum);
+  assert.equal(await repository.claimJob({ workerId: 'other-worker', capabilities: ['deliver_package'], leaseSeconds: 60 }), null);
 });
 
 test('recordDelivery returns the existing row for its idempotency key', async () => {

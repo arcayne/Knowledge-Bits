@@ -14,15 +14,14 @@ export async function POST({ request }: { request: Request }): Promise<Response>
   if (!isRecord(body) || typeof body.runId !== 'string' || !body.runId) {
     return Response.json({ error: 'A run id is required' }, { status: 400 });
   }
-  const reviewerId = import.meta.env.ENGINE_REVIEWER_ID?.trim();
-  if (!reviewerId) {
-    return Response.json({ error: 'The review identity is not configured' }, { status: 503 });
-  }
-  const { runId, reviewerId: _untrustedReviewerId, ...decision } = body;
+  const { runId } = body;
+  const decision = body.decision;
+  const packageChecksum = body.packageChecksum;
+  const comment = body.comment;
   return forward(`/runs/${encodeURIComponent(runId)}/review`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...decision, reviewerId }),
+    body: JSON.stringify({ decision, packageChecksum, ...(typeof comment === 'string' ? { comment } : {}) }),
   });
 }
 

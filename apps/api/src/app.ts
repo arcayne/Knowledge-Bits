@@ -20,12 +20,13 @@ export function createApp(options: CreateAppOptions): Hono {
     repository: options.repository,
     auth: createEngineAuthConfig(options.env ?? (process.env as EngineAuthEnv)),
   };
+  const artifactStorage = options.artifactStorage ?? new UnavailableArtifactStorageAdapter();
   registerRunRoutes(app, dependencies);
-  registerReviewRoutes(app, dependencies);
+  registerReviewRoutes(app, { ...dependencies, artifactStorage });
   registerJobRoutes(app, dependencies);
   registerArtifactRoutes(app, {
     ...dependencies,
-    artifactStorage: options.artifactStorage ?? new UnavailableArtifactStorageAdapter(),
+    artifactStorage,
   });
   return app;
 }

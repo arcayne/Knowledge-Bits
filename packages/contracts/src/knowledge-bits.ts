@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-import { artifactReferenceSchema, checksumSchema } from './workflow.js';
+import {
+  artifactReferenceSchema,
+  checksumSchema,
+  reviewStatusSchema,
+  workflowStageSchema,
+} from './workflow.js';
 
 const packageIdSchema = z.string().uuid();
 
@@ -80,6 +85,25 @@ export const knowledgeBitsContentSchema = z.object({
   }).strict(),
 }).strict();
 
+export const knowledgeBitsQaSchema = z.object({
+  deterministic: z.object({
+    passed: z.boolean(),
+    contentChecksum: checksumSchema.optional(),
+    findings: z.array(z.object({
+      code: z.string().min(1),
+      message: z.string().min(1),
+    }).strict()),
+  }).strict(),
+  editorial: z.object({
+    summary: z.string().min(1),
+    findings: z.array(z.object({
+      code: z.string().min(1),
+      severity: z.enum(['critical', 'major', 'minor']),
+      message: z.string().min(1),
+    }).strict()),
+  }).strict(),
+}).strict();
+
 export const knowledgeBitsManifestSchema = z.object({
   schemaVersion: z.literal('knowledge-bits.manifest.v1'),
   packageId: packageIdSchema,
@@ -120,6 +144,7 @@ export const knowledgeBitsSchema = z.object({
     workflow: artifactReferenceSchema,
   }).strict(),
   evidence: knowledgeBitsEvidenceSchema,
+  qa: knowledgeBitsQaSchema,
   packageChecksum: checksumSchema,
   approval: approvalSchema,
 }).strict().superRefine(({ approval, packageChecksum }, context) => {
@@ -144,6 +169,49 @@ export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
 export type KnowledgeBitsContent = z.infer<typeof knowledgeBitsContentSchema>;
 export type KnowledgeBitsManifest = z.infer<typeof knowledgeBitsManifestSchema>;
 export type KnowledgeBits = z.infer<typeof knowledgeBitsSchema>;
+export type KnowledgeBitsQa = z.infer<typeof knowledgeBitsQaSchema>;
 export type ArtifactPrepareRequest = z.infer<typeof artifactPrepareRequestSchema>;
 export type ArtifactPrepareResponse = z.infer<typeof artifactPrepareResponseSchema>;
 export type ArtifactCompleteRequest = z.infer<typeof artifactCompleteRequestSchema>;
+
+export const reviewPackageVersionSchema = z.object({
+  id: z.string().min(1),
+  schemaVersion: z.literal('knowledge-bits.review-package.v1'),
+  packageId: packageIdSchema,
+  revision: z.number().int().positive(),
+  packageChecksum: checksumSchema,
+  adapterVersion: z.string().min(1),
+  locale: z.string().min(1),
+  owner: z.string().min(1),
+  usageRights: z.record(z.unknown()),
+  content: knowledgeBitsContentSchema,
+  evidence: knowledgeBitsEvidenceSchema,
+  qa: knowledgeBitsQaSchema,
+  artifactInventory: z.array(artifactReferenceSchema),
+}).strict();
+
+export type ReviewPackageVersion = z.infer<typeof reviewPackageVersionSchema>;
+
+const reviewAssetSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('missing'), artifactId: z.null(), mediaType: z.null(), previewPath: z.null() }).strict(),
+  z.object({ state: z.literal('available'), artifactId: z.string().uuid(), mediaType: z.string().min(1), previewPath: z.string().min(1) }).strict(),
+]);
+
+export const reviewReadModelSchema = z.object({
+  runId: packageIdSchema,
+  title: z.string().min(1),
+  currentStage: workflowStageSchema,
+  currentRevision: z.number().int().positive(),
+  reviewStatus: reviewStatusSchema,
+  currentPackageChecksum: checksumSchema.nullable(),
+  decisionAllowed: z.boolean(),
+  issues: z.array(z.string().min(1)),
+  package: reviewPackageVersionSchema.nullable(),
+  assets: z.object({
+    hero: reviewAssetSchema,
+    infographic: reviewAssetSchema,
+    audio: reviewAssetSchema,
+  }).strict(),
+}).strict();
+
+export type ReviewReadModel = z.infer<typeof reviewReadModelSchema>;

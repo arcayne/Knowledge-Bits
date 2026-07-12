@@ -2,14 +2,24 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import type {
+  ArtifactReference,
   JobClaim,
   JobResult,
+  KnowledgeBitsContent,
+  KnowledgeBitsEvidence,
+  KnowledgeBitsQa,
   ReviewDecision,
   ReviewStatus,
   StageState,
   WorkflowStage,
 } from '@knowledge-bits/contracts';
-import { nextTransition, type TransitionResult } from '@knowledge-bits/pipeline';
+import {
+  calculatePackageChecksum,
+  nextTransition,
+  WorkflowTransitionError,
+  type JsonValue,
+  type TransitionResult,
+} from '@knowledge-bits/pipeline';
 import { Prisma, PrismaClient } from '@prisma/client';
 
 type JsonObject = Record<string, unknown>;
@@ -57,7 +67,7 @@ export interface WorkflowJob {
   runId: string;
   stage: WorkflowStage;
   action: string;
-  state: StageState;
+  state: StageState | 'superseded';
   idempotencyKey: string;
   availableAt: Date;
   leaseOwner: string | null;
@@ -107,6 +117,22 @@ export interface WorkflowDelivery {
   nextAttemptAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface WorkflowPackageVersion {
+  id: string;
+  runId: string;
+  revision: number;
+  packageChecksum: string;
+  adapterVersion: string;
+  locale: string;
+  owner: string;
+  usageRights: JsonObject;
+  content: KnowledgeBitsContent;
+  evidence: KnowledgeBitsEvidence;
+  qa: KnowledgeBitsQa;
+  artifactInventory: ArtifactReference[];
+  createdAt: Date;
 }
 
 export interface CreateRunInput {
@@ -227,6 +253,21 @@ export interface RecordPackageChangeInput {
   packageChecksum: string;
 }
 
+export interface RecordPackageVersionInput {
+  id?: string;
+  runId: string;
+  revision: number;
+  packageChecksum: string;
+  adapterVersion: string;
+  locale: string;
+  owner: string;
+  usageRights: JsonObject;
+  content: KnowledgeBitsContent;
+  evidence: KnowledgeBitsEvidence;
+  qa: KnowledgeBitsQa;
+  artifactInventory: ArtifactReference[];
+}
+
 export interface RecordDeliveryInput {
   id?: string;
   runId: string;
@@ -242,6 +283,9 @@ export interface WorkflowStore {
   createRun(input: CreateRunInput): Promise<WorkflowRun>;
   bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun>;
   getRun(id: string): Promise<WorkflowRun | null>;
+  listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]>;
+  getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null>;
+  getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null>;
   getJobContext(jobId: string): Promise<WorkflowJobContext | null>;
   queueJob(input: QueueJobInput): Promise<WorkflowJob>;
   claimJob(input: ClaimJobInput): Promise<JobClaim | null>;
@@ -257,6 +301,7 @@ export interface WorkflowStore {
   recordDelivery(input: RecordDeliveryInput): Promise<WorkflowDelivery>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
+  recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion>;
 }
 
 export class WorkflowConflictError extends Error {}
@@ -276,6 +321,18 @@ export class WorkflowRepository implements WorkflowStore {
 
   getRun(id: string): Promise<WorkflowRun | null> {
     return this.store.getRun(id);
+  }
+
+  listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
+    return this.store.listArtifacts(runId, revision);
+  }
+
+  getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
+    return this.store.getArtifact(runId, artifactId);
+  }
+
+  getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null> {
+    return this.store.getPackageVersion(runId, packageChecksum);
   }
 
   getJobContext(jobId: string): Promise<WorkflowJobContext | null> {
@@ -336,6 +393,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun> {
     return this.store.recordPackageChange(input);
+  }
+
+  recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion> {
+    return this.store.recordPackageVersion(input);
   }
 }
 
@@ -426,6 +487,27 @@ export class PrismaWorkflowStore implements WorkflowStore {
     return run ? toWorkflowRun(run) : null;
   }
 
+  async listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
+    const artifacts = await this.prisma.artifact.findMany({
+      where: { runId, revision },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return artifacts.map(toWorkflowArtifact);
+  }
+
+  async getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
+    const artifact = await this.prisma.artifact.findFirst({ where: { id: artifactId, runId } });
+    return artifact ? toWorkflowArtifact(artifact) : null;
+  }
+
+  async getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null> {
+    const version = await this.prisma.packageVersion.findFirst({
+      where: { runId, packageChecksum },
+      orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }],
+    });
+    return version ? toWorkflowPackageVersion(version) : null;
+  }
+
   async getJobContext(jobId: string): Promise<WorkflowJobContext | null> {
     const job = await this.prisma.job.findUnique({
       where: { id: jobId },
@@ -495,9 +577,16 @@ export class PrismaWorkflowStore implements WorkflowStore {
         WHERE "Job"."state" = 'queued'
           AND "Job"."availableAt" <= ${claimedAt}
           AND "Run"."currentStage" = "Job"."stage"
+          AND (
+            "Job"."stage" <> 'deliver'
+            OR (
+              "Run"."approvedChecksum" IS NOT NULL
+              AND "Job"."input"->>'packageChecksum' = "Run"."approvedChecksum"
+            )
+          )
           ${capabilityFilter}
         ORDER BY "Job"."availableAt" ASC, "Job"."createdAt" ASC
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF "Job", "Run" SKIP LOCKED
         LIMIT 1
       ) AND "state" = 'queued'
       RETURNING "id", "runId", "stage", "attempt", "leaseExpiresAt",
@@ -702,11 +791,25 @@ export class PrismaWorkflowStore implements WorkflowStore {
             });
         }
         if (effect.type === 'queue_delivery') {
+          const packageVersion = await transaction.packageVersion.findUnique({
+            where: {
+              runId_revision_packageChecksum: {
+                runId: job.runId,
+                revision: nextRevision,
+                packageChecksum: effect.packageChecksum,
+              },
+            },
+          });
+          if (!packageVersion) throw new WorkflowConflictError('Delivery requires a persisted immutable package version');
           await queueTransitionJob(transaction, {
               runId: job.runId,
               stage: 'deliver',
               revision: nextRevision,
-              input: { brief: job.run.brief as JsonObject, packageChecksum: effect.packageChecksum },
+              input: {
+                brief: job.run.brief as JsonObject,
+                packageChecksum: effect.packageChecksum,
+                packageVersionId: packageVersion.id,
+              },
           });
         }
         if (effect.type === 'request_review') {
@@ -859,9 +962,8 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
   async recordReview(input: RecordReviewInput): Promise<WorkflowReview> {
     const where = {
-      runId_revision_packageChecksum: {
+      runId_packageChecksum: {
         runId: input.runId,
-        revision: input.revision,
         packageChecksum: input.packageChecksum,
       },
     };
@@ -906,22 +1008,34 @@ export class PrismaWorkflowStore implements WorkflowStore {
   async reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
     try {
       return await this.prisma.$transaction(async (transaction) => {
+        await lockRun(transaction, input.runId);
         const run = await transaction.run.findUnique({
           where: { id: input.runId },
           include: { stages: true },
         });
         if (!run) throw new WorkflowNotFoundError('Run not found');
-        if (run.packageChecksum !== input.packageChecksum) {
-          throw new WorkflowConflictError('Review checksum must match the current package checksum');
-        }
-
         const reviewInput = toRecordReviewInput(run, input);
         const existing = await transaction.review.findUnique({
-          where: { runId_revision_packageChecksum: reviewIdentityWhere(reviewInput) },
+          where: { runId_packageChecksum: reviewIdentityWhere(reviewInput) },
         });
         if (existing) {
           resolveExistingReview(existing, reviewInput);
           return toWorkflowRun(run);
+        }
+        if (run.packageChecksum !== input.packageChecksum) {
+          throw new WorkflowConflictError('Review checksum must match the current package checksum');
+        }
+        const packageVersion = await transaction.packageVersion.findUnique({
+          where: {
+            runId_revision_packageChecksum: {
+              runId: run.id,
+              revision: run.currentRevision,
+              packageChecksum: input.packageChecksum,
+            },
+          },
+        });
+        if (!packageVersion) {
+          throw new WorkflowConflictError('Review requires a persisted immutable package version');
         }
 
         const stage = run.stages.find((candidate) => candidate.name === run.currentStage);
@@ -979,7 +1093,11 @@ export class PrismaWorkflowStore implements WorkflowStore {
               runId: run.id,
               stage: 'deliver',
               revision: nextRevision,
-              input: { brief: run.brief as JsonObject, packageChecksum: effect.packageChecksum },
+              input: {
+                brief: run.brief as JsonObject,
+                packageChecksum: effect.packageChecksum,
+                packageVersionId: packageVersion.id,
+              },
             });
           }
           if (effect.type === 'queue_stage') {
@@ -1004,11 +1122,11 @@ export class PrismaWorkflowStore implements WorkflowStore {
         return toWorkflowRun(updated);
       });
     } catch (error) {
+      if (error instanceof WorkflowTransitionError) throw new WorkflowConflictError(error.message);
       if (!isPrismaUniqueConflict(error)) throw error;
       const run = await this.prisma.run.findUnique({ where: { id: input.runId }, include: { stages: true } });
-      const existing = await this.prisma.review.findFirst({
-        where: { runId: input.runId, packageChecksum: input.packageChecksum },
-        orderBy: { revision: 'desc' },
+      const existing = await this.prisma.review.findUnique({
+        where: { runId_packageChecksum: { runId: input.runId, packageChecksum: input.packageChecksum } },
       });
       if (!run || !existing) throw error;
       resolveExistingReview(existing, { ...toRecordReviewInput(run, input), revision: existing.revision });
@@ -1018,6 +1136,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
   async recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun> {
     return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
       const run = await transaction.run.findUnique({ where: { id: input.runId }, include: { stages: true } });
       if (!run) throw new WorkflowNotFoundError('Run not found');
       if (run.packageChecksum === input.packageChecksum) return toWorkflowRun(run);
@@ -1046,7 +1165,74 @@ export class PrismaWorkflowStore implements WorkflowStore {
         },
         include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
       });
+      await supersedeDeliveryJobs(transaction, run.id, input.packageChecksum);
       return toWorkflowRun(updated);
+    });
+  }
+
+  async recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion> {
+    assertPackageVersionChecksum(input);
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
+      const run = await transaction.run.findUnique({ where: { id: input.runId }, include: { stages: true } });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      if (run.currentRevision !== input.revision) {
+        throw new WorkflowConflictError('Package version revision must match the current run revision');
+      }
+      const where = {
+        runId_revision_packageChecksum: {
+          runId: input.runId,
+          revision: input.revision,
+          packageChecksum: input.packageChecksum,
+        },
+      };
+      const data = {
+        id: input.id,
+        runId: input.runId,
+        revision: input.revision,
+        packageChecksum: input.packageChecksum,
+        adapterVersion: input.adapterVersion,
+        locale: input.locale,
+        owner: input.owner,
+        usageRights: toPrismaJson(input.usageRights),
+        content: toPrismaJson(input.content as unknown as JsonObject),
+        evidence: toPrismaJson(input.evidence as unknown as JsonObject),
+        qa: toPrismaJson(input.qa as unknown as JsonObject),
+        artifactInventory: input.artifactInventory as unknown as Prisma.InputJsonValue,
+      };
+      const existing = await transaction.packageVersion.findUnique({ where });
+      const version = existing
+        ? resolveExistingPackageVersion(toWorkflowPackageVersion(existing), input)
+        : toWorkflowPackageVersion(await transaction.packageVersion.create({ data }));
+
+      if (run.packageChecksum !== input.packageChecksum) {
+        const stage = run.stages.find((candidate) => candidate.name === run.currentStage);
+        if (!stage) throw new WorkflowConflictError('Current stage does not exist');
+        const transition = nextTransition({
+          stage: run.currentStage as WorkflowStage,
+          state: stage.state as StageState,
+          revisionAttempts: stage.revisionAttempt,
+          packageChecksum: run.packageChecksum as `${string}` | null,
+          approvedChecksum: run.approvedChecksum as `${string}` | null,
+          reason: stage.reason ?? undefined,
+        }, { type: 'package_changed', packageChecksum: input.packageChecksum as `${string}` });
+        await transaction.stage.upsert({
+          where: { runId_name: { runId: run.id, name: transition.stage } },
+          update: { state: transition.state, reason: transition.reason ?? null, revisionAttempt: transition.revisionAttempts },
+          create: { runId: run.id, name: transition.stage, state: transition.state, reason: transition.reason ?? null, revisionAttempt: transition.revisionAttempts },
+        });
+        await transaction.run.update({
+          where: { id: run.id },
+          data: {
+            currentStage: transition.stage,
+            packageChecksum: transition.packageChecksum,
+            approvedChecksum: transition.approvedChecksum,
+            reviewStatus: reviewStatusForTransition(run.reviewStatus as ReviewStatus, transition),
+          },
+        });
+        await supersedeDeliveryJobs(transaction, run.id, input.packageChecksum);
+      }
+      return version;
     });
   }
 }
@@ -1069,6 +1255,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
   private readonly artifactsById = new Map<string, WorkflowArtifact>();
   private readonly artifactsByStorageKey = new Map<string, WorkflowArtifact>();
   private readonly reviewsByIdentity = new Map<string, WorkflowReview>();
+  private readonly packageVersionsByIdentity = new Map<string, WorkflowPackageVersion>();
   private readonly deliveriesByIdempotencyKey = new Map<string, WorkflowDelivery>();
   private readonly effectsByKey = new Map<string, { runId: string; jobId: string; type: string; payload: JsonObject }>();
   private readonly clock: () => Date;
@@ -1153,6 +1340,23 @@ class InMemoryWorkflowStore implements WorkflowStore {
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
   }
 
+  async listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
+    return [...this.artifactsById.values()]
+      .filter((artifact) => artifact.runId === runId && artifact.revision === revision)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+  }
+
+  async getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
+    const artifact = this.artifactsById.get(artifactId);
+    return artifact?.runId === runId ? artifact : null;
+  }
+
+  async getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null> {
+    return [...this.packageVersionsByIdentity.values()]
+      .filter((version) => version.runId === runId && version.packageChecksum === packageChecksum)
+      .sort((left, right) => right.revision - left.revision || right.createdAt.getTime() - left.createdAt.getTime())[0] ?? null;
+  }
+
   async getJobContext(jobId: string): Promise<WorkflowJobContext | null> {
     const job = this.jobs.get(jobId);
     if (!job) return null;
@@ -1205,6 +1409,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
       .filter((candidate) => candidate.state === 'queued'
         && candidate.availableAt <= claimedAt
         && this.requireRun(candidate.runId).currentStage === candidate.stage
+        && (candidate.stage !== 'deliver'
+          || (this.requireRun(candidate.runId).approvedChecksum !== null
+            && candidate.input.packageChecksum === this.requireRun(candidate.runId).approvedChecksum))
         && (!input.capabilities?.length || input.capabilities.includes(candidate.action)))
       .sort((left, right) => left.availableAt.getTime() - right.availableAt.getTime()
         || left.createdAt.getTime() - right.createdAt.getTime())[0];
@@ -1388,12 +1595,18 @@ class InMemoryWorkflowStore implements WorkflowStore {
         });
       }
       if (effect.type === 'queue_delivery') {
+        const packageVersion = [...this.packageVersionsByIdentity.values()].find((version) => (
+          version.runId === run.id
+          && version.revision === nextRevision
+          && version.packageChecksum === effect.packageChecksum
+        ));
+        if (!packageVersion) throw new WorkflowConflictError('Delivery requires a persisted immutable package version');
         await this.queueJob({
           runId: run.id,
           stage: 'deliver',
           action: ACTION_BY_STAGE.deliver,
-          idempotencyKey: transitionJobIdempotencyKey(run.id, 'deliver', nextRevision),
-          input: { brief: run.brief },
+          idempotencyKey: deliveryJobIdempotencyKey(run.id, nextRevision, effect.packageChecksum),
+          input: { brief: run.brief, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
         });
       }
       if (effect.type === 'request_review') {
@@ -1527,9 +1740,6 @@ class InMemoryWorkflowStore implements WorkflowStore {
 
   async reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
     const run = this.requireRun(input.runId);
-    if (run.packageChecksum !== input.packageChecksum) {
-      throw new WorkflowConflictError('Review checksum must match the current package checksum');
-    }
     const reviewInput = toRecordReviewInput(run, input);
     const identity = reviewIdentity(reviewInput);
     const existing = this.reviewsByIdentity.get(identity);
@@ -1537,6 +1747,15 @@ class InMemoryWorkflowStore implements WorkflowStore {
       resolveExistingReview(existing, reviewInput);
       return { ...run, nextRetryAt: this.nextRetryAt(run) };
     }
+    if (run.packageChecksum !== input.packageChecksum) {
+      throw new WorkflowConflictError('Review checksum must match the current package checksum');
+    }
+    const packageVersion = [...this.packageVersionsByIdentity.values()].find((version) => (
+      version.runId === run.id
+      && version.revision === run.currentRevision
+      && version.packageChecksum === input.packageChecksum
+    ));
+    if (!packageVersion) throw new WorkflowConflictError('Review requires a persisted immutable package version');
     const stage = run.stages[run.currentStage];
     if (!stage) throw new WorkflowConflictError('Current stage does not exist');
     const transition = nextTransition({
@@ -1587,8 +1806,8 @@ class InMemoryWorkflowStore implements WorkflowStore {
           runId: run.id,
           stage: 'deliver',
           action: ACTION_BY_STAGE.deliver,
-          idempotencyKey: transitionJobIdempotencyKey(run.id, 'deliver', run.currentRevision),
-          input: { brief: run.brief, packageChecksum: effect.packageChecksum },
+          idempotencyKey: deliveryJobIdempotencyKey(run.id, run.currentRevision, effect.packageChecksum),
+          input: { brief: run.brief, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
         });
       }
       if (effect.type === 'queue_stage') {
@@ -1639,7 +1858,42 @@ class InMemoryWorkflowStore implements WorkflowStore {
     run.approvedChecksum = transition.approvedChecksum;
     run.reviewStatus = reviewStatusForTransition(run.reviewStatus, transition);
     run.updatedAt = this.clock();
+    this.supersedeDeliveryJobs(run.id, input.packageChecksum);
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
+  async recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion> {
+    assertPackageVersionChecksum(input);
+    const run = this.requireRun(input.runId);
+    if (run.currentRevision !== input.revision) {
+      throw new WorkflowConflictError('Package version revision must match the current run revision');
+    }
+    const identity = packageVersionIdentity(input);
+    const existing = this.packageVersionsByIdentity.get(identity);
+    const version = existing ? resolveExistingPackageVersion(existing, input) : {
+      ...input,
+      id: input.id ?? this.idGenerator(),
+      createdAt: this.clock(),
+    };
+    this.packageVersionsByIdentity.set(identity, version);
+    if (run.packageChecksum !== input.packageChecksum) {
+      await this.recordPackageChange({ runId: input.runId, packageChecksum: input.packageChecksum });
+    }
+    return version;
+  }
+
+  private supersedeDeliveryJobs(runId: string, packageChecksum: string): void {
+    for (const job of this.jobs.values()) {
+      if (job.runId === runId
+        && job.stage === 'deliver'
+        && (job.state === 'queued' || job.state === 'running')
+        && job.input.packageChecksum !== packageChecksum) {
+        job.state = 'superseded';
+        job.leaseOwner = null;
+        job.leaseExpiresAt = null;
+        job.updatedAt = this.clock();
+      }
+    }
   }
 
   private requireRun(runId: string): WorkflowRun {
@@ -1691,13 +1945,12 @@ function assertDurableEffect(condition: boolean, message: string): void {
 }
 
 function reviewIdentity(input: RecordReviewInput): string {
-  return `${input.runId}:${input.revision}:${input.packageChecksum}`;
+  return `${input.runId}:${input.packageChecksum}`;
 }
 
 function reviewIdentityWhere(input: RecordReviewInput) {
   return {
     runId: input.runId,
-    revision: input.revision,
     packageChecksum: input.packageChecksum,
   };
 }
@@ -1743,6 +1996,10 @@ function transitionJobIdempotencyKey(
   return `workflow:${runId}:${stage}:${revision}`;
 }
 
+function deliveryJobIdempotencyKey(runId: string, revision: number, packageChecksum: string): string {
+  return `workflow:${runId}:deliver:${revision}:${packageChecksum}`;
+}
+
 function retryJobIdempotencyKey(jobId: string, attempt: number): string {
   return `workflow:${jobId}:retry:${attempt}`;
 }
@@ -1761,14 +2018,20 @@ async function queueTransitionJob(
   },
 ): Promise<void> {
   await transaction.job.upsert({
-    where: { idempotencyKey: transitionJobIdempotencyKey(input.runId, input.stage, input.revision) },
+    where: {
+      idempotencyKey: input.stage === 'deliver' && typeof input.input.packageChecksum === 'string'
+        ? deliveryJobIdempotencyKey(input.runId, input.revision, input.input.packageChecksum)
+        : transitionJobIdempotencyKey(input.runId, input.stage, input.revision),
+    },
     update: {},
     create: {
       runId: input.runId,
       stage: input.stage,
       action: ACTION_BY_STAGE[input.stage],
       state: 'queued',
-      idempotencyKey: transitionJobIdempotencyKey(input.runId, input.stage, input.revision),
+      idempotencyKey: input.stage === 'deliver' && typeof input.input.packageChecksum === 'string'
+        ? deliveryJobIdempotencyKey(input.runId, input.revision, input.input.packageChecksum)
+        : transitionJobIdempotencyKey(input.runId, input.stage, input.revision),
       input: toPrismaJson(input.input),
     },
   });
@@ -1856,7 +2119,7 @@ function toWorkflowJob(job: {
   return {
     ...job,
     stage: job.stage as WorkflowStage,
-    state: job.state as StageState,
+    state: job.state as StageState | 'superseded',
     input: job.input as JsonObject,
     result: job.result as JobResult | null,
     completionReceipt: parseCompletionReceipt(job.completionReceipt),
@@ -2003,9 +2266,103 @@ function resolveExistingReview(
   review: WorkflowReview,
   input: RecordReviewInput,
 ): WorkflowReview {
-  if (review.decision !== input.decision) {
+  if (review.decision !== input.decision
+    || review.reviewerId !== input.reviewerId
+    || review.comment !== input.comment) {
     throw new WorkflowConflictError('Review decision conflicts with the existing review');
   }
 
   return review;
+}
+
+function packageVersionIdentity(input: Pick<RecordPackageVersionInput, 'runId' | 'revision' | 'packageChecksum'>): string {
+  return `${input.runId}:${input.revision}:${input.packageChecksum}`;
+}
+
+function assertPackageVersionChecksum(input: RecordPackageVersionInput): void {
+  const calculated = calculatePackageChecksum({
+    content: input.content,
+    evidence: input.evidence,
+    qa: input.qa,
+    assetInventory: input.artifactInventory,
+    adapterVersion: input.adapterVersion,
+    locale: input.locale,
+    owner: input.owner,
+    usageRights: input.usageRights as JsonValue,
+  });
+  if (calculated !== input.packageChecksum) {
+    throw new WorkflowConflictError('Package checksum does not match the canonical package contents');
+  }
+}
+
+function resolveExistingPackageVersion(
+  version: WorkflowPackageVersion,
+  input: RecordPackageVersionInput,
+): WorkflowPackageVersion {
+  const comparable = {
+    runId: version.runId,
+    revision: version.revision,
+    packageChecksum: version.packageChecksum,
+    adapterVersion: version.adapterVersion,
+    locale: version.locale,
+    owner: version.owner,
+    usageRights: version.usageRights,
+    content: version.content,
+    evidence: version.evidence,
+    qa: version.qa,
+    artifactInventory: version.artifactInventory,
+  };
+  const expected = { ...input };
+  delete expected.id;
+  if (!isDeepStrictEqual(comparable, expected)) {
+    throw new WorkflowConflictError('Package version conflicts with the existing immutable package');
+  }
+  return version;
+}
+
+async function lockRun(transaction: Prisma.TransactionClient, runId: string): Promise<void> {
+  await transaction.$queryRaw(Prisma.sql`SELECT "id" FROM "Run" WHERE "id" = ${runId} FOR UPDATE`);
+}
+
+async function supersedeDeliveryJobs(
+  transaction: Prisma.TransactionClient,
+  runId: string,
+  packageChecksum: string,
+): Promise<void> {
+  await transaction.$executeRaw(Prisma.sql`
+    UPDATE "Job"
+    SET "state" = 'superseded',
+        "leaseOwner" = NULL,
+        "leaseExpiresAt" = NULL,
+        "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "runId" = ${runId}
+      AND "stage" = 'deliver'
+      AND "state" IN ('queued', 'running')
+      AND COALESCE("input"->>'packageChecksum', '') <> ${packageChecksum}
+  `);
+}
+
+function toWorkflowPackageVersion(version: {
+  id: string;
+  runId: string;
+  revision: number;
+  packageChecksum: string;
+  adapterVersion: string;
+  locale: string;
+  owner: string;
+  usageRights: Prisma.JsonValue;
+  content: Prisma.JsonValue;
+  evidence: Prisma.JsonValue;
+  qa: Prisma.JsonValue;
+  artifactInventory: Prisma.JsonValue;
+  createdAt: Date;
+}): WorkflowPackageVersion {
+  return {
+    ...version,
+    usageRights: version.usageRights as JsonObject,
+    content: version.content as unknown as KnowledgeBitsContent,
+    evidence: version.evidence as unknown as KnowledgeBitsEvidence,
+    qa: version.qa as unknown as KnowledgeBitsQa,
+    artifactInventory: version.artifactInventory as unknown as ArtifactReference[],
+  };
 }

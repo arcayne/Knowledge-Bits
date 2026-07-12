@@ -37,6 +37,10 @@ class FixtureArtifactStorageAdapter implements ArtifactStorageAdapter {
     if (!object) throw new ArtifactStorageObjectNotFoundError('Fixture object does not exist');
     return object;
   }
+
+  async read(): Promise<Uint8Array> {
+    throw new Error('not used');
+  }
 }
 
 function createFixture() {
@@ -84,6 +88,11 @@ function createFixture() {
         brief: { objective: 'Create a visual artifact' },
         currentStage: stage,
         currentRevision,
+        ...(stage === 'deliver' ? {
+          packageChecksum: checksum,
+          approvedChecksum: checksum,
+          reviewStatus: 'approved' as const,
+        } : {}),
         stages: [{ name: stage, state: 'queued' }],
       });
       const job = await repository.queueJob({
@@ -91,7 +100,7 @@ function createFixture() {
         stage,
         action,
         idempotencyKey: `artifact-upload-job:${action}`,
-        input: { kind: 'evidence' },
+        input: { kind: 'evidence', ...(stage === 'deliver' ? { packageChecksum: checksum } : {}) },
       });
       return job;
     },

@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { nextTransition } from '@knowledge-bits/pipeline';
+import { calculatePackageChecksum, nextTransition } from '@knowledge-bits/pipeline';
 
 import { createApp } from '../app.js';
 import {
   createInMemoryWorkflowStore,
+  type RecordPackageVersionInput,
   WorkflowRepository,
 } from '../repositories/workflow-repository.js';
 
-const checksumA = 'a'.repeat(64);
-const checksumB = 'b'.repeat(64);
+const checksumA = canonicalChecksum('A');
+const checksumB = canonicalChecksum('B');
 
 function createTestApp() {
   const repository = new WorkflowRepository(createInMemoryWorkflowStore());
@@ -20,6 +21,7 @@ function createTestApp() {
       env: {
         ENGINE_API_TOKEN: 'engine-api-test',
         ENGINE_REVIEW_TOKEN: 'engine-review-test',
+        ENGINE_REVIEWER_ID: 'editor-1',
       },
     }),
     repository,
@@ -36,7 +38,6 @@ test('approval freezes the checksum and queues one delivery action', async () =>
     body: JSON.stringify({
       decision: 'approve',
       packageChecksum: checksumA,
-      reviewerId: 'editor-1',
     }),
   });
 
@@ -58,7 +59,6 @@ test('approval freezes the checksum and queues one delivery action', async () =>
     body: JSON.stringify({
       decision: 'approve',
       packageChecksum: checksumA,
-      reviewerId: 'editor-1',
     }),
   });
   assert.equal(replay.status, 200);
@@ -87,7 +87,6 @@ test('changes require a comment, bind it to create, and content changes invalida
     body: JSON.stringify({
       decision: 'request_changes',
       packageChecksum: checksumA,
-      reviewerId: 'editor-1',
       comment: '   ',
     }),
   });
@@ -99,12 +98,34 @@ test('changes require a comment, bind it to create, and content changes invalida
     body: JSON.stringify({
       decision: 'request_changes',
       packageChecksum: checksumA,
-      reviewerId: 'editor-1',
       comment: 'Add the primary source to the learner copy.',
     }),
   });
   assert.equal(changes.status, 200);
   assert.equal((await changes.json()).currentRevision, 2);
+
+  const replay = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-review-test' },
+    body: JSON.stringify({
+      decision: 'request_changes',
+      packageChecksum: checksumA,
+      comment: 'Add the primary source to the learner copy.',
+    }),
+  });
+  assert.equal(replay.status, 200);
+  assert.equal((await replay.json()).currentRevision, 2);
+
+  const conflictingComment = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-review-test' },
+    body: JSON.stringify({
+      decision: 'request_changes',
+      packageChecksum: checksumA,
+      comment: 'Replace the source instead.',
+    }),
+  });
+  assert.equal(conflictingComment.status, 409);
 
   const create = await repository.claimJob({
     workerId: 'create-worker',
@@ -122,11 +143,13 @@ test('changes require a comment, bind it to create, and content changes invalida
   const approved = await app.request(`/runs/${approvedRunId}/review`, {
     method: 'POST',
     headers: { Authorization: 'Bearer engine-review-test' },
-    body: JSON.stringify({ decision: 'approve', packageChecksum: checksumA, reviewerId: 'editor-1' }),
+    body: JSON.stringify({ decision: 'approve', packageChecksum: checksumA }),
   });
   assert.equal(approved.status, 200);
 
-  const changed = await repository.recordPackageChange({ runId: approvedRunId, packageChecksum: checksumB });
+  await repository.recordPackageVersion(packageVersionInput(approvedRunId, checksumB));
+  const changed = await repository.getRun(approvedRunId);
+  assert.ok(changed);
   assert.equal(changed.currentStage, 'human_review');
   assert.equal(changed.reviewStatus, 'pending');
   assert.equal(changed.approvedChecksum, null);
@@ -139,10 +162,17 @@ test('only the run-level review endpoint is available', async () => {
   const artifactRoute = await app.request(`/runs/${runId}/artifacts/asset-1/review`, {
     method: 'POST',
     headers: { Authorization: 'Bearer engine-review-test' },
-    body: JSON.stringify({ decision: 'approve', packageChecksum: checksumA, reviewerId: 'editor-1' }),
+    body: JSON.stringify({ decision: 'approve', packageChecksum: checksumA, reviewerId: 'browser-controlled' }),
   });
 
   assert.equal(artifactRoute.status, 404);
+
+  const untrustedIdentity = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-review-test' },
+    body: JSON.stringify({ decision: 'approve', packageChecksum: checksumA, reviewerId: 'browser-controlled' }),
+  });
+  assert.equal(untrustedIdentity.status, 400);
 });
 
 async function reviewReadyRun(repository: WorkflowRepository, checksum: string): Promise<string> {
@@ -179,5 +209,35 @@ async function reviewReadyRun(repository: WorkflowRepository, checksum: string):
     });
   }
 
+  await repository.recordPackageVersion(packageVersionInput(run.id, checksum));
+
   return run.id;
+}
+
+function packageVersionInput(id: string, packageChecksum: string): RecordPackageVersionInput {
+  const material = canonicalMaterial(packageChecksum === checksumB ? 'B' : 'A');
+  return {
+    runId: id,
+    revision: 1,
+    packageChecksum,
+    ...material,
+  };
+}
+
+function canonicalChecksum(variant: string): string {
+  const material = canonicalMaterial(variant);
+  return calculatePackageChecksum({ ...material, assetInventory: material.artifactInventory });
+}
+
+function canonicalMaterial(variant: string) {
+  return {
+    adapterVersion: 'review-package@1',
+    locale: 'en',
+    owner: 'knowledge-bits-engine',
+    usageRights: { scope: 'internal-review' },
+    content: { schemaVersion: 'knowledge-bits.content.v1' as const, target: { kind: 'nuglet.lesson.v1' as const, payload: { title: `Build a rainy day fund ${variant}` } } },
+    evidence: { schemaVersion: 'knowledge-bits.evidence.v1' as const, sources: [], claims: [] },
+    qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Ready', findings: [] } },
+    artifactInventory: [],
+  };
 }

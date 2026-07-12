@@ -6,6 +6,7 @@ import {
   type KnowledgeBits,
   type KnowledgeBitsContent,
   type KnowledgeBitsEvidence,
+  type KnowledgeBitsQa,
 } from '@knowledge-bits/contracts';
 
 type JsonPrimitive = boolean | null | number | string;
@@ -14,6 +15,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 export interface KnowledgeBitsChecksumInput {
   content: KnowledgeBitsContent;
   evidence: KnowledgeBitsEvidence;
+  qa: KnowledgeBitsQa;
   assetInventory: readonly ArtifactReference[];
   adapterVersion: string;
   locale: string;
@@ -35,6 +37,7 @@ export function calculatePackageChecksum(input: KnowledgeBitsChecksumInput): str
     assetInventory: input.assetInventory,
     content: input.content,
     evidence: input.evidence,
+    qa: input.qa,
     locale: input.locale,
     owner: input.owner,
     usageRights: input.usageRights,
@@ -63,6 +66,7 @@ export function buildKnowledgeBits(input: BuildKnowledgeBitsInput): KnowledgeBit
     target: input.content.target,
     surfaces: input.surfaces,
     evidence: input.evidence,
+    qa: input.qa,
     packageChecksum,
     approval,
   });

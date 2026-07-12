@@ -23,6 +23,7 @@ model Run {
   jobs            Job[]
   artifacts       Artifact[]
   reviews         Review[]
+  packageVersions PackageVersion[]
   deliveries      Delivery[]
   workflowEffects WorkflowEffect[]
 }
@@ -104,7 +105,27 @@ model Review {
   createdAt       DateTime @default(now())
   run             Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
 
+  @@unique([runId, packageChecksum])
+}
+
+model PackageVersion {
+  id                String   @id @default(uuid())
+  runId             String
+  revision          Int
+  packageChecksum   String
+  adapterVersion    String
+  locale            String
+  owner             String
+  usageRights       Json
+  content           Json
+  evidence          Json
+  qa                 Json
+  artifactInventory Json
+  createdAt         DateTime @default(now())
+  run               Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
+
   @@unique([runId, revision, packageChecksum])
+  @@index([runId, packageChecksum])
 }
 
 model Delivery {

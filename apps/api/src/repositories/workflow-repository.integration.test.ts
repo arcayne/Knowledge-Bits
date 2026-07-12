@@ -6,11 +6,12 @@ import { fileURLToPath } from 'node:url';
 
 import test from 'node:test';
 
-import { nextTransition } from '@knowledge-bits/pipeline';
+import { calculatePackageChecksum, nextTransition } from '@knowledge-bits/pipeline';
 
 import { createIsolatedPrismaClient } from '../config.js';
 import {
   createWorkflowRepository,
+  type RecordPackageVersionInput,
   WorkflowConflictError,
 } from './workflow-repository.js';
 
@@ -137,6 +138,9 @@ test(
       brief: { source: 'audit-artifact-test' },
       currentStage: 'deliver',
       currentRevision: 2,
+      packageChecksum: checksum,
+      approvedChecksum: checksum,
+      reviewStatus: 'approved',
       stages: [{ name: 'deliver', state: 'queued' }],
     });
     const auditJob = await repository.queueJob({
@@ -323,6 +327,7 @@ test(
     });
     assert.equal(reviewed.stages.human_review?.state, 'needs_human');
     assert.equal(await prisma.workflowEffect.count({ where: { runId, type: 'request_review' } }), 1);
+    await repository.recordPackageVersion(packageVersionInput(runId, checksum));
 
     const approved = await repository.reviewRun({
       runId,
@@ -342,7 +347,9 @@ test(
     assert.equal(await prisma.review.count({ where: { runId, revision: 1, packageChecksum: checksum } }), 1);
     assert.equal(await prisma.job.count({ where: { runId, stage: 'deliver', state: 'queued' } }), 1);
 
-    const invalidated = await repository.recordPackageChange({ runId, packageChecksum: 'b'.repeat(64) });
+    await repository.recordPackageVersion(packageVersionInput(runId, changedChecksum));
+    const invalidated = await repository.getRun(runId);
+    assert.ok(invalidated);
     assert.equal(invalidated.currentStage, 'human_review');
     assert.equal(invalidated.reviewStatus, 'pending');
     assert.equal(invalidated.approvedChecksum, null);
@@ -494,6 +501,9 @@ test(
       locale: 'en',
       brief: { source: 'delivery-test' },
       currentStage: 'deliver',
+      packageChecksum: checksum,
+      approvedChecksum: checksum,
+      reviewStatus: 'approved',
       stages: [{ name: 'deliver', state: 'queued' }],
     });
     const deliveryJob = await repository.queueJob({
@@ -525,10 +535,95 @@ test(
     });
     assert.equal(delivered.stages.deliver?.state, 'done');
     assert.equal(await prisma.workflowEffect.count({ where: { runId: deliveryRunId, type: 'record_delivery' } }), 1);
+
+    const concurrentRunId = '6c2ea1a2-2d0f-43dc-9ea4-ef56f78dd221';
+    await repository.createRun({
+      id: concurrentRunId,
+      title: 'Concurrent package replacement',
+      locale: 'en',
+      brief: {},
+      currentStage: 'human_review',
+      packageChecksum: checksum,
+      stages: [{ name: 'human_review', state: 'needs_human' }],
+    });
+    await repository.recordPackageVersion(packageVersionInput(concurrentRunId, checksum));
+
+    await Promise.allSettled([
+      repository.reviewRun({
+        runId: concurrentRunId,
+        packageChecksum: checksum,
+        decision: 'approve',
+        reviewerId: 'database-editor',
+      }),
+      repository.recordPackageVersion(packageVersionInput(concurrentRunId, changedChecksum)),
+    ]);
+
+    const concurrent = await repository.getRun(concurrentRunId);
+    assert.equal(concurrent?.packageChecksum, changedChecksum);
+    assert.equal(concurrent?.approvedChecksum, null);
+    assert.equal(concurrent?.currentStage, 'human_review');
+    assert.equal(await prisma.job.count({
+      where: {
+        runId: concurrentRunId,
+        stage: 'deliver',
+        state: { in: ['queued', 'running'] },
+      },
+    }), 0);
+
+    const replayRunId = '7270fb64-8ba4-4b03-a2c4-bad2c3e62f52';
+    await repository.createRun({
+      id: replayRunId,
+      title: 'PostgreSQL review replay',
+      locale: 'en',
+      brief: {},
+      currentStage: 'human_review',
+      packageChecksum: checksum,
+      stages: [{ name: 'human_review', state: 'needs_human' }],
+    });
+    await repository.recordPackageVersion(packageVersionInput(replayRunId, checksum));
+    const decision = {
+      runId: replayRunId,
+      packageChecksum: checksum,
+      decision: 'request_changes' as const,
+      reviewerId: 'database-editor',
+      comment: 'Clarify the source.',
+    };
+    assert.equal((await repository.reviewRun(decision)).currentRevision, 2);
+    assert.equal((await repository.reviewRun(decision)).currentRevision, 2);
+    await assert.rejects(repository.reviewRun({ ...decision, comment: 'Use another source.' }), /conflict/i);
   },
 );
 
-const checksum = 'a'.repeat(64);
+const checksum = canonicalChecksum('A');
+const changedChecksum = canonicalChecksum('B');
+
+function packageVersionInput(runId: string, packageChecksum: string): RecordPackageVersionInput {
+  const material = canonicalMaterial(packageChecksum === changedChecksum ? 'B' : 'A');
+  return {
+    runId,
+    revision: 1,
+    packageChecksum,
+    ...material,
+  };
+}
+
+function canonicalChecksum(variant: string): string {
+  const material = canonicalMaterial(variant);
+  return calculatePackageChecksum({ ...material, assetInventory: material.artifactInventory });
+}
+
+function canonicalMaterial(variant: string) {
+  return {
+    adapterVersion: 'review-package@1',
+    locale: 'en',
+    owner: 'knowledge-bits-engine',
+    usageRights: { scope: 'internal-review' },
+    content: { schemaVersion: 'knowledge-bits.content.v1' as const, target: { kind: 'nuglet.lesson.v1' as const, payload: { title: `Database package ${variant}` } } },
+    evidence: { schemaVersion: 'knowledge-bits.evidence.v1' as const, sources: [], claims: [] },
+    qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Ready', findings: [] } },
+    artifactInventory: [],
+  };
+}
 
 async function startPostgres(containerName: string, databaseName: string): Promise<string> {
   run('docker', [

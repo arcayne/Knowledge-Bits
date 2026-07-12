@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   knowledgeBitsSchema,
+  reviewRunRequestSchema,
   stageStateSchema,
   workflowStageSchema,
 } from '../dist/index.js';
@@ -62,6 +63,10 @@ function validKnowledgeBits() {
         citations: [{ sourceId, excerpt: 'An emergency fund covers unexpected expenses.' }],
       }],
     },
+    qa: {
+      deterministic: { passed: true, findings: [] },
+      editorial: { summary: 'Ready for review.', findings: [] },
+    },
     packageChecksum: checksum,
     approval: {
       status: 'unapproved',
@@ -108,4 +113,19 @@ test('changes requested require a human comment', () => {
 
 test('accepts a complete unapproved package with all four surfaces', () => {
   assert.deepEqual(knowledgeBitsSchema.parse(validKnowledgeBits()).packageId, packageId);
+});
+
+test('review requests never accept a caller supplied reviewer identity', () => {
+  assert.deepEqual(reviewRunRequestSchema.parse({
+    decision: 'approve',
+    packageChecksum: checksum,
+  }), {
+    decision: 'approve',
+    packageChecksum: checksum,
+  });
+  assert.throws(() => reviewRunRequestSchema.parse({
+    decision: 'approve',
+    packageChecksum: checksum,
+    reviewerId: 'browser-controlled',
+  }));
 });

@@ -22,6 +22,8 @@ const { runId } = Astro.params;
       .review-section ul { padding-left: 1.15rem; }
       .muted { color: #596a64; }
       .asset { border: 1px solid #b9c6c0; min-height: 6rem; padding: .75rem; margin-bottom: .75rem; background: #fff; }
+      .asset img, .asset audio { display: block; max-width: 100%; width: 100%; }
+      button:disabled { cursor: not-allowed; opacity: .45; }
       .decision-bar { position: fixed; inset: auto 0 0; background: #10251f; color: #fff; border-top: 1px solid #0b1a16; padding: .75rem 1.25rem; }
       .decision-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
       button { border: 1px solid transparent; padding: .55rem .8rem; font: inherit; cursor: pointer; }
@@ -44,8 +46,8 @@ const { runId } = Astro.params;
       <div class="review-grid" id="review" hidden>
         <section>
           <section class="review-section"><h2>Learner preview</h2><h3 id="preview-title">Missing learner preview</h3><p id="preview-copy" class="muted">The package does not include preview copy.</p></section>
-          <section class="review-section"><h2>Evidence</h2><p class="muted">Loading evidence...</p><ul id="evidence"><li>Missing source and citation details.</li></ul></section>
-          <section class="review-section"><h2>QA</h2><p id="qa" class="muted">Loading QA status...</p></section>
+          <section class="review-section"><h2>Evidence</h2><ul id="evidence"><li>Loading source and citation details...</li></ul></section>
+          <section class="review-section"><h2>QA</h2><p id="qa" class="muted">Loading QA status...</p><ul id="qa-findings"></ul></section>
         </section>
         <aside aria-label="Generated assets">
           <section class="review-section"><h2>Hero</h2><div class="asset" id="hero">Missing hero preview.</div></section>
@@ -57,26 +59,41 @@ const { runId } = Astro.params;
     <footer class="decision-bar" aria-label="Overall review decision">
       <div class="decision-inner">
         <span id="decision-status">One overall package decision</span>
-        <button type="button" data-decision="approve">Approve</button>
-        <button type="button" data-decision="request_changes">Request changes</button>
+        <button type="button" data-decision="approve" disabled>Approve</button>
+        <button type="button" data-decision="request_changes" disabled>Request changes</button>
         <form id="change-form">
           <label for="comment">Required comment</label>
           <textarea id="comment" name="comment" required></textarea>
-          <button type="submit">Send changes</button>
+          <button type="submit" disabled>Send changes</button>
         </form>
       </div>
     </footer>
     <script>
-      type Stage = { reason?: string | null };
-      type ReviewRun = {
+      type Asset = { state: 'missing' | 'available'; artifactId: string | null; mediaType: string | null; previewPath: string | null };
+      type ReviewPackage = {
+        packageChecksum: string;
+        content: { target: { payload: Record<string, unknown> } };
+        evidence: {
+          sources: Array<{ sourceId: string; title: string; url: string }>;
+          claims: Array<{ statement: string; citations: Array<{ sourceId: string; excerpt: string }> }>;
+        };
+        qa: {
+          deterministic: { passed: boolean; findings: Array<{ code: string; message: string }> };
+          editorial: { summary: string; findings: Array<{ code: string; severity: string; message: string }> };
+        };
+      };
+      type ReviewPayload = {
+        error?: string;
+        runId: string;
         title: string;
-        brief: Record<string, unknown>;
         currentStage: string;
         reviewStatus: string;
-        packageChecksum: string | null;
-        stages: { check?: Stage };
+        currentPackageChecksum: string | null;
+        decisionAllowed: boolean;
+        issues: string[];
+        package: ReviewPackage | null;
+        assets: { hero: Asset; infographic: Asset; audio: Asset };
       };
-      type ReviewPayload = { run?: ReviewRun; error?: string };
       type DecisionPayload = { reviewStatus?: string; error?: string };
 
       function required<T extends Element>(selector: string): T {
@@ -92,11 +109,77 @@ const { runId } = Astro.params;
       const changeForm = required<HTMLFormElement>('#change-form');
       const commentField = required<HTMLTextAreaElement>('#comment');
       const decisionStatus = required<HTMLElement>('#decision-status');
-      let run: ReviewRun | undefined;
+      const decisionButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-decision], #change-form button')];
+      let model: ReviewPayload | undefined;
 
       const showError = (message: string) => {
         error.textContent = message;
         error.hidden = false;
+      };
+
+      const setDecisionAllowed = (allowed: boolean) => {
+        decisionButtons.forEach((button) => { button.disabled = !allowed; });
+      };
+
+      const renderEvidence = (reviewPackage: ReviewPackage) => {
+        const list = required<HTMLUListElement>('#evidence');
+        list.replaceChildren();
+        for (const source of reviewPackage.evidence.sources) {
+          const item = document.createElement('li');
+          const link = document.createElement('a');
+          link.href = source.url;
+          link.target = '_blank';
+          link.rel = 'noreferrer';
+          link.textContent = source.title;
+          item.append(link);
+          list.append(item);
+        }
+        for (const claim of reviewPackage.evidence.claims) {
+          const item = document.createElement('li');
+          const citations = claim.citations.map(({ sourceId, excerpt }) => `${sourceId}: ${excerpt}`).join(' | ');
+          item.textContent = `${claim.statement} (${citations})`;
+          list.append(item);
+        }
+      };
+
+      const renderQa = (reviewPackage: ReviewPackage) => {
+        required<HTMLElement>('#qa').textContent = `${reviewPackage.qa.deterministic.passed ? 'Passed' : 'Failed'}: ${reviewPackage.qa.editorial.summary}`;
+        const findings = required<HTMLUListElement>('#qa-findings');
+        findings.replaceChildren();
+        const allFindings = [...reviewPackage.qa.deterministic.findings, ...reviewPackage.qa.editorial.findings];
+        if (!allFindings.length) {
+          const item = document.createElement('li');
+          item.textContent = 'No QA findings.';
+          findings.append(item);
+        } else {
+          for (const finding of allFindings) {
+            const item = document.createElement('li');
+            item.textContent = `${finding.code}: ${finding.message}`;
+            findings.append(item);
+          }
+        }
+      };
+
+      const renderAsset = (kind: 'hero' | 'infographic' | 'audio', asset: Asset) => {
+        const container = required<HTMLElement>(`#${kind}`);
+        container.replaceChildren();
+        const { previewPath } = asset;
+        if (asset.state === 'missing' || !asset.artifactId || !asset.mediaType || !previewPath || !runId) {
+          container.textContent = `Missing ${kind} preview.`;
+          return;
+        }
+        const source = `/api/artifact?runId=${encodeURIComponent(runId)}&artifactId=${encodeURIComponent(asset.artifactId)}`;
+        if (asset.mediaType.startsWith('audio/')) {
+          const audio = document.createElement('audio');
+          audio.controls = true;
+          audio.src = source;
+          container.append(audio);
+        } else {
+          const image = document.createElement('img');
+          image.src = source;
+          image.alt = `${kind} preview`;
+          container.append(image);
+        }
       };
 
       const load = async () => {
@@ -105,30 +188,37 @@ const { runId } = Astro.params;
           const response = await fetch(`/api/review?runId=${encodeURIComponent(runId)}`);
           const payload = await response.json() as ReviewPayload;
           if (!response.ok) throw new Error(payload.error || 'Could not load the review.');
-          if (!payload.run) throw new Error('The review service returned no run data.');
-          run = payload.run;
-          required<HTMLElement>('#title').textContent = run.title;
-          required<HTMLElement>('#status').textContent = `${run.currentStage.replace('_', ' ')}: ${run.reviewStatus}`;
-          required<HTMLElement>('#checksum').textContent = run.packageChecksum || 'Package checksum missing';
-          required<HTMLElement>('#preview-title').textContent = run.title;
-          required<HTMLElement>('#preview-copy').textContent = typeof run.brief.objective === 'string'
-            ? run.brief.objective
-            : 'The package does not include preview copy.';
-          required<HTMLElement>('#qa').textContent = run.stages.check?.reason || 'No QA findings were recorded.';
+          model = payload;
+          required<HTMLElement>('#title').textContent = payload.title;
+          required<HTMLElement>('#status').textContent = `${payload.currentStage.replace('_', ' ')}: ${payload.reviewStatus}`;
+          required<HTMLElement>('#checksum').textContent = payload.currentPackageChecksum || 'Package checksum missing';
+          if (payload.package) {
+            const content = payload.package.content.target.payload;
+            required<HTMLElement>('#preview-title').textContent = typeof content.title === 'string' ? content.title : payload.title;
+            required<HTMLElement>('#preview-copy').textContent = [content.takeaway, content.action].filter((value) => typeof value === 'string').join(' ') || 'Learner copy is unavailable.';
+            renderEvidence(payload.package);
+            renderQa(payload.package);
+          }
+          renderAsset('hero', payload.assets.hero);
+          renderAsset('infographic', payload.assets.infographic);
+          renderAsset('audio', payload.assets.audio);
+          setDecisionAllowed(payload.decisionAllowed);
+          decisionStatus.textContent = payload.decisionAllowed ? 'One overall package decision' : (payload.issues[0] || 'This package is not open for review.');
           required<HTMLElement>('#review').hidden = false;
         } catch (loadError) {
           status.textContent = 'Review data unavailable';
+          setDecisionAllowed(false);
           showError(loadError instanceof Error ? loadError.message : 'Could not load the review.');
         }
       };
 
       const submit = async (decision: 'approve' | 'request_changes', comment?: string) => {
-        if (!run?.packageChecksum) return showError('A current package checksum is required.');
+        if (!model?.decisionAllowed || !model.package?.packageChecksum) return showError('A complete current package is required.');
         if (!runId) return showError('A run id is required.');
         const response = await fetch('/api/review', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runId, decision, packageChecksum: run.packageChecksum, ...(comment ? { comment } : {}) }),
+          body: JSON.stringify({ runId, decision, packageChecksum: model.package.packageChecksum, ...(comment ? { comment } : {}) }),
         });
         const payload = await response.json() as DecisionPayload;
         if (!response.ok) return showError(payload.error || 'Could not record the review decision.');

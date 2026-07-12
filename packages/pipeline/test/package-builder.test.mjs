@@ -54,6 +54,10 @@ function input(overrides = {}) {
         citations: [{ sourceId, excerpt: 'An emergency fund covers unexpected expenses.' }],
       }],
     },
+    qa: {
+      deterministic: { passed: true, findings: [] },
+      editorial: { summary: 'Ready for review.', findings: [] },
+    },
     surfaces: {
       manifest: artifact('manifest'),
       evidence: artifact('evidence'),
@@ -90,12 +94,13 @@ test('preserves array order in the checksum', () => {
   assert.notEqual(calculatePackageChecksum(first), calculatePackageChecksum(second));
 });
 
-test('changes when package content, evidence, assets, adapter, locale, owner, or rights change', () => {
+test('changes when package content, evidence, QA, assets, adapter, locale, owner, or rights change', () => {
   const base = input();
   const baseChecksum = calculatePackageChecksum(base);
   const variations = [
     input({ content: { ...base.content, target: { ...base.content.target, payload: { title: 'A different lesson' } } } }),
     input({ evidence: { ...base.evidence, claims: [{ ...base.evidence.claims[0], statement: 'A different claim.' }] } }),
+    input({ qa: { ...base.qa, editorial: { summary: 'Needs another pass.', findings: [] } } }),
     input({ assetInventory: [artifact('audio')] }),
     input({ adapterVersion: 'nuglet-adapter@1.2.4' }),
     input({ locale: 'es' }),

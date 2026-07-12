@@ -19,6 +19,7 @@ export interface ArtifactStorageAdapter {
     requiredHeaders: Record<string, string>;
   }>;
   inspect(storageKey: string): Promise<{ checksum: string; byteSize: number; mediaType: string }>;
+  read(storageKey: string): Promise<Uint8Array>;
 }
 
 export class ArtifactLeaseError extends Error {}
@@ -33,6 +34,10 @@ export class UnavailableArtifactStorageAdapter implements ArtifactStorageAdapter
   }
 
   async inspect(): Promise<never> {
+    throw new ArtifactStorageUnavailableError('Artifact storage is not configured for the standalone engine');
+  }
+
+  async read(): Promise<never> {
     throw new ArtifactStorageUnavailableError('Artifact storage is not configured for the standalone engine');
   }
 }
@@ -80,7 +85,7 @@ export class ArtifactService {
       checksum: inspected.checksum,
       storageKey,
       byteSize: inspected.byteSize,
-      provenance: input.provenance,
+      provenance: { ...input.provenance, provider: input.provider },
       inputChecksum: input.inputChecksum,
     });
     return toArtifactReference(artifact, input.provider);
