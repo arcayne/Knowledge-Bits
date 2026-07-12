@@ -47,10 +47,6 @@ export function registerJobRoutes(
     if (jobContext.job.runId !== input.data.result.packageId || jobContext.job.stage !== input.data.result.stage) {
       return context.json({ error: 'Job result does not match the leased job' }, 400);
     }
-    if (!jobContext.job.completionReceipt && input.data.retryAt && new Date(input.data.retryAt) <= new Date()) {
-      return context.json({ error: 'retryAt must be in the future' }, 400);
-    }
-
     try {
       const run = await dependencies.repository.applyJobResult({
         workerId: principal.workerId,

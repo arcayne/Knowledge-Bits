@@ -174,9 +174,24 @@ test('rejects retry times that are not in the future', async () => {
 });
 
 test('replays a waiting result after its retry time passes', async () => {
-  const app = createTestApp();
+  const repository = new WorkflowRepository(createInMemoryWorkflowStore());
+  const app = createApp({
+    repository,
+    env: {
+      ENGINE_API_TOKEN: 'engine-api-test',
+      ENGINE_REVIEW_TOKEN: 'engine-review-test',
+      ENGINE_WORKER_CREDENTIALS: JSON.stringify([{
+        token: 'engine-worker-test',
+        workerId: 'research-worker',
+        capabilities: ['collect_sources'],
+      }]),
+    },
+  });
   await createRun(app);
   const claim = await claimResearchJob(app);
+  const contextBeforeCompletion = await repository.getJobContext(claim.jobId);
+  assert.ok(contextBeforeCompletion);
+  const staleContext = structuredClone(contextBeforeCompletion);
   const retryAt = new Date(Date.now() + 600).toISOString();
   const result = {
     jobId: claim.jobId,
@@ -197,6 +212,8 @@ test('replays a waiting result after its retry time passes', async () => {
   assert.equal(first.status, 200, await first.clone().text());
   const firstBody = await first.json();
   await delay(750);
+
+  repository.getJobContext = async () => staleContext;
 
   const replay = await app.request(`/jobs/${claim.jobId}/result`, request);
   assert.equal(replay.status, 200, await replay.clone().text());
