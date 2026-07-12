@@ -266,6 +266,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
   }
 
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
+    assertWorkerId(input.workerId);
     assertLeaseSeconds(input.leaseSeconds);
     const claimedAt = input.now ?? new Date();
     const leaseExpiresAt = new Date(claimedAt.getTime() + input.leaseSeconds * 1_000);
@@ -302,22 +303,19 @@ export class PrismaWorkflowStore implements WorkflowStore {
   }
 
   async completeJob(input: CompleteJobInput): Promise<JobResult> {
-    const completedAt = new Date(input.result.completedAt);
-    if (Number.isNaN(completedAt.getTime())) throw new TypeError('Job completion time must be valid');
-
     const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       UPDATE "Job"
       SET "state" = ${input.result.state},
           "result" = CAST(${JSON.stringify(input.result)} AS jsonb),
           "leaseOwner" = NULL,
           "leaseExpiresAt" = NULL,
-          "updatedAt" = ${completedAt}
+          "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${input.result.jobId}
         AND "runId" = ${input.result.packageId}
         AND "stage" = ${input.result.stage}
         AND "state" = 'running'
         AND "leaseOwner" = ${input.workerId}
-        AND "leaseExpiresAt" > ${completedAt}
+        AND "leaseExpiresAt" > CURRENT_TIMESTAMP
       RETURNING "id"
     `);
 
@@ -363,6 +361,16 @@ export class PrismaWorkflowStore implements WorkflowStore {
   }
 
   async recordReview(input: RecordReviewInput): Promise<WorkflowReview> {
+    const where = {
+      runId_revision_packageChecksum: {
+        runId: input.runId,
+        revision: input.revision,
+        packageChecksum: input.packageChecksum,
+      },
+    };
+    const existing = await this.prisma.review.findUnique({ where });
+    if (existing) return resolveExistingReview(existing, input);
+
     try {
       const review = await this.prisma.review.create({
         data: input,
@@ -370,7 +378,12 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
       return review;
     } catch (error) {
-      throwUniqueConflict(error, 'Review already exists for this run, revision, and checksum');
+      if (isPrismaUniqueConflict(error)) {
+        const concurrentlyCreated = await this.prisma.review.findUnique({ where });
+        if (concurrentlyCreated) return resolveExistingReview(concurrentlyCreated, input);
+      }
+
+      throw error;
     }
   }
 
@@ -468,6 +481,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
   }
 
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
+    assertWorkerId(input.workerId);
     assertLeaseSeconds(input.leaseSeconds);
     const claimedAt = input.now ?? this.clock();
     const job = [...this.jobs.values()]
@@ -495,11 +509,10 @@ class InMemoryWorkflowStore implements WorkflowStore {
   }
 
   async completeJob(input: CompleteJobInput): Promise<JobResult> {
-    const completedAt = new Date(input.result.completedAt);
+    const completedAt = this.clock();
     const job = this.jobs.get(input.result.jobId);
     if (
-      Number.isNaN(completedAt.getTime())
-      || !job
+      !job
       || job.runId !== input.result.packageId
       || job.stage !== input.result.stage
       || job.state !== 'running'
@@ -554,9 +567,8 @@ class InMemoryWorkflowStore implements WorkflowStore {
   async recordReview(input: RecordReviewInput): Promise<WorkflowReview> {
     this.requireRun(input.runId);
     const identity = reviewIdentity(input);
-    if (this.reviewsByIdentity.has(identity)) {
-      throw new WorkflowConflictError('Review already exists for this run, revision, and checksum');
-    }
+    const existing = this.reviewsByIdentity.get(identity);
+    if (existing) return resolveExistingReview(existing, input);
 
     const review: WorkflowReview = {
       ...input,
@@ -601,6 +613,10 @@ function assertLeaseSeconds(leaseSeconds: number): void {
   if (!Number.isInteger(leaseSeconds) || leaseSeconds <= 0) {
     throw new TypeError('Lease seconds must be a positive integer');
   }
+}
+
+function assertWorkerId(workerId: string): void {
+  if (!workerId.trim()) throw new TypeError('Worker id must not be blank');
 }
 
 function reviewIdentity(input: RecordReviewInput): string {
@@ -686,9 +702,24 @@ function toWorkflowDelivery(delivery: {
 }
 
 function throwUniqueConflict(error: unknown, message: string): never {
-  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002') {
+  if (isPrismaUniqueConflict(error)) {
     throw new WorkflowConflictError(message);
   }
 
   throw error;
+}
+
+function isPrismaUniqueConflict(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
+}
+
+function resolveExistingReview(
+  review: WorkflowReview,
+  input: RecordReviewInput,
+): WorkflowReview {
+  if (review.decision !== input.decision) {
+    throw new WorkflowConflictError('Review decision conflicts with the existing review');
+  }
+
+  return review;
 }

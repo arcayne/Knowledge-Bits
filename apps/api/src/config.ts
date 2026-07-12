@@ -17,10 +17,16 @@ export function assertEngineIsolation(env: NodeJS.ProcessEnv): void {
 
 export function createIsolatedPrismaClient(env: NodeJS.ProcessEnv = process.env): PrismaClient {
   assertEngineIsolation(env);
+  if (env.DATABASE_URL?.trim()) {
+    throw new Error('DATABASE_URL is not permitted for the workflow engine; use ENGINE_DATABASE_URL');
+  }
+
+  const databaseUrl = env.ENGINE_DATABASE_URL?.trim();
+  if (!databaseUrl) throw new Error('ENGINE_DATABASE_URL is required for the workflow engine');
 
   return new PrismaClient({
     datasources: {
-      db: { url: env.DATABASE_URL },
+      db: { url: databaseUrl },
     },
   });
 }

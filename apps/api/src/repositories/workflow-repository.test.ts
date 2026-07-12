@@ -10,6 +10,7 @@ import {
 import {
   FORBIDDEN_NUGLET_ENGINE_ENV,
   assertEngineIsolation,
+  createIsolatedPrismaClient,
 } from '../config.js';
 
 const checksum = 'a'.repeat(64);
@@ -77,6 +78,17 @@ test('claimJob leases one eligible job once', async () => {
   assert.equal(second, null);
 });
 
+test('claimJob rejects a blank worker id before creating a lease', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  await queueJob(repository);
+
+  await assert.rejects(
+    repository.claimJob({ workerId: '   ', leaseSeconds: 120 }),
+    /worker id/i,
+  );
+});
+
 test('releaseExpiredLeases makes an expired job eligible for another worker', async () => {
   const { repository, now } = createRepository();
   await createRun(repository);
@@ -118,6 +130,21 @@ test('completeJob requires the current unexpired lease owner', async () => {
   );
 });
 
+test('completeJob uses the repository clock instead of the worker completion timestamp', async () => {
+  const { repository, now } = createRepository();
+  await createRun(repository);
+  const job = await queueJob(repository);
+  await repository.claimJob({ workerId: 'worker-a', leaseSeconds: 60 });
+
+  const workerSuppliedFuture = new Date(now.getTime() + 24 * 60 * 60 * 1_000);
+  const result = completedResult(job.id, workerSuppliedFuture);
+
+  assert.deepEqual(
+    await repository.completeJob({ workerId: 'worker-a', result }),
+    result,
+  );
+});
+
 test('recordArtifact rejects a duplicate storage key', async () => {
   const { repository } = createRepository();
   await createRun(repository);
@@ -137,7 +164,25 @@ test('recordArtifact rejects a duplicate storage key', async () => {
   await assert.rejects(repository.recordArtifact(artifact), /storage key/i);
 });
 
-test('recordReview uniqueness includes the package checksum', async () => {
+test('recordReview returns the existing review for an identical request', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  const review = {
+    runId,
+    revision: 1,
+    packageChecksum: checksum,
+    decision: 'approved',
+    reviewerId: 'operator-1',
+    comment: null,
+  };
+
+  const first = await repository.recordReview(review);
+  const second = await repository.recordReview(review);
+
+  assert.equal(second.id, first.id);
+});
+
+test('recordReview rejects a conflicting decision for the same package checksum', async () => {
   const { repository } = createRepository();
   await createRun(repository);
   const review = {
@@ -150,7 +195,25 @@ test('recordReview uniqueness includes the package checksum', async () => {
   };
 
   await repository.recordReview(review);
-  await assert.rejects(repository.recordReview(review), /review already exists/i);
+  await assert.rejects(
+    repository.recordReview({ ...review, decision: 'rejected' }),
+    /review.*conflict/i,
+  );
+});
+
+test('recordReview allows a new package checksum for the same revision', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  const review = {
+    runId,
+    revision: 1,
+    packageChecksum: checksum,
+    decision: 'approved',
+    reviewerId: 'operator-1',
+    comment: null,
+  };
+
+  await repository.recordReview(review);
   const revisionWithNewChecksum = await repository.recordReview({
     ...review,
     packageChecksum: 'b'.repeat(64),
@@ -194,5 +257,28 @@ for (const name of FORBIDDEN_NUGLET_ENGINE_ENV) {
 
     assert.match(message, new RegExp(name));
     assert.doesNotMatch(message, new RegExp(secret));
+    assert.throws(
+      () => createIsolatedPrismaClient({
+        ENGINE_DATABASE_URL: 'postgresql://localhost:5432/knowledge_bits_engine',
+        [name]: secret,
+      }),
+      new RegExp(name),
+    );
   });
 }
+
+test('createIsolatedPrismaClient requires ENGINE_DATABASE_URL and rejects DATABASE_URL', async () => {
+  assert.throws(
+    () => createIsolatedPrismaClient({ DATABASE_URL: 'postgresql://localhost/plain' }),
+    /DATABASE_URL.*ENGINE_DATABASE_URL/i,
+  );
+  assert.throws(
+    () => createIsolatedPrismaClient({}),
+    /ENGINE_DATABASE_URL.*required/i,
+  );
+
+  const client = createIsolatedPrismaClient({
+    ENGINE_DATABASE_URL: 'postgresql://localhost:5432/knowledge_bits_engine',
+  });
+  await client.$disconnect();
+});
