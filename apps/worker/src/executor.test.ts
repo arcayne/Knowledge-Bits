@@ -76,6 +76,32 @@ test('uploads raw response, parsed output, and execution report before a success
   assert.match(client.results[0]?.result.outputChecksum ?? '', /^[a-f0-9]{64}$/);
 });
 
+test('uploads the audit artifact triplet before reporting a non-asset success', async () => {
+  const client = new FakeEngineClient();
+  const provider = providerFor('collect_sources', successOutput());
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('research'));
+
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'raw_response',
+    'parsed_output',
+    'execution_report',
+  ]);
+  assert.equal(client.events.at(-1), 'report:done');
+});
+
+test('uses the claimed revision for audit artifacts instead of an executor default', async () => {
+  const client = new FakeEngineClient();
+  const provider = providerFor('produce_assets', successOutput());
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('produce_assets', { revision: 2 }));
+
+  assert.deepEqual(client.preparedArtifacts.map(({ revision }) => revision), [2, 2, 2]);
+  assert.deepEqual(client.completedArtifacts.map(({ revision }) => revision), [2, 2, 2]);
+});
+
 test('heartbeats at one third of the claimed lease duration', async () => {
   const client = new FakeEngineClient();
   const scheduler = new FakeScheduler();
@@ -119,7 +145,32 @@ test('stops reporting when heartbeat interruption aborts execution', async () =>
   assert.equal(client.completedArtifacts.length, 0);
 });
 
-test('uses a stable provider operation idempotency key across executions', async () => {
+test('stops artifact I/O and result reporting when a heartbeat interrupts an upload', async () => {
+  const scheduler = new FakeScheduler();
+  const client = new FakeEngineClient({
+    heartbeat: { kind: 'interrupted' },
+    onUpload: () => scheduler.tick(),
+  });
+  const provider = providerFor('produce_assets', successOutput());
+  const executor = new WorkerExecutor({
+    client,
+    providers: [provider],
+    scheduler,
+    now: () => new Date(now),
+  });
+
+  await executor.execute(job('produce_assets'));
+
+  assert.deepEqual(client.events, [
+    'prepare:raw_response',
+    'upload:00000000-0000-4000-8000-000000000001',
+    'heartbeat',
+  ]);
+  assert.equal(client.completedArtifacts.length, 0);
+  assert.equal(client.results.length, 0);
+});
+
+test('uses stable provider operation keys within a revision and rotates them for a new revision', async () => {
   const client = new FakeEngineClient();
   const observedKeys: string[] = [];
   const provider: WorkerProvider = {
@@ -131,13 +182,15 @@ test('uses a stable provider operation idempotency key across executions', async
     },
   };
   const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
-  const firstJob = job('research');
+  const firstJob = job('research', { revision: 1 });
 
   await executor.execute(firstJob);
   await executor.execute({ ...firstJob, jobId: randomUUID(), attempt: 2 });
+  await executor.execute({ ...firstJob, jobId: randomUUID(), revision: 2 });
 
   assert.equal(observedKeys[0], observedKeys[1]);
   assert.equal(observedKeys[0], operationIdempotencyKey(firstJob, 'collect_sources'));
+  assert.notEqual(observedKeys[1], observedKeys[2]);
 });
 
 test('reads deterministic committed fixtures for every worker action', async () => {
@@ -168,7 +221,7 @@ test('reads deterministic committed fixtures for every worker action', async () 
 
 function job(
   stage: JobClaim['stage'],
-  options: { leaseSeconds?: number } = {},
+  options: { leaseSeconds?: number; revision?: number } = {},
 ): JobClaim {
   const leaseSeconds = options.leaseSeconds ?? 60;
   return {
@@ -179,6 +232,7 @@ function job(
     claimedAt: now,
     leaseExpiresAt: new Date(new Date(now).getTime() + leaseSeconds * 1_000).toISOString(),
     attempt: 1,
+    revision: options.revision ?? 1,
   };
 }
 
@@ -209,10 +263,14 @@ class FakeEngineClient implements WorkerEngineClient {
   readonly events: string[] = [];
   readonly results: Array<{ result: JobResult; retryAt?: string }> = [];
   readonly uploadedArtifacts: Array<{ artifactId: string; body: Uint8Array }> = [];
+  readonly preparedArtifacts: ArtifactPrepareRequest[] = [];
   heartbeats = 0;
   private artifactSequence = 0;
 
-  constructor(private readonly options: { heartbeat?: { kind: 'continue' | 'interrupted' } } = {}) {}
+  constructor(private readonly options: {
+    heartbeat?: { kind: 'continue' | 'interrupted' };
+    onUpload?: () => Promise<void>;
+  } = {}) {}
 
   async claim(): Promise<JobClaim | null> {
     return null;
@@ -225,6 +283,7 @@ class FakeEngineClient implements WorkerEngineClient {
   }
 
   async prepareArtifact(input: ArtifactPrepareRequest): Promise<ArtifactPrepareResponse> {
+    this.preparedArtifacts.push(input);
     this.artifactSequence += 1;
     const artifactId = `00000000-0000-4000-8000-${String(this.artifactSequence).padStart(12, '0')}`;
     this.events.push(`prepare:${input.kind}`);
@@ -239,6 +298,7 @@ class FakeEngineClient implements WorkerEngineClient {
   async uploadArtifact(prepared: ArtifactPrepareResponse, body: Uint8Array): Promise<void> {
     this.uploadedArtifacts.push({ artifactId: prepared.artifactId, body });
     this.events.push(`upload:${prepared.artifactId}`);
+    await this.options.onUpload?.();
   }
 
   async completeArtifact(input: ArtifactCompleteRequest): Promise<void> {

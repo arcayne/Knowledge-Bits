@@ -220,7 +220,7 @@ test('requires an authenticated worker with the producing job lease', async () =
   assert.equal(expired.status, 409);
 });
 
-test('rejects every non-producer job lease for artifact prepare and completion', async () => {
+test('permits audit artifacts for each automated lease but keeps other artifacts asset-only', async () => {
   const nonProducerJobs = [
     { stage: 'research', action: 'collect_sources', token: 'research-worker-token' },
     { stage: 'create', action: 'create_content', token: 'create-worker-token' },
@@ -233,15 +233,25 @@ test('rejects every non-producer job lease for artifact prepare and completion',
     const job = await fixture.queueArtifactJob(nonProducer);
     await claimArtifactJob(fixture.app, nonProducer.token);
 
-    const prepared = await prepareArtifact(fixture.app, job.id, {}, nonProducer.token);
-    assert.equal(prepared.status, 409, `${nonProducer.action} prepared an artifact`);
+    const preparedResponse = await prepareArtifact(
+      fixture.app,
+      job.id,
+      { kind: 'raw_response' },
+      nonProducer.token,
+    );
+    assert.equal(preparedResponse.status, 201, await preparedResponse.clone().text());
+    const prepared = await preparedResponse.json() as { artifactId: string; storageKey: string };
+    fixture.storage.objects.set(prepared.storageKey, { checksum, byteSize: 42, mediaType: 'application/json' });
 
     const completed = await fixture.app.request('/artifacts/complete', {
       method: 'POST',
       headers: { Authorization: `Bearer ${nonProducer.token}` },
-      body: JSON.stringify(completionBody(job.id, { artifactId: '4a3f4c12-5139-4e1d-8ca0-971d380cb8a7' })),
+      body: JSON.stringify({ ...completionBody(job.id, prepared), kind: 'raw_response' }),
     });
-    assert.equal(completed.status, 409, `${nonProducer.action} completed an artifact`);
+    assert.equal(completed.status, 201, await completed.clone().text());
+
+    const nonAuditArtifact = await prepareArtifact(fixture.app, job.id, {}, nonProducer.token);
+    assert.equal(nonAuditArtifact.status, 409, `${nonProducer.action} prepared a non-audit artifact`);
   }
 });
 

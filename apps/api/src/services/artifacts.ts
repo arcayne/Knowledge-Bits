@@ -47,7 +47,7 @@ export class ArtifactService {
   ) {}
 
   async prepare(workerId: string, input: ArtifactPrepareRequest) {
-    await this.requireActiveArtifactLease(workerId, input.jobId, input.runId, input.revision);
+    await this.requireActiveArtifactLease(workerId, input.jobId, input.runId, input.revision, input.kind);
     const artifactId = (this.dependencies.idGenerator ?? randomUUID)();
     const storageKey = artifactStorageKey(input.runId, input.revision, artifactId);
     const upload = await this.dependencies.storage.preparePut({
@@ -59,7 +59,7 @@ export class ArtifactService {
   }
 
   async complete(workerId: string, input: ArtifactCompleteRequest) {
-    await this.requireActiveArtifactLease(workerId, input.jobId, input.runId, input.revision);
+    await this.requireActiveArtifactLease(workerId, input.jobId, input.runId, input.revision, input.kind);
     const storageKey = artifactStorageKey(input.runId, input.revision, input.artifactId);
     const inspected = await this.dependencies.storage.inspect(storageKey);
     if (
@@ -91,8 +91,9 @@ export class ArtifactService {
     jobId: string,
     runId: string,
     revision: number,
+    kind: string,
   ): Promise<void> {
-    if (!await this.dependencies.repository.hasActiveArtifactLease({ jobId, runId, workerId, revision })) {
+    if (!await this.dependencies.repository.hasActiveArtifactLease({ jobId, runId, workerId, revision, kind })) {
       throw new ArtifactLeaseError('Artifact-producing job lease is no longer valid');
     }
   }

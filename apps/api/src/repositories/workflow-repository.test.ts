@@ -239,6 +239,79 @@ test('keeps quality revision attempts separate from expired execution leases', a
   assert.equal(run.stages.human_review, undefined);
 });
 
+test('claims revision two through create, check, and asset production after a quality failure', async () => {
+  const { repository, now } = createRepository();
+  await repository.createRun({
+    id: runId,
+    title: 'Revision two flow',
+    locale: 'en',
+    brief: { lessonSlug: 'revision-two-flow' },
+    currentStage: 'create',
+    stages: [
+      { name: 'create', state: 'queued' },
+      { name: 'check', state: 'queued' },
+      { name: 'produce_assets', state: 'queued' },
+    ],
+  });
+  await repository.queueJob({
+    runId,
+    stage: 'create',
+    action: 'create_content',
+    idempotencyKey: 'workflow:revision-two-flow:create:1',
+    input: { brief: 'revision two flow' },
+  });
+
+  const firstCreate = await repository.claimJob({ workerId: 'create-worker', capabilities: ['create_content'], leaseSeconds: 60 });
+  assert.equal(firstCreate?.revision, 1);
+  const firstCreateContext = await repository.getJobContext(firstCreate!.jobId);
+  await repository.applyJobResult({
+    workerId: 'create-worker',
+    result: { ...completedResult(firstCreate!.jobId, now), stage: 'create' },
+    transition: nextTransition({
+      stage: 'create', state: 'running', revisionAttempts: firstCreateContext!.stage.revisionAttempts,
+      packageChecksum: null, approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum }),
+  });
+  const firstCheck = await repository.claimJob({ workerId: 'check-worker', capabilities: ['check_content'], leaseSeconds: 60 });
+  const firstCheckContext = await repository.getJobContext(firstCheck!.jobId);
+  await repository.applyJobResult({
+    workerId: 'check-worker',
+    result: {
+      jobId: firstCheck!.jobId, packageId: runId, stage: 'check', state: 'needs_human',
+      completedAt: now.toISOString(), outputChecksum: null, error: 'missing citation',
+    },
+    transition: nextTransition({
+      stage: 'check', state: 'running', revisionAttempts: firstCheckContext!.stage.revisionAttempts,
+      packageChecksum: checksum, approvedChecksum: null,
+    }, { type: 'quality_failed', reason: 'missing citation' }),
+  });
+
+  const revisionTwoCreate = await repository.claimJob({ workerId: 'create-worker', capabilities: ['create_content'], leaseSeconds: 60 });
+  assert.equal(revisionTwoCreate?.revision, 2);
+  const revisionTwoCreateContext = await repository.getJobContext(revisionTwoCreate!.jobId);
+  await repository.applyJobResult({
+    workerId: 'create-worker',
+    result: { ...completedResult(revisionTwoCreate!.jobId, now), stage: 'create' },
+    transition: nextTransition({
+      stage: 'create', state: 'running', revisionAttempts: revisionTwoCreateContext!.stage.revisionAttempts,
+      packageChecksum: checksum, approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum }),
+  });
+  const revisionTwoCheck = await repository.claimJob({ workerId: 'check-worker', capabilities: ['check_content'], leaseSeconds: 60 });
+  assert.equal(revisionTwoCheck?.revision, 2);
+  const revisionTwoCheckContext = await repository.getJobContext(revisionTwoCheck!.jobId);
+  await repository.applyJobResult({
+    workerId: 'check-worker',
+    result: { ...completedResult(revisionTwoCheck!.jobId, now), stage: 'check' },
+    transition: nextTransition({
+      stage: 'check', state: 'running', revisionAttempts: revisionTwoCheckContext!.stage.revisionAttempts,
+      packageChecksum: checksum, approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum }),
+  });
+  const revisionTwoAssets = await repository.claimJob({ workerId: 'asset-worker', capabilities: ['produce_assets'], leaseSeconds: 60 });
+  assert.equal(revisionTwoAssets?.revision, 2);
+});
+
 test('rejects a retry timestamp at or before the repository clock', async () => {
   const { repository, now } = createRepository();
   await createRun(repository);

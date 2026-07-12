@@ -39,6 +39,7 @@ export const jobClaimSchema = z.object({
   claimedAt: z.string().datetime(),
   leaseExpiresAt: z.string().datetime(),
   attempt: z.number().int().nonnegative(),
+  revision: z.number().int().positive(),
 }).strict();
 
 export const jobResultSchema = z.object({

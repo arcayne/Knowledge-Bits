@@ -29,18 +29,15 @@ export interface WorkerExecutorOptions {
   client: WorkerEngineClient;
   providers: readonly WorkerProvider[];
   now?: () => Date;
-  revision?: number;
   scheduler?: IntervalScheduler;
 }
 
 export class WorkerExecutor {
   private readonly now: () => Date;
-  private readonly revision: number;
   private readonly scheduler: IntervalScheduler;
 
   constructor(private readonly options: WorkerExecutorOptions) {
     this.now = options.now ?? (() => new Date());
-    this.revision = options.revision ?? 1;
     this.scheduler = options.scheduler ?? systemScheduler;
   }
 
@@ -89,7 +86,7 @@ export class WorkerExecutor {
       if (!reportingAllowed || signal?.aborted || controller.signal.aborted) return;
 
       if (execution.kind !== 'success') {
-        await this.reportTypedResult(job, this.normalizedFailure(job, execution), signal);
+        await this.reportTypedResult(job, this.normalizedFailure(job, execution), controller.signal);
         return;
       }
 
@@ -102,10 +99,8 @@ export class WorkerExecutor {
         idempotencyKey: operationIdempotencyKey(job, action),
       });
       const outputChecksum = checksum(reportBytes);
-      if (job.stage === 'produce_assets') {
-        await this.uploadExecutionArtifacts(job, provider.name, execution, reportBytes, signal);
-      }
-      if (!reportingAllowed || signal?.aborted || controller.signal.aborted) return;
+      await this.uploadExecutionArtifacts(job, provider.name, execution, reportBytes, controller.signal);
+      if (!reportingAllowed || controller.signal.aborted) return;
 
       await this.options.client.reportResult({
         jobId: job.jobId,
@@ -115,7 +110,11 @@ export class WorkerExecutor {
         completedAt: this.now().toISOString(),
         outputChecksum,
         error: null,
-      });
+      }, undefined, controller.signal);
+      if (controller.signal.aborted) return;
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      throw error;
     } finally {
       this.scheduler.clearInterval(heartbeatHandle);
       signal?.removeEventListener('abort', abort);
@@ -160,18 +159,18 @@ export class WorkerExecutor {
       const prepared = await this.options.client.prepareArtifact({
         jobId: job.jobId,
         runId: job.packageId,
-        revision: this.revision,
+        revision: job.revision,
         kind: artifact.kind,
         mediaType: 'application/json',
-      });
+      }, signal);
       if (signal?.aborted) return;
-      await this.options.client.uploadArtifact(prepared, artifact.body);
+      await this.options.client.uploadArtifact(prepared, artifact.body, signal);
       if (signal?.aborted) return;
       const completion: ArtifactCompleteRequest = {
         jobId: job.jobId,
         artifactId: prepared.artifactId,
         runId: job.packageId,
-        revision: this.revision,
+        revision: job.revision,
         kind: artifact.kind,
         mediaType: 'application/json',
         checksum: checksum(artifact.body),
@@ -184,7 +183,8 @@ export class WorkerExecutor {
           jobId: job.jobId,
         },
       };
-      await this.options.client.completeArtifact(completion);
+      await this.options.client.completeArtifact(completion, signal);
+      if (signal?.aborted) return;
     }
   }
 
@@ -203,7 +203,11 @@ export class WorkerExecutor {
       outputChecksum: null,
       error: execution.reason,
     };
-    await this.options.client.reportResult(result, execution.kind === 'waiting' ? execution.retryAt : undefined);
+    await this.options.client.reportResult(
+      result,
+      execution.kind === 'waiting' ? execution.retryAt : undefined,
+      signal,
+    );
   }
 
   private normalizedFailure(
@@ -232,7 +236,7 @@ export function actionForStage(stage: WorkflowStage): WorkerAction | null {
 }
 
 export function operationIdempotencyKey(job: JobClaim, action: WorkerAction): string {
-  return createHash('sha256').update(`knowledge-bits:${job.packageId}:${action}:v1`).digest('hex');
+  return createHash('sha256').update(`knowledge-bits:${job.packageId}:${action}:v${job.revision}`).digest('hex');
 }
 
 export function heartbeatIntervalMs(job: JobClaim): number {

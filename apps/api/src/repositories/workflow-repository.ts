@@ -24,6 +24,7 @@ const ACTION_BY_STAGE: Readonly<Record<Exclude<WorkflowStage, 'human_review'>, s
   produce_assets: 'produce_assets',
   deliver: 'deliver_package',
 };
+const AUDIT_ARTIFACT_KINDS = new Set(['raw_response', 'parsed_output', 'execution_report']);
 
 export interface WorkflowRun {
   id: string;
@@ -154,6 +155,7 @@ export interface HasActiveJobLeaseInput {
 
 export interface HasActiveArtifactLeaseInput extends HasActiveJobLeaseInput {
   revision: number;
+  kind: string;
 }
 
 export interface BootstrapRunInput {
@@ -315,6 +317,7 @@ interface ClaimedJobRow {
   stage: string;
   attempt: number;
   leaseExpiresAt: Date;
+  revision: number;
 }
 
 export class PrismaWorkflowStore implements WorkflowStore {
@@ -461,7 +464,8 @@ export class PrismaWorkflowStore implements WorkflowStore {
         FOR UPDATE SKIP LOCKED
         LIMIT 1
       ) AND "state" = 'queued'
-      RETURNING "id", "runId", "stage", "attempt", "leaseExpiresAt"
+      RETURNING "id", "runId", "stage", "attempt", "leaseExpiresAt",
+        (SELECT "currentRevision" FROM "Run" WHERE "Run"."id" = "Job"."runId") AS "revision"
       `);
       const row = rows[0];
 
@@ -479,6 +483,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         claimedAt: claimedAt.toISOString(),
         leaseExpiresAt: row.leaseExpiresAt.toISOString(),
         attempt: row.attempt,
+        revision: row.revision,
       };
     });
   }
@@ -774,8 +779,19 @@ export class PrismaWorkflowStore implements WorkflowStore {
         INNER JOIN "Run" ON "Run"."id" = "Job"."runId"
         WHERE "Job"."id" = ${input.jobId}
           AND "Job"."runId" = ${input.runId}
-          AND "Job"."stage" = 'produce_assets'
-          AND "Job"."action" = 'produce_assets'
+          AND (
+            ("Job"."stage" = 'produce_assets' AND "Job"."action" = 'produce_assets')
+            OR (
+              ${input.kind} IN ('raw_response', 'parsed_output', 'execution_report')
+              AND (
+                ("Job"."stage" = 'research' AND "Job"."action" = 'collect_sources')
+                OR ("Job"."stage" = 'create' AND "Job"."action" = 'create_content')
+                OR ("Job"."stage" = 'check' AND "Job"."action" = 'check_content')
+                OR ("Job"."stage" = 'produce_assets' AND "Job"."action" = 'produce_assets')
+                OR ("Job"."stage" = 'deliver' AND "Job"."action" = 'deliver_package')
+              )
+            )
+          )
           AND "Job"."state" = 'running'
           AND "Job"."leaseOwner" = ${input.workerId}
           AND "Job"."leaseExpiresAt" > CURRENT_TIMESTAMP
@@ -1013,6 +1029,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       claimedAt: claimedAt.toISOString(),
       leaseExpiresAt: job.leaseExpiresAt.toISOString(),
       attempt: job.attempt,
+      revision: run.currentRevision,
     };
   }
 
@@ -1086,13 +1103,12 @@ class InMemoryWorkflowStore implements WorkflowStore {
       job
       && run
       && job.runId === input.runId
-      && job.stage === 'produce_assets'
-      && job.action === 'produce_assets'
       && job.state === 'running'
       && job.leaseOwner === input.workerId
       && job.leaseExpiresAt
       && job.leaseExpiresAt > now
-      && run.currentRevision === input.revision,
+      && run.currentRevision === input.revision
+      && isArtifactKindAuthorizedForJob(input.kind, job),
     );
   }
 
@@ -1322,6 +1338,13 @@ function assertLeaseSeconds(leaseSeconds: number): void {
   if (!Number.isInteger(leaseSeconds) || leaseSeconds <= 0) {
     throw new TypeError('Lease seconds must be a positive integer');
   }
+}
+
+function isArtifactKindAuthorizedForJob(kind: string, job: WorkflowJob): boolean {
+  if (job.stage === 'produce_assets' && job.action === 'produce_assets') return true;
+  return AUDIT_ARTIFACT_KINDS.has(kind)
+    && job.stage !== 'human_review'
+    && job.action === ACTION_BY_STAGE[job.stage];
 }
 
 function assertWorkerId(workerId: string): void {
