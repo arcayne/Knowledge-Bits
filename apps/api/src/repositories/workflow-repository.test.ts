@@ -17,14 +17,21 @@ import {
 const checksum = 'a'.repeat(64);
 const runId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
-function createRepository(now = new Date('2026-07-12T12:00:00.000Z')) {
+function createRepository(initialNow = new Date('2026-07-12T12:00:00.000Z')) {
   let identifier = 0;
+  let now = new Date(initialNow);
   const repository = new WorkflowRepository(createInMemoryWorkflowStore({
     clock: () => new Date(now),
     idGenerator: () => `test-${++identifier}`,
   }));
 
-  return { repository, now };
+  return {
+    repository,
+    now,
+    setNow(value: Date) {
+      now = new Date(value);
+    },
+  };
 }
 
 async function createRun(repository: WorkflowRepository) {
@@ -239,6 +246,47 @@ test('rejects a retry timestamp at or before the repository clock', async () => 
     transition,
     retryAt: now,
   }), /retry.*future/i);
+});
+
+test('replays an identical waiting result after its retry time passes', async () => {
+  const { repository, now, setNow } = createRepository();
+  await createRun(repository);
+  const job = await queueJob(repository);
+  await repository.claimJob({ workerId: 'worker-a', leaseSeconds: 60 });
+  const retryAt = new Date(now.getTime() + 1_000);
+  const result = {
+    ...completedResult(job.id, now),
+    state: 'waiting' as const,
+    outputChecksum: null,
+    error: 'provider_cooldown',
+  };
+  const transition = nextTransition({
+    stage: 'research',
+    state: 'running',
+    revisionAttempts: 0,
+    packageChecksum: null,
+    approvedChecksum: null,
+  }, { type: 'job_waiting', reason: 'provider_cooldown' });
+
+  const first = await repository.applyJobResult({
+    workerId: 'worker-a',
+    result,
+    retryAt,
+    transition,
+  });
+  setNow(new Date(retryAt.getTime() + 1));
+
+  const replay = await repository.applyJobResult({
+    workerId: 'worker-a',
+    result,
+    retryAt,
+  });
+  assert.deepEqual(replay, first);
+  await assert.rejects(repository.applyJobResult({
+    workerId: 'worker-a',
+    result: { ...result, error: 'different_reason' },
+    retryAt,
+  }), /conflicts/i);
 });
 
 test('completeJob requires the current unexpired lease owner', async () => {

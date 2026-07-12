@@ -197,19 +197,122 @@ test(
       input: { query: 'retry integration' },
     });
     await repository.claimJob({ workerId: 'retry-worker', capabilities: ['collect_sources'], leaseSeconds: 120 });
-    const retryAt = new Date(Date.now() + 60_000);
+    const retryAt = new Date(Date.now() + 600);
+    const waitingResult = {
+      jobId: retryJob.id,
+      packageId: retryRunId,
+      stage: 'research' as const,
+      state: 'waiting' as const,
+      completedAt: '2026-07-12T12:03:00.000Z',
+      outputChecksum: null,
+      error: 'provider_cooldown',
+    };
+    const waitingTransition = nextTransition({
+      stage: 'research',
+      state: 'running',
+      revisionAttempts: 0,
+      packageChecksum: null,
+      approvedChecksum: null,
+    }, { type: 'job_waiting', reason: 'provider_cooldown' });
     const waiting = await repository.applyJobResult({
       workerId: 'retry-worker',
+      result: waitingResult,
+      retryAt,
+      transition: waitingTransition,
+    });
+    assert.equal(waiting.nextRetryAt?.toISOString(), retryAt.toISOString());
+    await delay(750);
+    assert.deepEqual(await repository.applyJobResult({
+      workerId: 'retry-worker',
+      result: waitingResult,
+      retryAt,
+    }), waiting);
+
+    const checkRetryRunId = 'e2b7a192-6f0d-42c4-8611-cf079ed5a2b3';
+    await repository.createRun({
+      id: checkRetryRunId,
+      title: 'Database check retry independence',
+      locale: 'en',
+      brief: { source: 'check-retry-test' },
+      currentStage: 'check',
+      stages: [
+        { name: 'create', state: 'queued' },
+        { name: 'check', state: 'queued' },
+      ],
+    });
+    const checkRetryJob = await repository.queueJob({
+      runId: checkRetryRunId,
+      stage: 'check',
+      action: 'check_content',
+      idempotencyKey: 'integration-check-retry-job',
+      input: { brief: 'check retry independence' },
+    });
+    await repository.claimJob({ workerId: 'check-worker', capabilities: ['check_content'], leaseSeconds: 120 });
+    await prisma.$executeRaw`
+      UPDATE "Job"
+      SET "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second'
+      WHERE "id" = ${checkRetryJob.id}
+    `;
+    assert.equal(await repository.releaseExpiredLeases({ now: new Date() }), 1);
+    const reclaimedCheck = await repository.claimJob({
+      workerId: 'check-worker',
+      capabilities: ['check_content'],
+      leaseSeconds: 120,
+    });
+    assert.equal(reclaimedCheck?.jobId, checkRetryJob.id);
+    assert.equal(reclaimedCheck?.attempt, 2);
+    const checkContext = await repository.getJobContext(checkRetryJob.id);
+    assert.equal(checkContext?.stage.revisionAttempts, 0);
+    const qualityFailure = nextTransition({
+      stage: 'check',
+      state: 'running',
+      revisionAttempts: checkContext!.stage.revisionAttempts,
+      packageChecksum: null,
+      approvedChecksum: null,
+    }, { type: 'quality_failed', reason: 'missing citations' });
+    const qualityRetry = await repository.applyJobResult({
+      workerId: 'check-worker',
       result: {
-        jobId: retryJob.id,
-        packageId: retryRunId,
+        jobId: checkRetryJob.id,
+        packageId: checkRetryRunId,
+        stage: 'check',
+        state: 'needs_human',
+        completedAt: '2026-07-12T12:03:30.000Z',
+        outputChecksum: null,
+        error: 'missing citations',
+      },
+      transition: qualityFailure,
+    });
+    assert.equal(qualityRetry.currentStage, 'create');
+    assert.equal(qualityRetry.stages.create?.revisionAttempts, 1);
+
+    const invalidRetryRunId = '307fee2c-6ea4-4ccc-9d02-75f8b3cc10b0';
+    await repository.createRun({
+      id: invalidRetryRunId,
+      title: 'Database invalid retry time',
+      locale: 'en',
+      brief: { source: 'invalid-retry-test' },
+    });
+    const invalidRetryJob = await repository.queueJob({
+      runId: invalidRetryRunId,
+      stage: 'research',
+      action: 'collect_sources',
+      idempotencyKey: 'integration-invalid-retry-job',
+      input: { query: 'invalid retry integration' },
+    });
+    await repository.claimJob({ workerId: 'invalid-retry-worker', capabilities: ['collect_sources'], leaseSeconds: 120 });
+    await assert.rejects(repository.applyJobResult({
+      workerId: 'invalid-retry-worker',
+      result: {
+        jobId: invalidRetryJob.id,
+        packageId: invalidRetryRunId,
         stage: 'research',
         state: 'waiting',
-        completedAt: '2026-07-12T12:03:00.000Z',
+        completedAt: '2026-07-12T12:04:00.000Z',
         outputChecksum: null,
         error: 'provider_cooldown',
       },
-      retryAt,
+      retryAt: new Date(Date.now() - 1),
       transition: nextTransition({
         stage: 'research',
         state: 'running',
@@ -217,8 +320,7 @@ test(
         packageChecksum: null,
         approvedChecksum: null,
       }, { type: 'job_waiting', reason: 'provider_cooldown' }),
-    });
-    assert.equal(waiting.nextRetryAt?.toISOString(), retryAt.toISOString());
+    }), /retry.*future/i);
 
     const deliveryRunId = '7b5d4e73-95e3-4873-b519-c0a8012e7b5d';
     await repository.createRun({

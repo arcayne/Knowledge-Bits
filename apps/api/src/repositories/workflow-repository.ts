@@ -466,13 +466,13 @@ export class PrismaWorkflowStore implements WorkflowStore {
   async applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun> {
     return this.prisma.$transaction(async (transaction) => {
       const now = new Date();
-      assertRetryAtInFuture(input.retryAt, now);
       const job = await transaction.job.findUnique({
         where: { id: input.result.jobId },
         include: { run: { include: { stages: true } } },
       });
       const receiptInput = completionReceiptInput(input);
       if (job?.completionReceipt) return replayCompletionReceipt(job.completionReceipt, receiptInput);
+      assertRetryAtInFuture(input.retryAt, now);
       const transition = input.transition;
       if (!transition) throw new WorkflowConflictError('A new job result requires a transition');
       if (
@@ -920,10 +920,10 @@ class InMemoryWorkflowStore implements WorkflowStore {
 
   async applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun> {
     const completedAt = this.clock();
-    assertRetryAtInFuture(input.retryAt, completedAt);
     const job = this.jobs.get(input.result.jobId);
     const receiptInput = completionReceiptInput(input);
     if (job?.completionReceipt) return replayCompletionReceipt(job.completionReceipt, receiptInput);
+    assertRetryAtInFuture(input.retryAt, completedAt);
     const transition = input.transition;
     if (!transition) throw new WorkflowConflictError('A new job result requires a transition');
     if (

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
 import { jobClaimSchema } from '@knowledge-bits/contracts';
@@ -170,6 +171,45 @@ test('rejects retry times that are not in the future', async () => {
     }),
   });
   assert.equal(response.status, 400);
+});
+
+test('replays a waiting result after its retry time passes', async () => {
+  const app = createTestApp();
+  await createRun(app);
+  const claim = await claimResearchJob(app);
+  const retryAt = new Date(Date.now() + 600).toISOString();
+  const result = {
+    jobId: claim.jobId,
+    packageId: claim.packageId,
+    stage: claim.stage,
+    state: 'waiting',
+    completedAt: '2026-07-12T12:00:00.000Z',
+    outputChecksum: null,
+    error: 'provider_cooldown',
+  };
+  const request = {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-worker-test' },
+    body: JSON.stringify({ retryAt, result }),
+  };
+
+  const first = await app.request(`/jobs/${claim.jobId}/result`, request);
+  assert.equal(first.status, 200, await first.clone().text());
+  const firstBody = await first.json();
+  await delay(750);
+
+  const replay = await app.request(`/jobs/${claim.jobId}/result`, request);
+  assert.equal(replay.status, 200, await replay.clone().text());
+  assert.deepEqual(await replay.json(), firstBody);
+
+  const conflict = await app.request(`/jobs/${claim.jobId}/result`, {
+    ...request,
+    body: JSON.stringify({
+      retryAt,
+      result: { ...result, error: 'different_reason' },
+    }),
+  });
+  assert.equal(conflict.status, 409);
 });
 
 async function createRun(app: ReturnType<typeof createTestApp>) {

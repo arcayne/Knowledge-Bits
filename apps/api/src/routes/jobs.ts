@@ -42,14 +42,13 @@ export function registerJobRoutes(
     if (!input.success || input.data.result.jobId !== context.req.param('id')) {
       return context.json({ error: 'Invalid job result input' }, 400);
     }
-    if (input.data.retryAt && new Date(input.data.retryAt) <= new Date()) {
-      return context.json({ error: 'retryAt must be in the future' }, 400);
-    }
-
     const jobContext = await dependencies.repository.getJobContext(input.data.result.jobId);
     if (!jobContext) return context.json({ error: 'Job not found' }, 404);
     if (jobContext.job.runId !== input.data.result.packageId || jobContext.job.stage !== input.data.result.stage) {
       return context.json({ error: 'Job result does not match the leased job' }, 400);
+    }
+    if (!jobContext.job.completionReceipt && input.data.retryAt && new Date(input.data.retryAt) <= new Date()) {
+      return context.json({ error: 'retryAt must be in the future' }, 400);
     }
 
     try {
