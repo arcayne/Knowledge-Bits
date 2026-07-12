@@ -4,6 +4,35 @@ import { artifactReferenceSchema, checksumSchema } from './workflow.js';
 
 const packageIdSchema = z.string().uuid();
 
+export const artifactPrepareRequestSchema = z.object({
+  jobId: z.string().uuid(),
+  runId: packageIdSchema,
+  revision: z.number().int().positive(),
+  kind: z.string().trim().min(1),
+  mediaType: z.string().trim().min(1),
+}).strict();
+
+export const artifactPrepareResponseSchema = z.object({
+  artifactId: z.string().uuid(),
+  storageKey: z.string().min(1),
+  uploadUrl: z.string().url(),
+  requiredHeaders: z.record(z.string()),
+}).strict();
+
+export const artifactCompleteRequestSchema = z.object({
+  jobId: z.string().uuid(),
+  artifactId: z.string().uuid(),
+  runId: packageIdSchema,
+  revision: z.number().int().positive(),
+  kind: z.string().trim().min(1),
+  mediaType: z.string().trim().min(1),
+  checksum: checksumSchema,
+  byteSize: z.number().int().positive(),
+  provider: z.string().trim().min(1),
+  inputChecksum: checksumSchema.nullable(),
+  provenance: z.record(z.unknown()),
+}).strict();
+
 const sourceSchema = z.object({
   sourceId: z.string().uuid(),
   url: z.string().url(),
@@ -115,3 +144,6 @@ export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
 export type KnowledgeBitsContent = z.infer<typeof knowledgeBitsContentSchema>;
 export type KnowledgeBitsManifest = z.infer<typeof knowledgeBitsManifestSchema>;
 export type KnowledgeBits = z.infer<typeof knowledgeBitsSchema>;
+export type ArtifactPrepareRequest = z.infer<typeof artifactPrepareRequestSchema>;
+export type ArtifactPrepareResponse = z.infer<typeof artifactPrepareResponseSchema>;
+export type ArtifactCompleteRequest = z.infer<typeof artifactCompleteRequestSchema>;

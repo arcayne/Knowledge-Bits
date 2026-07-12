@@ -140,6 +140,13 @@ export interface CompleteJobInput {
   result: JobResult;
 }
 
+export interface HasActiveJobLeaseInput {
+  jobId: string;
+  runId: string;
+  workerId: string;
+  now?: Date;
+}
+
 export interface BootstrapRunInput {
   id?: string;
   title: string;
@@ -201,6 +208,7 @@ export interface WorkflowStore {
   getJobContext(jobId: string): Promise<WorkflowJobContext | null>;
   queueJob(input: QueueJobInput): Promise<WorkflowJob>;
   claimJob(input: ClaimJobInput): Promise<JobClaim | null>;
+  hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean>;
   completeJob(input: CompleteJobInput): Promise<JobResult>;
   applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun>;
   releaseExpiredLeases(input?: { now?: Date }): Promise<number>;
@@ -237,6 +245,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
     return this.store.claimJob(input);
+  }
+
+  hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean> {
+    return this.store.hasActiveJobLease(input);
   }
 
   completeJob(input: CompleteJobInput): Promise<JobResult> {
@@ -461,6 +473,20 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
     if (!rows[0]) throw new WorkflowConflictError('Job lease is no longer valid');
     return input.result;
+  }
+
+  async hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean> {
+    const job = await this.prisma.job.findFirst({
+      where: {
+        id: input.jobId,
+        runId: input.runId,
+        state: 'running',
+        leaseOwner: input.workerId,
+        leaseExpiresAt: { gt: input.now ?? new Date() },
+      },
+      select: { id: true },
+    });
+    return Boolean(job);
   }
 
   async applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun> {
@@ -916,6 +942,19 @@ class InMemoryWorkflowStore implements WorkflowStore {
     job.leaseExpiresAt = null;
     job.updatedAt = completedAt;
     return input.result;
+  }
+
+  async hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean> {
+    const job = this.jobs.get(input.jobId);
+    const now = input.now ?? this.clock();
+    return Boolean(
+      job
+      && job.runId === input.runId
+      && job.state === 'running'
+      && job.leaseOwner === input.workerId
+      && job.leaseExpiresAt
+      && job.leaseExpiresAt > now,
+    );
   }
 
   async applyJobResult(input: ApplyJobResultInput): Promise<WorkflowRun> {
