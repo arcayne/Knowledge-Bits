@@ -14,6 +14,7 @@ test('API app exposes a catch-all Hono Vercel function from its documented root'
   assert.equal(config.framework, null);
   assert.equal(config.installCommand, 'pnpm install --frozen-lockfile');
   assert.equal(config.buildCommand, 'pnpm build');
+  assert.equal(config.functions['api/handler.js'].includeFiles, 'dist/**');
   assert.deepEqual(config.rewrites, [
     {
       source: '/api/(.*)',

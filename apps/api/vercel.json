@@ -3,6 +3,11 @@
   "buildCommand": "pnpm build",
   "framework": null,
   "installCommand": "pnpm install --frozen-lockfile",
+  "functions": {
+    "api/handler.js": {
+      "includeFiles": "dist/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
