@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.vercel.json",
+    "build": "prisma generate && tsc -p tsconfig.json && tsc -p tsconfig.vercel.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.vercel.json",
     "test": "pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/pipeline build && pnpm prisma:generate && tsx --test src/**/*.test.ts",
     "prisma:generate": "prisma generate",
