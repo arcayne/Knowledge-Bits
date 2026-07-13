@@ -14,7 +14,12 @@ test('API app exposes a catch-all Hono Vercel function from its documented root'
   assert.equal(config.framework, null);
   assert.equal(config.installCommand, 'pnpm install --frozen-lockfile');
   assert.equal(config.buildCommand, 'pnpm build');
-  assert.equal(config.rewrites, undefined);
+  assert.deepEqual(config.rewrites, [
+    {
+      source: '/api/(.*)',
+      destination: '/api/handler.js',
+    },
+  ]);
   assert.match(packageJson.scripts.build, /tsc -p tsconfig\.json/);
   assert.doesNotMatch(packageJson.scripts.build, /tsconfig\.vercel\.json/);
   assert.match(entrypoint, /from ['"]\.\/handler\.js['"]/);
