@@ -15,7 +15,15 @@ app.all('*', async (context) => {
     runtimeApp ??= createRuntimeApp();
     const requestUrl = new URL(context.req.url);
     requestUrl.pathname = requestUrl.pathname.replace(/^\/api(?=\/|$)/, '') || '/';
-    const request = new Request(requestUrl, context.req.raw);
+    const rawRequest = context.req.raw;
+    const body = ['GET', 'HEAD'].includes(rawRequest.method)
+      ? undefined
+      : await rawRequest.arrayBuffer();
+    const request = new Request(requestUrl, {
+      method: rawRequest.method,
+      headers: rawRequest.headers,
+      body,
+    });
     return runtimeApp.fetch(request);
   } catch (error) {
     runtimeError = error;

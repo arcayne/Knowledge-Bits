@@ -28,6 +28,7 @@ test('API app exposes a catch-all Hono Vercel function from its documented root'
   assert.match(handler, /from ['"]@hono\/node-server['"]/);
   assert.match(handler, /from ['"]\.\.\/dist\/runtime\.js['"]/);
   assert.match(handler, /['"]\/health['"]/);
+  assert.match(handler, /rawRequest\.arrayBuffer\(\)/);
   assert.match(handler, /export default getRequestListener\(/);
 });
 
