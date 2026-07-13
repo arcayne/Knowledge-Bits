@@ -5,12 +5,16 @@ import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerJobRoutes } from './routes/jobs.js';
 import { registerRunRoutes } from './routes/runs.js';
 import { registerReviewRoutes } from './routes/reviews.js';
+import { registerDeliveryRoutes } from './routes/deliveries.js';
 import type { WorkflowRepository } from './repositories/workflow-repository.js';
 import { type ArtifactStorageAdapter, UnavailableArtifactStorageAdapter } from './services/artifacts.js';
+import { DeliveryService } from './services/delivery.js';
+import type { DeliveryAdapter } from './services/delivery-adapters/types.js';
 
 export interface CreateAppOptions {
   repository: WorkflowRepository;
   artifactStorage?: ArtifactStorageAdapter;
+  deliveryAdapter?: DeliveryAdapter;
   env?: EngineAuthEnv;
 }
 
@@ -28,5 +32,11 @@ export function createApp(options: CreateAppOptions): Hono {
     ...dependencies,
     artifactStorage,
   });
+  if (options.deliveryAdapter) {
+    registerDeliveryRoutes(app, {
+      ...dependencies,
+      deliveryService: new DeliveryService({ repository: options.repository, adapter: options.deliveryAdapter }),
+    });
+  }
   return app;
 }

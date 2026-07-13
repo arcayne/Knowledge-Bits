@@ -14,6 +14,7 @@ test('workflow migrations define immutable package identity, review identity, an
   const initial = migrationText('20260712183522_init');
   const hardening = migrationText('20260712200000_harden_workflow_leases');
   const packages = migrationText('20260713130000_bind_reviews_to_packages');
+  const delivery = migrationText('20260713160000_add_delivery_control');
 
   assert.match(initial, /CREATE TABLE "public"\."Job"/);
   assert.match(initial, /CREATE INDEX "Job_state_availableAt_idx" ON "public"\."Job"\("state", "availableAt"\)/);
@@ -28,4 +29,8 @@ test('workflow migrations define immutable package identity, review identity, an
   assert.match(packages, /DELETE FROM "public"\."Review"/);
   assert.match(hardening, /CONSTRAINT "Job_leaseOwner_nonempty"/);
   assert.match(hardening, /length\(btrim\("leaseOwner"\)\) > 0/);
+  assert.match(delivery, /ADD COLUMN "packageVersionId" TEXT/);
+  assert.match(delivery, /Historical delivery does not match an immutable package version/);
+  assert.match(delivery, /Delivery_runId_packageChecksum_key/);
+  assert.match(delivery, /Delivery_packageVersionId_fkey/);
 });

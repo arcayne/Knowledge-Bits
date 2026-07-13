@@ -101,7 +101,14 @@ function createFixture() {
         stage,
         action,
         idempotencyKey: `artifact-upload-job:${action}`,
-        input: { kind: 'evidence', ...(stage === 'deliver' ? { packageChecksum: checksum } : {}) },
+        input: {
+          kind: 'evidence',
+          ...(stage === 'deliver' ? {
+            deliveryId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            packageVersionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            packageChecksum: checksum,
+          } : {}),
+        },
       });
       return job;
     },

@@ -19,6 +19,7 @@ export interface WorkerEngineClient {
   uploadArtifact(prepared: ArtifactPrepareResponse, body: Uint8Array, signal?: AbortSignal): Promise<void>;
   completeArtifact(input: ArtifactCompleteRequest, signal?: AbortSignal): Promise<void>;
   reportResult(result: JobResult, retryAt?: string, signal?: AbortSignal): Promise<void>;
+  runDelivery(job: JobClaim, signal?: AbortSignal): Promise<void>;
 }
 
 export class EngineClientError extends Error {
@@ -92,6 +93,15 @@ export class HttpEngineClient implements WorkerEngineClient {
     await this.request(`/jobs/${result.jobId}/result`, {
       method: 'POST',
       body: JSON.stringify(request),
+      signal,
+    });
+  }
+
+  async runDelivery(job: JobClaim, signal?: AbortSignal): Promise<void> {
+    if (!job.deliveryId) throw new EngineClientError('Delivery claim is missing deliveryId');
+    await this.request(`/deliveries/${job.deliveryId}/run`, {
+      method: 'POST',
+      body: JSON.stringify({ jobId: job.jobId }),
       signal,
     });
   }

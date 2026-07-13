@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import type {
@@ -111,6 +111,7 @@ export interface WorkflowReview {
 export interface WorkflowDelivery {
   id: string;
   runId: string;
+  packageVersionId: string;
   target: string;
   packageChecksum: string;
   idempotencyKey: string;
@@ -277,12 +278,26 @@ export interface RecordPackageVersionInput {
 export interface RecordDeliveryInput {
   id?: string;
   runId: string;
+  packageVersionId: string;
   target: string;
   packageChecksum: string;
   idempotencyKey: string;
   state: string;
   response?: JsonObject | null;
   nextAttemptAt?: Date | null;
+}
+
+export interface UpdateDeliveryInput {
+  id: string;
+  state: string;
+  response?: JsonObject | null;
+  nextAttemptAt?: Date | null;
+  incrementAttempts?: boolean;
+}
+
+export interface RetryDeliveryResult {
+  delivery: WorkflowDelivery;
+  nextAttempt: number;
 }
 
 export interface WorkflowStore {
@@ -294,6 +309,9 @@ export interface WorkflowStore {
   getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null>;
   getReview(runId: string, packageChecksum: string): Promise<WorkflowReview | null>;
   getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null>;
+  getPackageVersionById(id: string): Promise<WorkflowPackageVersion | null>;
+  getDelivery(id: string): Promise<WorkflowDelivery | null>;
+  getDeliveryForPackage(runId: string, packageChecksum: string): Promise<WorkflowDelivery | null>;
   getJobContext(jobId: string): Promise<WorkflowJobContext | null>;
   queueJob(input: QueueJobInput): Promise<WorkflowJob>;
   claimJob(input: ClaimJobInput): Promise<JobClaim | null>;
@@ -307,6 +325,8 @@ export interface WorkflowStore {
   recordArtifactForActiveLease(input: RecordArtifactForActiveLeaseInput): Promise<WorkflowArtifact>;
   recordReview(input: RecordReviewInput): Promise<WorkflowReview>;
   recordDelivery(input: RecordDeliveryInput): Promise<WorkflowDelivery>;
+  updateDelivery(input: UpdateDeliveryInput): Promise<WorkflowDelivery>;
+  retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
   recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion>;
@@ -349,6 +369,18 @@ export class WorkflowRepository implements WorkflowStore {
 
   getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null> {
     return this.store.getPackageVersion(runId, packageChecksum);
+  }
+
+  getPackageVersionById(id: string): Promise<WorkflowPackageVersion | null> {
+    return this.store.getPackageVersionById(id);
+  }
+
+  getDelivery(id: string): Promise<WorkflowDelivery | null> {
+    return this.store.getDelivery(id);
+  }
+
+  getDeliveryForPackage(runId: string, packageChecksum: string): Promise<WorkflowDelivery | null> {
+    return this.store.getDeliveryForPackage(runId, packageChecksum);
   }
 
   getJobContext(jobId: string): Promise<WorkflowJobContext | null> {
@@ -403,6 +435,14 @@ export class WorkflowRepository implements WorkflowStore {
     return this.store.recordDelivery(input);
   }
 
+  updateDelivery(input: UpdateDeliveryInput): Promise<WorkflowDelivery> {
+    return this.store.updateDelivery(input);
+  }
+
+  retryDelivery(deliveryId: string): Promise<RetryDeliveryResult> {
+    return this.store.retryDelivery(deliveryId);
+  }
+
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
     return this.store.reviewRun(input);
   }
@@ -427,6 +467,7 @@ interface ClaimedJobRow {
   attempt: number;
   leaseExpiresAt: Date;
   revision: number;
+  input: Prisma.JsonValue;
 }
 
 export class PrismaWorkflowStore implements WorkflowStore {
@@ -552,6 +593,23 @@ export class PrismaWorkflowStore implements WorkflowStore {
     return version ? toWorkflowPackageVersion(version) : null;
   }
 
+  async getPackageVersionById(id: string): Promise<WorkflowPackageVersion | null> {
+    const version = await this.prisma.packageVersion.findUnique({ where: { id } });
+    return version ? toWorkflowPackageVersion(version) : null;
+  }
+
+  async getDelivery(id: string): Promise<WorkflowDelivery | null> {
+    const delivery = await this.prisma.delivery.findUnique({ where: { id } });
+    return delivery ? toWorkflowDelivery(delivery) : null;
+  }
+
+  async getDeliveryForPackage(runId: string, packageChecksum: string): Promise<WorkflowDelivery | null> {
+    const delivery = await this.prisma.delivery.findUnique({
+      where: { runId_packageChecksum: { runId, packageChecksum } },
+    });
+    return delivery ? toWorkflowDelivery(delivery) : null;
+  }
+
   async getJobContext(jobId: string): Promise<WorkflowJobContext | null> {
     const job = await this.prisma.job.findUnique({
       where: { id: jobId },
@@ -633,7 +691,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         FOR UPDATE OF "Job", "Run" SKIP LOCKED
         LIMIT 1
       ) AND "state" = 'queued'
-      RETURNING "id", "runId", "stage", "attempt", "leaseExpiresAt",
+      RETURNING "id", "runId", "stage", "attempt", "leaseExpiresAt", "input",
         (SELECT "currentRevision" FROM "Run" WHERE "Run"."id" = "Job"."runId") AS "revision"
       `);
       const row = rows[0];
@@ -644,6 +702,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         data: { state: 'running', reason: null, attempt: row.attempt },
       });
 
+      const deliveryInput = row.stage === 'deliver' ? row.input as JsonObject : undefined;
       return {
         jobId: row.id,
         packageId: row.runId,
@@ -653,6 +712,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         leaseExpiresAt: row.leaseExpiresAt.toISOString(),
         attempt: row.attempt,
         revision: row.revision,
+        ...(deliveryInput ? deliveryClaimIdentity(deliveryInput) : {}),
       };
     });
   }
@@ -845,15 +905,28 @@ export class PrismaWorkflowStore implements WorkflowStore {
             },
           });
           if (!packageVersion) throw new WorkflowConflictError('Delivery requires a persisted immutable package version');
+          const deliveryId = randomUUID();
           await queueTransitionJob(transaction, {
               runId: job.runId,
               stage: 'deliver',
               revision: nextRevision,
               input: {
                 brief: job.run.brief as JsonObject,
+                deliveryId,
                 packageChecksum: effect.packageChecksum,
                 packageVersionId: packageVersion.id,
               },
+          });
+          await transaction.delivery.create({
+            data: {
+              id: deliveryId,
+              runId: job.runId,
+              packageVersionId: packageVersion.id,
+              target: packageTargetKind(packageVersion.content),
+              packageChecksum: effect.packageChecksum,
+              idempotencyKey: externalDeliveryIdempotencyKey(packageVersion.id, effect.packageChecksum),
+              state: 'queued',
+            },
           });
         }
         if (effect.type === 'request_review') {
@@ -1048,6 +1121,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       create: {
         id: input.id,
         runId: input.runId,
+        packageVersionId: input.packageVersionId,
         target: input.target,
         packageChecksum: input.packageChecksum,
         idempotencyKey: input.idempotencyKey,
@@ -1058,6 +1132,73 @@ export class PrismaWorkflowStore implements WorkflowStore {
     });
 
     return toWorkflowDelivery(delivery);
+  }
+
+  async updateDelivery(input: UpdateDeliveryInput): Promise<WorkflowDelivery> {
+    const delivery = await this.prisma.delivery.update({
+      where: { id: input.id },
+      data: {
+        state: input.state,
+        ...(input.response !== undefined ? { response: input.response === null ? Prisma.JsonNull : toPrismaJson(input.response) } : {}),
+        ...(input.nextAttemptAt !== undefined ? { nextAttemptAt: input.nextAttemptAt } : {}),
+        ...(input.incrementAttempts ? { attempts: { increment: 1 } } : {}),
+      },
+    });
+    return toWorkflowDelivery(delivery);
+  }
+
+  async retryDelivery(deliveryId: string): Promise<RetryDeliveryResult> {
+    return this.prisma.$transaction(async (transaction) => {
+      const locked = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT "Delivery"."id"
+        FROM "Delivery"
+        INNER JOIN "Run" ON "Run"."id" = "Delivery"."runId"
+        WHERE "Delivery"."id" = ${deliveryId}
+        FOR UPDATE OF "Delivery", "Run"
+      `);
+      if (!locked[0]) throw new WorkflowNotFoundError('Delivery not found');
+      const delivery = await transaction.delivery.findUniqueOrThrow({ where: { id: deliveryId } });
+      const run = await transaction.run.findUniqueOrThrow({ where: { id: delivery.runId } });
+      if (!['failed', 'waiting'].includes(delivery.state)) {
+        throw new WorkflowConflictError('Only failed or waiting delivery can be retried');
+      }
+      if (run.packageChecksum !== delivery.packageChecksum || run.approvedChecksum !== delivery.packageChecksum) {
+        throw new WorkflowConflictError('Delivery checksum no longer matches the current approval');
+      }
+      const queued = await transaction.job.findFirst({
+        where: {
+          runId: delivery.runId,
+          stage: 'deliver',
+          state: 'queued',
+          input: { path: ['deliveryId'], equals: delivery.id },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      const nextAttempt = delivery.attempts + 1;
+      if (queued) {
+        await transaction.job.update({ where: { id: queued.id }, data: { availableAt: new Date() } });
+      } else {
+        await transaction.job.create({
+          data: {
+            runId: delivery.runId,
+            stage: 'deliver',
+            action: ACTION_BY_STAGE.deliver,
+            state: 'queued',
+            idempotencyKey: deliveryRetryJobIdempotencyKey(delivery.id, nextAttempt),
+            input: toPrismaJson(deliveryJobInput(toWorkflowDelivery(delivery), run.brief as JsonObject)),
+          },
+        });
+      }
+      await transaction.stage.update({
+        where: { runId_name: { runId: delivery.runId, name: 'deliver' } },
+        data: { state: 'queued', reason: null },
+      });
+      const updated = await transaction.delivery.update({
+        where: { id: delivery.id },
+        data: { state: 'queued', nextAttemptAt: new Date() },
+      });
+      return { delivery: toWorkflowDelivery(updated), nextAttempt };
+    });
   }
 
   async reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
@@ -1144,14 +1285,27 @@ export class PrismaWorkflowStore implements WorkflowStore {
             },
           });
           if (effect.type === 'queue_delivery') {
+            const deliveryId = randomUUID();
             await queueTransitionJob(transaction, {
               runId: run.id,
               stage: 'deliver',
               revision: nextRevision,
               input: {
                 brief: run.brief as JsonObject,
+                deliveryId,
                 packageChecksum: effect.packageChecksum,
                 packageVersionId: packageVersion.id,
+              },
+            });
+            await transaction.delivery.create({
+              data: {
+                id: deliveryId,
+                runId: run.id,
+                packageVersionId: packageVersion.id,
+                target: packageTargetKind(packageVersion.content),
+                packageChecksum: effect.packageChecksum,
+                idempotencyKey: externalDeliveryIdempotencyKey(packageVersion.id, effect.packageChecksum),
+                state: 'queued',
               },
             });
           }
@@ -1436,6 +1590,20 @@ class InMemoryWorkflowStore implements WorkflowStore {
       .sort((left, right) => right.revision - left.revision || right.createdAt.getTime() - left.createdAt.getTime())[0] ?? null;
   }
 
+  async getPackageVersionById(id: string): Promise<WorkflowPackageVersion | null> {
+    return [...this.packageVersionsByIdentity.values()].find((version) => version.id === id) ?? null;
+  }
+
+  async getDelivery(id: string): Promise<WorkflowDelivery | null> {
+    return [...this.deliveriesByIdempotencyKey.values()].find((delivery) => delivery.id === id) ?? null;
+  }
+
+  async getDeliveryForPackage(runId: string, packageChecksum: string): Promise<WorkflowDelivery | null> {
+    return [...this.deliveriesByIdempotencyKey.values()].find((delivery) => (
+      delivery.runId === runId && delivery.packageChecksum === packageChecksum
+    )) ?? null;
+  }
+
   async getJobContext(jobId: string): Promise<WorkflowJobContext | null> {
     const job = this.jobs.get(jobId);
     if (!job) return null;
@@ -1519,6 +1687,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       leaseExpiresAt: job.leaseExpiresAt.toISOString(),
       attempt: job.attempt,
       revision: run.currentRevision,
+      ...(job.stage === 'deliver' ? deliveryClaimIdentity(job.input) : {}),
     };
   }
 
@@ -1680,12 +1849,22 @@ class InMemoryWorkflowStore implements WorkflowStore {
           && version.packageChecksum === effect.packageChecksum
         ));
         if (!packageVersion) throw new WorkflowConflictError('Delivery requires a persisted immutable package version');
+        const deliveryId = this.idGenerator();
         await this.queueJob({
           runId: run.id,
           stage: 'deliver',
           action: ACTION_BY_STAGE.deliver,
           idempotencyKey: deliveryJobIdempotencyKey(run.id, nextRevision, effect.packageChecksum),
-          input: { brief: run.brief, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
+          input: { brief: run.brief, deliveryId, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
+        });
+        await this.recordDelivery({
+          id: deliveryId,
+          runId: run.id,
+          packageVersionId: packageVersion.id,
+          target: packageVersion.content.target.kind,
+          packageChecksum: effect.packageChecksum,
+          idempotencyKey: externalDeliveryIdempotencyKey(packageVersion.id, effect.packageChecksum),
+          state: 'queued',
         });
       }
       if (effect.type === 'request_review') {
@@ -1818,6 +1997,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const delivery: WorkflowDelivery = {
       id: input.id ?? this.idGenerator(),
       runId: input.runId,
+      packageVersionId: input.packageVersionId,
       target: input.target,
       packageChecksum: input.packageChecksum,
       idempotencyKey: input.idempotencyKey,
@@ -1830,6 +2010,53 @@ class InMemoryWorkflowStore implements WorkflowStore {
     };
     this.deliveriesByIdempotencyKey.set(delivery.idempotencyKey, delivery);
     return delivery;
+  }
+
+  async updateDelivery(input: UpdateDeliveryInput): Promise<WorkflowDelivery> {
+    const delivery = await this.getDelivery(input.id);
+    if (!delivery) throw new WorkflowNotFoundError('Delivery not found');
+    delivery.state = input.state;
+    if (input.response !== undefined) delivery.response = input.response;
+    if (input.nextAttemptAt !== undefined) delivery.nextAttemptAt = input.nextAttemptAt;
+    if (input.incrementAttempts) delivery.attempts += 1;
+    delivery.updatedAt = this.clock();
+    return delivery;
+  }
+
+  async retryDelivery(deliveryId: string): Promise<RetryDeliveryResult> {
+    const delivery = await this.getDelivery(deliveryId);
+    if (!delivery) throw new WorkflowNotFoundError('Delivery not found');
+    const run = this.requireRun(delivery.runId);
+    if (!['failed', 'waiting'].includes(delivery.state)) {
+      throw new WorkflowConflictError('Only failed or waiting delivery can be retried');
+    }
+    if (run.packageChecksum !== delivery.packageChecksum || run.approvedChecksum !== delivery.packageChecksum) {
+      throw new WorkflowConflictError('Delivery checksum no longer matches the current approval');
+    }
+    const nextAttempt = delivery.attempts + 1;
+    const queued = [...this.jobs.values()].find((job) => (
+      job.runId === delivery.runId && job.stage === 'deliver' && job.state === 'queued' && job.input.deliveryId === delivery.id
+    ));
+    if (queued) {
+      queued.availableAt = this.clock();
+      queued.updatedAt = this.clock();
+    } else {
+      await this.queueJob({
+        runId: delivery.runId,
+        stage: 'deliver',
+        action: ACTION_BY_STAGE.deliver,
+        idempotencyKey: deliveryRetryJobIdempotencyKey(delivery.id, nextAttempt),
+        input: deliveryJobInput(delivery, run.brief),
+      });
+    }
+    const stage = run.stages.deliver;
+    if (!stage) throw new WorkflowConflictError('Delivery stage does not exist');
+    stage.state = 'queued';
+    stage.reason = null;
+    delivery.state = 'queued';
+    delivery.nextAttemptAt = this.clock();
+    delivery.updatedAt = this.clock();
+    return { delivery, nextAttempt };
   }
 
   async reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
@@ -1896,12 +2123,22 @@ class InMemoryWorkflowStore implements WorkflowStore {
         payload: effect as unknown as JsonObject,
       });
       if (effect.type === 'queue_delivery') {
+        const deliveryId = this.idGenerator();
         await this.queueJob({
           runId: run.id,
           stage: 'deliver',
           action: ACTION_BY_STAGE.deliver,
           idempotencyKey: deliveryJobIdempotencyKey(run.id, run.currentRevision, effect.packageChecksum),
-          input: { brief: run.brief, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
+          input: { brief: run.brief, deliveryId, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
+        });
+        await this.recordDelivery({
+          id: deliveryId,
+          runId: run.id,
+          packageVersionId: packageVersion.id,
+          target: packageVersion.content.target.kind,
+          packageChecksum: effect.packageChecksum,
+          idempotencyKey: externalDeliveryIdempotencyKey(packageVersion.id, effect.packageChecksum),
+          state: 'queued',
         });
       }
       if (effect.type === 'queue_stage') {
@@ -1986,6 +2223,15 @@ class InMemoryWorkflowStore implements WorkflowStore {
         job.leaseOwner = null;
         job.leaseExpiresAt = null;
         job.updatedAt = this.clock();
+      }
+    }
+    for (const delivery of this.deliveriesByIdempotencyKey.values()) {
+      if (delivery.runId === runId
+        && delivery.packageChecksum !== packageChecksum
+        && ['queued', 'running', 'waiting', 'failed', 'verifying'].includes(delivery.state)) {
+        delivery.state = 'superseded';
+        delivery.nextAttemptAt = null;
+        delivery.updatedAt = this.clock();
       }
     }
   }
@@ -2092,6 +2338,49 @@ function transitionJobIdempotencyKey(
 
 function deliveryJobIdempotencyKey(runId: string, revision: number, packageChecksum: string): string {
   return `workflow:${runId}:deliver:${revision}:${packageChecksum}`;
+}
+
+function externalDeliveryIdempotencyKey(packageVersionId: string, packageChecksum: string): string {
+  return createHash('sha256')
+    .update(`knowledge-bits:delivery:${packageVersionId}:${packageChecksum}`)
+    .digest('hex');
+}
+
+function deliveryRetryJobIdempotencyKey(deliveryId: string, attempt: number): string {
+  return `workflow:delivery:${deliveryId}:attempt:${attempt}`;
+}
+
+function deliveryJobInput(delivery: WorkflowDelivery, brief: JsonObject): JsonObject {
+  return {
+    brief,
+    deliveryId: delivery.id,
+    packageChecksum: delivery.packageChecksum,
+    packageVersionId: delivery.packageVersionId,
+  };
+}
+
+function deliveryClaimIdentity(input: JsonObject): {
+  deliveryId: string;
+  packageVersionId: string;
+  packageChecksum: string;
+} {
+  if (typeof input.deliveryId !== 'string'
+    || typeof input.packageVersionId !== 'string'
+    || typeof input.packageChecksum !== 'string') {
+    throw new WorkflowConflictError('Delivery job is missing immutable package identity');
+  }
+  return {
+    deliveryId: input.deliveryId,
+    packageVersionId: input.packageVersionId,
+    packageChecksum: input.packageChecksum,
+  };
+}
+
+function packageTargetKind(content: Prisma.JsonValue): string {
+  if (isJsonObject(content) && isJsonObject(content.target) && typeof content.target.kind === 'string') {
+    return content.target.kind;
+  }
+  throw new WorkflowConflictError('Immutable package target is missing');
 }
 
 function retryJobIdempotencyKey(jobId: string, attempt: number): string {
@@ -2310,6 +2599,7 @@ function toWorkflowArtifact(artifact: {
 function toWorkflowDelivery(delivery: {
   id: string;
   runId: string;
+  packageVersionId: string;
   target: string;
   packageChecksum: string;
   idempotencyKey: string;
@@ -2441,6 +2731,14 @@ async function supersedeDeliveryJobs(
       AND "state" IN ('queued', 'running')
       AND COALESCE("input"->>'packageChecksum', '') <> ${packageChecksum}
   `);
+  await transaction.delivery.updateMany({
+    where: {
+      runId,
+      packageChecksum: { not: packageChecksum },
+      state: { in: ['queued', 'running', 'waiting', 'failed', 'verifying'] },
+    },
+    data: { state: 'superseded', nextAttemptAt: null },
+  });
 }
 
 function toWorkflowPackageVersion(version: {

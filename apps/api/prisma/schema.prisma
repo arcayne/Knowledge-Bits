@@ -129,6 +129,7 @@ model PackageVersion {
   artifactInventory Json
   createdAt         DateTime @default(now())
   run               Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
+  deliveries        Delivery[]
 
   @@unique([runId, revision, packageChecksum])
   @@index([runId, packageChecksum])
@@ -137,6 +138,7 @@ model PackageVersion {
 model Delivery {
   id              String   @id @default(uuid())
   runId           String
+  packageVersionId String
   target          String
   packageChecksum String
   idempotencyKey  String   @unique
@@ -147,4 +149,8 @@ model Delivery {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   run             Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
+  packageVersion  PackageVersion @relation(fields: [packageVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, packageChecksum])
+  @@index([packageVersionId])
 }

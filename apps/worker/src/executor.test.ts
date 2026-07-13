@@ -40,6 +40,36 @@ test('reports a provider wait without creating fallback artifacts', async () => 
   assert.equal(client.uploadedArtifacts.length, 0);
 });
 
+test('delegates delivery claims to the API delivery service without a worker provider', async () => {
+  const client = new FakeEngineClient();
+  const executor = new WorkerExecutor({ client, providers: [] });
+  const deliveryJob = {
+    ...job('deliver'),
+    deliveryId: randomUUID(),
+    packageVersionId: randomUUID(),
+    packageChecksum: 'a'.repeat(64),
+  };
+
+  await executor.execute(deliveryJob);
+
+  assert.deepEqual(client.deliveries, [deliveryJob.deliveryId]);
+  assert.equal(client.results.length, 0);
+});
+
+test('heartbeats while the API delivery service is running', async () => {
+  const gate = deferred<void>();
+  const scheduler = new FakeScheduler();
+  const client = new FakeEngineClient({ onDelivery: () => gate.promise });
+  const executor = new WorkerExecutor({ client, providers: [], scheduler });
+  const deliveryJob = { ...job('deliver'), deliveryId: randomUUID() };
+
+  const execution = executor.execute(deliveryJob);
+  await scheduler.tick();
+  assert.equal(client.heartbeats, 1);
+  gate.resolve();
+  await execution;
+});
+
 test('reports a provider error as a typed retry for a non-review stage', async () => {
   const client = new FakeEngineClient();
   const provider: WorkerProvider = {
@@ -310,11 +340,13 @@ class FakeEngineClient implements WorkerEngineClient {
   readonly results: Array<{ result: JobResult; retryAt?: string }> = [];
   readonly uploadedArtifacts: Array<{ artifactId: string; body: Uint8Array }> = [];
   readonly preparedArtifacts: ArtifactPrepareRequest[] = [];
+  readonly deliveries: string[] = [];
   heartbeats = 0;
   private artifactSequence = 0;
 
   constructor(private readonly options: {
     heartbeat?: { kind: 'continue' | 'interrupted' };
+    onDelivery?: () => Promise<void>;
     onUpload?: () => Promise<void>;
   } = {}) {}
 
@@ -355,6 +387,12 @@ class FakeEngineClient implements WorkerEngineClient {
   async reportResult(result: JobResult, retryAtValue?: string): Promise<void> {
     this.results.push({ result, retryAt: retryAtValue });
     this.events.push(`report:${result.state}`);
+  }
+
+  async runDelivery(job: JobClaim): Promise<void> {
+    if (!job.deliveryId) throw new Error('missing delivery id');
+    this.deliveries.push(job.deliveryId);
+    await this.options.onDelivery?.();
   }
 }
 

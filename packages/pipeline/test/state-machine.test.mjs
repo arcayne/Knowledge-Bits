@@ -181,6 +181,17 @@ test('queues a failed delivery for retry', () => {
   assert.deepEqual(result.effects, [{ type: 'queue_delivery', packageChecksum: CHECKSUM }]);
 });
 
+test('sends a permanent delivery schema failure to human review', () => {
+  const result = nextTransition(snapshot({ stage: 'deliver', state: 'running' }), {
+    type: 'delivery_needs_human', reason: 'destination schema rejected',
+  });
+
+  assert.equal(result.stage, 'deliver');
+  assert.equal(result.state, 'needs_human');
+  assert.equal(result.reason, 'destination schema rejected');
+  assert.deepEqual(result.effects, []);
+});
+
 test('rejects events that select a stage or violate the transition table', () => {
   assert.throws(
     () => nextTransition(snapshot(), { type: 'job_started', stage: 'deliver' }),

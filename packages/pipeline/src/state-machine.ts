@@ -15,7 +15,7 @@ const LEGAL_STATES_BY_STAGE = {
   check: ['queued', 'running', 'waiting', 'needs_human'],
   produce_assets: ['queued', 'running', 'waiting'],
   human_review: ['needs_human'],
-  deliver: ['queued', 'running', 'waiting', 'done'],
+  deliver: ['queued', 'running', 'waiting', 'needs_human', 'done'],
 } as const satisfies Record<WorkflowStage, readonly StageState[]>;
 
 export interface WorkflowSnapshot {
@@ -36,7 +36,8 @@ export type WorkflowEvent =
   | { type: 'changes_requested'; reason: string; reviewerId: string }
   | { type: 'package_changed'; packageChecksum: Checksum }
   | { type: 'delivery_succeeded' }
-  | { type: 'delivery_failed'; reason: string };
+  | { type: 'delivery_failed'; reason: string }
+  | { type: 'delivery_needs_human'; reason: string };
 
 export type WorkflowEffect =
   | { type: 'queue_stage'; stage: Exclude<WorkflowStage, 'deliver'> }
@@ -99,6 +100,10 @@ export function nextTransition(
     case 'delivery_failed':
       requireSnapshot(snapshot, 'deliver', 'running');
       return transition(snapshot, { state: 'queued', reason: event.reason }, [queueDelivery(snapshot)]);
+
+    case 'delivery_needs_human':
+      requireSnapshot(snapshot, 'deliver', 'running');
+      return transition(snapshot, { state: 'needs_human', reason: event.reason });
   }
 }
 

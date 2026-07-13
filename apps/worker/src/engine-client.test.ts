@@ -36,3 +36,23 @@ test('maps a heartbeat lease conflict to interrupted', async () => {
 
   assert.deepEqual(await client.heartbeat(job), { kind: 'interrupted' });
 });
+
+test('runs a claimed delivery through the API delivery service', async () => {
+  let request: { url: string; body: unknown } | undefined;
+  const client = new HttpEngineClient({
+    baseUrl: 'https://engine.example.test/',
+    workerToken: 'worker-token',
+    fetch: async (url, init) => {
+      request = { url: String(url), body: JSON.parse(String(init?.body)) };
+      return Response.json({ state: 'succeeded' });
+    },
+  });
+  const deliveryId = randomUUID();
+
+  await client.runDelivery({ ...job, stage: 'deliver', deliveryId });
+
+  assert.deepEqual(request, {
+    url: `https://engine.example.test/deliveries/${deliveryId}/run`,
+    body: { jobId: job.jobId },
+  });
+});

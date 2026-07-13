@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   knowledgeBitsSchema,
+  jobClaimSchema,
   reviewRunRequestSchema,
   stageStateSchema,
   workflowStageSchema,
@@ -128,4 +129,24 @@ test('review requests never accept a caller supplied reviewer identity', () => {
     packageChecksum: checksum,
     reviewerId: 'browser-controlled',
   }));
+});
+
+test('delivery claims carry the immutable package handoff', () => {
+  const claim = {
+    jobId: '11111111-1111-4111-8111-111111111111',
+    packageId,
+    stage: 'deliver',
+    claimedBy: 'delivery-worker',
+    claimedAt: '2026-07-13T10:00:00.000Z',
+    leaseExpiresAt: '2026-07-13T10:01:00.000Z',
+    attempt: 1,
+    revision: 1,
+  };
+  assert.throws(() => jobClaimSchema.parse(claim), /immutable package identity/i);
+  assert.equal(jobClaimSchema.parse({
+    ...claim,
+    deliveryId: '22222222-2222-4222-8222-222222222222',
+    packageVersionId: '33333333-3333-4333-8333-333333333333',
+    packageChecksum: checksum,
+  }).packageVersionId, '33333333-3333-4333-8333-333333333333');
 });

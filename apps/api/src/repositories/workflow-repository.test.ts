@@ -629,11 +629,9 @@ test('reapproval supersedes stale delivery and claims the newly approved package
   const context = await repository.getJobContext(claim.jobId);
 
   assert.notEqual(persistedA.id, persistedB.id);
-  assert.deepEqual(context?.job.input, {
-    brief: {},
-    packageChecksum: packageB.packageChecksum,
-    packageVersionId: persistedB.id,
-  });
+  assert.equal(context?.job.input.packageChecksum, packageB.packageChecksum);
+  assert.equal(context?.job.input.packageVersionId, persistedB.id);
+  assert.ok(context?.job.input.deliveryId);
   assert.equal(context?.approvedChecksum, packageB.packageChecksum);
   assert.equal(await repository.claimJob({ workerId: 'other-worker', capabilities: ['deliver_package'], leaseSeconds: 60 }), null);
 });
@@ -641,8 +639,10 @@ test('reapproval supersedes stale delivery and claims the newly approved package
 test('recordDelivery returns the existing row for its idempotency key', async () => {
   const { repository } = createRepository();
   await createRun(repository);
+  const packageVersion = await repository.recordPackageVersion(packageVersionInput('delivery'));
   const first = await repository.recordDelivery({
     runId,
+    packageVersionId: packageVersion.id,
     target: 'nuglet.lesson',
     packageChecksum: checksum,
     idempotencyKey: 'delivery-1',
@@ -650,6 +650,7 @@ test('recordDelivery returns the existing row for its idempotency key', async ()
   });
   const second = await repository.recordDelivery({
     runId,
+    packageVersionId: packageVersion.id,
     target: 'changed-target',
     packageChecksum: 'b'.repeat(64),
     idempotencyKey: 'delivery-1',

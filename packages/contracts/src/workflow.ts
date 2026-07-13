@@ -46,7 +46,17 @@ export const jobClaimSchema = z.object({
   leaseExpiresAt: z.string().datetime(),
   attempt: z.number().int().nonnegative(),
   revision: z.number().int().positive(),
-}).strict();
+  deliveryId: z.string().uuid().optional(),
+  packageVersionId: z.string().uuid().optional(),
+  packageChecksum: checksumSchema.optional(),
+}).strict().superRefine((claim, context) => {
+  if (claim.stage === 'deliver' && (!claim.deliveryId || !claim.packageVersionId || !claim.packageChecksum)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Delivery claims require immutable package identity',
+    });
+  }
+});
 
 export const jobResultSchema = z.object({
   jobId: z.string().uuid(),

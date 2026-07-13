@@ -162,7 +162,11 @@ test(
       stage: 'deliver',
       action: 'deliver_package',
       idempotencyKey: 'integration-audit-artifact-job',
-      input: { packageChecksum: checksum },
+      input: {
+        deliveryId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        packageVersionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        packageChecksum: checksum,
+      },
     });
     const auditClaim = await repository.claimJob({
       workerId: 'audit-worker',
@@ -341,7 +345,7 @@ test(
     });
     assert.equal(reviewed.stages.human_review?.state, 'needs_human');
     assert.equal(await prisma.workflowEffect.count({ where: { runId, type: 'request_review' } }), 1);
-    await repository.recordPackageVersion(packageVersionInput(runId, checksum));
+    const approvedPackage = await repository.recordPackageVersion(packageVersionInput(runId, checksum));
 
     const approved = await repository.reviewRun({
       runId,
@@ -360,6 +364,40 @@ test(
     });
     assert.equal(await prisma.review.count({ where: { runId, revision: 1, packageChecksum: checksum } }), 1);
     assert.equal(await prisma.job.count({ where: { runId, stage: 'deliver', state: 'queued' } }), 1);
+    const approvedDelivery = await repository.getDeliveryForPackage(runId, checksum);
+    assert.ok(approvedDelivery);
+    assert.equal(approvedDelivery.packageVersionId, approvedPackage.id);
+    const approvedClaim = await repository.claimJob({
+      workerId: 'database-delivery-worker',
+      capabilities: ['deliver_package'],
+      leaseSeconds: 120,
+    });
+    assert.equal(approvedClaim?.deliveryId, approvedDelivery.id);
+    assert.equal(approvedClaim?.packageVersionId, approvedPackage.id);
+    assert.equal(approvedClaim?.packageChecksum, checksum);
+    await repository.updateDelivery({ id: approvedDelivery.id, state: 'failed', nextAttemptAt: new Date(Date.now() + 60_000) });
+    await repository.applyJobResult({
+      workerId: 'database-delivery-worker',
+      result: {
+        jobId: approvedClaim!.jobId,
+        packageId: runId,
+        stage: 'deliver',
+        state: 'waiting',
+        completedAt: '2026-07-13T10:00:00.000Z',
+        outputChecksum: null,
+        error: 'verification_failed',
+      },
+      transition: nextTransition({
+        stage: 'deliver',
+        state: 'running',
+        revisionAttempts: 0,
+        packageChecksum: checksum,
+        approvedChecksum: checksum,
+      }, { type: 'job_waiting', reason: 'verification_failed' }),
+      retryAt: new Date(Date.now() + 60_000),
+    });
+    assert.equal((await repository.retryDelivery(approvedDelivery.id)).nextAttempt, 1);
+    await assert.rejects(repository.retryDelivery(approvedDelivery.id), /failed or waiting/i);
 
     await repository.recordPackageVersion(packageVersionInput(runId, changedChecksum));
     const invalidated = await repository.getRun(runId);
@@ -367,6 +405,7 @@ test(
     assert.equal(invalidated.currentStage, 'human_review');
     assert.equal(invalidated.reviewStatus, 'pending');
     assert.equal(invalidated.approvedChecksum, null);
+    assert.equal((await repository.getDelivery(approvedDelivery.id))?.state, 'superseded');
 
     const retryRunId = 'c0a8012e-7b5d-4e73-95e3-4873b519b38c';
     await repository.createRun({
@@ -525,7 +564,11 @@ test(
       stage: 'deliver',
       action: 'deliver_package',
       idempotencyKey: 'integration-delivery-job',
-      input: { packageChecksum: checksum },
+      input: {
+        deliveryId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        packageVersionId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        packageChecksum: checksum,
+      },
     });
     await repository.claimJob({ workerId: 'delivery-worker', capabilities: ['deliver_package'], leaseSeconds: 120 });
     const delivered = await repository.applyJobResult({

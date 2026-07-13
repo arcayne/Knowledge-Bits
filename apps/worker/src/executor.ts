@@ -44,6 +44,11 @@ export class WorkerExecutor {
   async execute(job: JobClaim, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return;
 
+    if (job.stage === 'deliver') {
+      await this.executeDelivery(job, signal);
+      return;
+    }
+
     const action = actionForStage(job.stage);
     if (!action) return;
 
@@ -122,6 +127,32 @@ export class WorkerExecutor {
     } catch (error) {
       if (controller.signal.aborted) return;
       throw error;
+    } finally {
+      this.scheduler.clearInterval(heartbeatHandle);
+      signal?.removeEventListener('abort', abort);
+    }
+  }
+
+  private async executeDelivery(job: JobClaim, signal?: AbortSignal): Promise<void> {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    let heartbeatInFlight = false;
+    const heartbeat = async () => {
+      if (heartbeatInFlight || controller.signal.aborted) return;
+      heartbeatInFlight = true;
+      try {
+        const result = await this.options.client.heartbeat(job);
+        if (result.kind === 'interrupted') controller.abort();
+      } catch {
+        controller.abort();
+      } finally {
+        heartbeatInFlight = false;
+      }
+    };
+    const heartbeatHandle = this.scheduler.setInterval(heartbeat, heartbeatIntervalMs(job));
+    try {
+      await this.options.client.runDelivery(job, controller.signal);
     } finally {
       this.scheduler.clearInterval(heartbeatHandle);
       signal?.removeEventListener('abort', abort);
