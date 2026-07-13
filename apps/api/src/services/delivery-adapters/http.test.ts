@@ -5,7 +5,7 @@ import {
   DeliveryPermanentSchemaError,
   DeliveryTransientError,
 } from '../delivery.js';
-import { HttpDeliveryAdapter } from './http.js';
+import { createHttpDeliveryAdapterFromEnv, HttpDeliveryAdapter } from './http.js';
 import type { DeliveryAdapterInput } from './types.js';
 import { strictPackageVersionInput } from '../../testing/knowledge-bits-fixture.js';
 
@@ -23,6 +23,10 @@ test('HTTP delivery sends the immutable package identity', async () => {
   await assert.rejects(adapter.deliver(input()), DeliveryTransientError);
   assert.equal((requestBody as DeliveryAdapterInput).packageVersionId, input().packageVersionId);
   assert.equal((requestBody as DeliveryAdapterInput).packageChecksum, input().packageChecksum);
+});
+
+test('delivery adapter remains disabled when no destination is configured', () => {
+  assert.equal(createHttpDeliveryAdapterFromEnv({}), undefined);
 });
 
 for (const status of [400, 401, 403, 404, 409, 422]) {

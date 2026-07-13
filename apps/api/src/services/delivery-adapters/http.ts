@@ -91,8 +91,8 @@ export class HttpDeliveryAdapter implements DeliveryAdapter {
   }
 }
 
-export function createHttpDeliveryAdapterFromEnv(env: NodeJS.ProcessEnv): HttpDeliveryAdapter {
+export function createHttpDeliveryAdapterFromEnv(env: NodeJS.ProcessEnv): HttpDeliveryAdapter | undefined {
   const baseUrl = env.DELIVERY_ADAPTER_URL?.trim();
-  if (!baseUrl) throw new Error('DELIVERY_ADAPTER_URL is required');
+  if (!baseUrl) return undefined;
   return new HttpDeliveryAdapter({ baseUrl, token: env.DELIVERY_ADAPTER_TOKEN?.trim() });
 }
