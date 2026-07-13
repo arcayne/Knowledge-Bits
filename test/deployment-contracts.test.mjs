@@ -17,6 +17,7 @@ test('API app exposes a catch-all Hono Vercel function from its documented root'
   assert.doesNotMatch(packageJson.scripts.build, /tsconfig\.vercel\.json/);
   assert.match(entrypoint, /from ['"]hono\/vercel['"]/);
   assert.match(entrypoint, /from ['"]\.\.\/dist\/runtime\.js['"]/);
+  assert.match(entrypoint, /['"]\/health['"]/);
   assert.match(entrypoint, /export default handle\(/);
 });
 
