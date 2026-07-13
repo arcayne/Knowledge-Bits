@@ -1,0 +1,7 @@
+{
+  "delivery": {
+    "adapter": "fixture",
+    "target": "nuglet.lesson.v1"
+  },
+  "schemaVersion": "fixture.delivery.v1"
+}

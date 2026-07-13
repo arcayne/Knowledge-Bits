@@ -9,7 +9,9 @@
   "scripts": {
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
+    "test": "turbo run test --concurrency=1 && pnpm test:e2e",
+    "test:e2e": "node --test test/e2e/*.test.mjs",
+    "scan:forbidden-credentials": "node scripts/scan-forbidden-credentials.mjs",
     "dev": "turbo run dev",
     "prisma:generate": "pnpm --filter @knowledge-bits/api prisma:generate"
   },

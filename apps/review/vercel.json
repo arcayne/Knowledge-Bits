@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd ../.. && pnpm --filter @knowledge-bits/review build",
+  "framework": "astro",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile"
+}

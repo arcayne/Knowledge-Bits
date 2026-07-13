@@ -42,7 +42,9 @@ export function composeWorkerProviders(options: {
 }): readonly WorkerProvider[] {
   const env = options.env ?? process.env;
   const mode = env.WORKER_PROVIDER_MODE?.trim() || 'production';
-  if (mode === 'fixture') return [new FixtureProvider()];
+  if (mode === 'fixture') {
+    return [new FixtureProvider({ fixtureDirectory: configuredValue(env, 'WORKER_FIXTURE_DIRECTORY') })];
+  }
   if (mode !== 'production') {
     return [new UnavailableProvider('runtime', ['collect_sources', 'create_content', 'check_content', 'produce_assets'], 'provider_runtime_mode_invalid')];
   }
