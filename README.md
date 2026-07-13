@@ -1,12 +1,26 @@
 # Knowledge Bits
 
-Knowledge Bits is a standalone content workflow engine. It owns its database, worker authentication,
-provider execution, review package, approval record, and delivery history. It does not read Nuglet
-production credentials or write to Nuglet directly.
+> **From trusted sources to approved knowledge, delivered.**
+
+Knowledge Bits is a standalone, evidence-backed content operations engine. It turns a brief and a set
+of trustworthy resources into a reviewed, traceable, multi-format `KnowledgeBits` package and
+delivers that package to the systems where an audience consumes it.
+
+The engine owns its database, worker authentication, provider execution, evidence, quality gates,
+review package, approval record, and delivery history. It does not read Nuglet production credentials
+or write to Nuglet directly.
 
 The workflow has exactly six stages: research, create, check, produce assets, human review, and
 delivery. A worker lease protects each automated stage. Human review makes one decision over the
 complete package checksum. Approval queues delivery for that immutable `KnowledgeBits` package.
+
+**Status:** V1 engine implemented and fixture-verified  
+**Initial consumer:** Nuglet
+
+Product documentation:
+
+- [Product and business vision](docs/VISION.md)
+- [Approved V1 design](docs/V1_DESIGN.md)
 
 ## Requirements
 
