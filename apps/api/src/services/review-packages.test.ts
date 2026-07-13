@@ -120,6 +120,35 @@ test('blocks approval for failed QA, blocking editorial findings, or stale asset
   }
 });
 
+test('excludes superseded assets so approval is bound to the displayed canonical package', async () => {
+  const { repository, storage, mediaId, staleMediaId } = await fixture({ includeStaleHero: true });
+  const service = new ReviewPackageService({ repository, storage });
+
+  const model = await service.load(runId);
+  const packagedHeroes = model.package?.artifactInventory.filter((artifact) => artifact.kind === 'hero');
+
+  assert.equal(model.decisionAllowed, true);
+  assert.equal(model.assets.hero.artifactId, mediaId);
+  assert.deepEqual(packagedHeroes?.map((artifact) => artifact.artifactId), [mediaId]);
+  assert.ok(!model.package?.artifactInventory.some((artifact) => artifact.artifactId === staleMediaId));
+  await assert.rejects(service.readArtifact(runId, staleMediaId!), /artifact.*package/i);
+
+  const app = createApp({
+    repository,
+    artifactStorage: storage,
+    env: {
+      ENGINE_API_TOKEN: 'api-token',
+      ENGINE_REVIEW_TOKEN: 'review-token',
+    },
+  });
+  const decision = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer review-token', 'X-Knowledge-Bits-Reviewer': 'review-principal' },
+    body: JSON.stringify({ decision: 'approve', packageChecksum: model.package?.packageChecksum }),
+  });
+  assert.equal(decision.status, 200, await decision.clone().text());
+});
+
 test('reads only an artifact included in the current immutable package', async () => {
   const { repository, storage, mediaId } = await fixture();
   const service = new ReviewPackageService({ repository, storage });
@@ -184,6 +213,7 @@ test('maps authenticated artifact-read object misses to 404 and generic adapter 
 
 async function fixture(options: {
   includeMedia?: boolean;
+  includeStaleHero?: boolean;
   qaPassed?: boolean;
   blockingEditorial?: boolean;
   assetInputChecksum?: string;
@@ -208,6 +238,7 @@ async function fixture(options: {
     hero: 'objects/hero',
     infographic: 'objects/infographic',
     audio: 'objects/audio',
+    staleHero: 'objects/stale-hero',
     snapshot: 'objects/snapshot',
   };
   const inputs: Array<{
@@ -279,6 +310,17 @@ async function fixture(options: {
     },
   ];
   if (options.includeMedia !== false) {
+    if (options.includeStaleHero) {
+      inputs.push({
+        id: '10000000-0000-4000-8000-000000000007',
+        kind: 'hero',
+        storageKey: artifactKeys.staleHero,
+        action: 'produce_assets',
+        mediaType: 'image/webp',
+        body: 'stale-hero-image',
+        inputChecksum: 'd'.repeat(64),
+      });
+    }
     inputs.push(
       {
         id: '20000000-0000-4000-8000-000000000004',
@@ -341,6 +383,7 @@ async function fixture(options: {
     storage,
     artifactKeys,
     mediaId: options.includeMedia === false ? null : '20000000-0000-4000-8000-000000000004',
+    staleMediaId: options.includeStaleHero ? '10000000-0000-4000-8000-000000000007' : null,
   };
 }
 

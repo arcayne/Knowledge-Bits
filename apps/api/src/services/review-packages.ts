@@ -35,19 +35,20 @@ export class ReviewPackageService {
     const run = await this.dependencies.repository.getRun(runId);
     if (!run) throw new ReviewPackageNotFoundError('Run not found');
     const artifacts = await this.dependencies.repository.listArtifactsForSuccessfulStageJobs(run.id, run.currentRevision);
-    const assets = assetStates(run.id, artifacts);
+    const packageArtifacts = canonicalPackageArtifacts(artifacts);
+    const assets = assetStates(run.id, packageArtifacts);
     const mediaIssues = REVIEW_ASSET_KINDS
       .filter((kind) => assets[kind].state === 'missing')
       .map((kind) => `Required review media is missing: ${kind}`);
 
     try {
       for (const kind of REVIEW_ASSET_KINDS) {
-        const artifact = latestArtifact(artifacts, kind);
+        const artifact = latestArtifact(packageArtifacts, kind);
         if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
       }
-      const evidenceArtifact = requiredParsedArtifact(artifacts, 'collect_sources', 'evidence');
-      const contentArtifact = requiredParsedArtifact(artifacts, 'create_content', 'content');
-      const qaArtifact = requiredParsedArtifact(artifacts, 'check_content', 'QA');
+      const evidenceArtifact = requiredParsedArtifact(packageArtifacts, 'collect_sources', 'evidence');
+      const contentArtifact = requiredParsedArtifact(packageArtifacts, 'create_content', 'content');
+      const qaArtifact = requiredParsedArtifact(packageArtifacts, 'check_content', 'QA');
       const contentOutput = await this.readJson(contentArtifact, 'content');
       const qaOutput = await this.readJson(qaArtifact, 'QA');
       const content = knowledgeBitsContentSchema.parse({
@@ -55,14 +56,14 @@ export class ReviewPackageService {
         target: { kind: 'nuglet.lesson.v1', payload: contentOutput },
       });
       const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
-      const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, artifacts, content.target.payload.claims);
+      const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, packageArtifacts, content.target.payload.claims);
       const qa = knowledgeBitsQaSchema.parse(qaOutput);
-      const artifactInventory = artifacts.map(toArtifactReference);
+      const artifactInventory = packageArtifacts.map(toArtifactReference);
       const contentChecksum = calculateContentChecksum(content.target.payload);
       const approvalIssues = [
         ...mediaIssues,
         ...qaApprovalIssues(qa, contentChecksum),
-        ...assetChecksumIssues(artifacts, contentChecksum),
+        ...assetChecksumIssues(packageArtifacts, contentChecksum),
       ];
       const packageChecksum = calculatePackageChecksum({
         content,
@@ -180,6 +181,18 @@ function requiredParsedArtifact(
 
 function latestArtifact(artifacts: readonly WorkflowArtifact[], kind: string): WorkflowArtifact | undefined {
   return [...artifacts].reverse().find((artifact) => artifact.kind === kind);
+}
+
+function canonicalPackageArtifacts(artifacts: readonly WorkflowArtifact[]): WorkflowArtifact[] {
+  const requiredAssets = new Map(REVIEW_ASSET_KINDS.map((kind) => [kind, latestArtifact(artifacts, kind)]));
+  return artifacts.filter((artifact) => {
+    if (!isReviewAssetKind(artifact.kind)) return true;
+    return requiredAssets.get(artifact.kind)?.id === artifact.id;
+  });
+}
+
+function isReviewAssetKind(kind: string): kind is typeof REVIEW_ASSET_KINDS[number] {
+  return REVIEW_ASSET_KINDS.some((candidate) => candidate === kind);
 }
 
 function assetStates(runId: string, artifacts: readonly WorkflowArtifact[]) {

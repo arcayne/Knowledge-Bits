@@ -17,6 +17,7 @@ import {
 } from './executor.js';
 import type { WorkerEngineClient } from './engine-client.js';
 import { FixtureProvider } from './providers/fixture.js';
+import { composeWorkerProviders, runProcess } from './runtime.js';
 import {
   ProviderNeedsHumanError,
   type ProviderExecution,
@@ -91,6 +92,49 @@ test('reports an operator-fixable provider configuration error as needs human', 
   assert.equal(client.results[0]?.result.needsHumanKind, 'configuration');
   assert.equal(client.results[0]?.result.error, 'provider_runtime_unconfigured:notebooklm');
   assert.equal(client.completedArtifacts.length, 0);
+});
+
+test('reports malformed media provider configuration after claiming the job', async () => {
+  const client = new FakeEngineClient();
+  const providers = composeWorkerProviders({
+    env: {
+      MEDIA_GENERATION_COMMAND: 'media-provider',
+      MEDIA_GENERATION_ARGS: '{',
+    },
+    engineClient: client,
+  });
+  const executor = new WorkerExecutor({ client, providers, now: () => new Date(now) });
+
+  await executor.execute(job('produce_assets'));
+
+  assert.equal(client.results[0]?.result.state, 'needs_human');
+  assert.equal(client.results[0]?.result.needsHumanKind, 'configuration');
+  assert.equal(client.results[0]?.result.error, 'media_generation_args_invalid');
+});
+
+test('reports a missing local provider executable as needs human instead of waiting', async () => {
+  const client = new FakeEngineClient();
+  const command = `/missing/knowledge-bits-provider-${randomUUID()}`;
+  const provider: WorkerProvider = {
+    name: 'missing-local-provider',
+    capabilities: ['produce_assets'],
+    async execute(input) {
+      await runProcess({
+        command,
+        args: [],
+        timeoutMs: 1_000,
+        signal: input.signal,
+      });
+      throw new Error('missing executable unexpectedly ran');
+    },
+  };
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('produce_assets'));
+
+  assert.equal(client.results[0]?.result.state, 'needs_human');
+  assert.equal(client.results[0]?.result.needsHumanKind, 'configuration');
+  assert.equal(client.results[0]?.result.error, `provider_executable_not_found:${command}`);
 });
 
 test('execution deadline stops heartbeats, reports a wait, and preserves the provider idempotency key on reclaim', async () => {

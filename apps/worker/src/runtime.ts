@@ -42,6 +42,7 @@ export interface ProviderRuntime {
   piContext?: PiContextResolver;
   mediaClient?: MediaClient;
   mediaContext?: MediaContextResolver;
+  configurationIssues?: Partial<Record<'notebooklm' | 'pi' | 'media', string>>;
 }
 
 export function composeWorkerProviders(options: {
@@ -73,7 +74,7 @@ export function composeWorkerProviders(options: {
       : new UnavailableProvider('pi', ['check_content']),
     runtime.mediaClient && runtime.mediaContext
       ? new MediaProviderAdapter({ client: runtime.mediaClient, context: runtime.mediaContext })
-      : new UnavailableProvider('media', ['produce_assets']),
+      : new UnavailableProvider('media', ['produce_assets'], runtime.configurationIssues?.media),
   ];
 }
 
@@ -89,8 +90,17 @@ function configuredRuntime(
   const piProvider = configuredValue(env, 'PI_PROVIDER');
   const piModel = configuredValue(env, 'PI_MODEL');
   const mediaCommand = configuredValue(env, 'MEDIA_GENERATION_COMMAND');
+  let mediaArgs: string[] = [];
+  let mediaConfigurationIssue: string | undefined;
+  try {
+    mediaArgs = jsonStringArray(env.MEDIA_GENERATION_ARGS, 'MEDIA_GENERATION_ARGS');
+  } catch (error) {
+    if (!(error instanceof ProviderNeedsHumanError)) throw error;
+    mediaConfigurationIssue = error.message;
+  }
 
   return {
+    ...(mediaConfigurationIssue ? { configurationIssues: { media: mediaConfigurationIssue } } : {}),
     ...(notebookId && trustedHosts.length ? {
       notebookProcess: new SpawnNotebookLmProcess(),
       notebookContext: (input: ProviderExecutionInput) => contexts.notebook(input, notebookId),
@@ -100,10 +110,10 @@ function configuredRuntime(
       piClient: new LocalPiSdkClient({ provider: piProvider, model: piModel }),
       piContext: (input: ProviderExecutionInput) => contexts.pi(input),
     } : {}),
-    ...(mediaCommand ? {
+    ...(mediaCommand && !mediaConfigurationIssue ? {
       mediaClient: new LocalMediaCommandClient({
         command: mediaCommand,
-        args: jsonStringArray(env.MEDIA_GENERATION_ARGS, 'MEDIA_GENERATION_ARGS'),
+        args: mediaArgs,
         process: new SpawnMediaCommandProcess(),
       }),
       mediaContext: (input: ProviderExecutionInput) => contexts.media(input),
@@ -387,7 +397,7 @@ export function runProcess(input: {
       clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
       input.signal.removeEventListener('abort', abort);
-      reject(error);
+      reject(classifyProcessStartError(error, input.command));
     });
     child.once('close', (exitCode) => {
       clearTimeout(timeout);
@@ -404,6 +414,15 @@ export function runProcess(input: {
     child.stdin.end();
     if (input.signal.aborted) abort();
   });
+}
+
+function classifyProcessStartError(error: Error, command: string): Error {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === 'ENOENT') return new ProviderNeedsHumanError(`provider_executable_not_found:${command}`);
+  if (code === 'EACCES' || code === 'EPERM') {
+    return new ProviderNeedsHumanError(`provider_executable_not_executable:${command}`);
+  }
+  return error;
 }
 
 function dependencyRecords(input: ProviderExecutionInput): Array<{
