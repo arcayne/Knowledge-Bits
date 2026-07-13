@@ -8,6 +8,8 @@ test('API app exposes a catch-all Hono Vercel function from its documented root'
   const config = await readJson('apps/api/vercel.json');
   const packageJson = await readJson('apps/api/package.json');
   const entrypoint = await readFile(new URL('apps/api/api/index.js', repositoryRoot), 'utf8');
+  const catchAllEntrypoint = await readFile(new URL('apps/api/api/[...path].js', repositoryRoot), 'utf8');
+  const handler = await readFile(new URL('apps/api/api/handler.js', repositoryRoot), 'utf8');
 
   assert.equal(config.framework, null);
   assert.equal(config.installCommand, 'pnpm install --frozen-lockfile');
@@ -15,10 +17,12 @@ test('API app exposes a catch-all Hono Vercel function from its documented root'
   assert.equal(config.rewrites, undefined);
   assert.match(packageJson.scripts.build, /tsc -p tsconfig\.json/);
   assert.doesNotMatch(packageJson.scripts.build, /tsconfig\.vercel\.json/);
-  assert.match(entrypoint, /from ['"]hono\/vercel['"]/);
-  assert.match(entrypoint, /from ['"]\.\.\/dist\/runtime\.js['"]/);
-  assert.match(entrypoint, /['"]\/health['"]/);
-  assert.match(entrypoint, /export default handle\(/);
+  assert.match(entrypoint, /from ['"]\.\/handler\.js['"]/);
+  assert.match(catchAllEntrypoint, /from ['"]\.\/handler\.js['"]/);
+  assert.match(handler, /from ['"]hono\/vercel['"]/);
+  assert.match(handler, /from ['"]\.\.\/dist\/runtime\.js['"]/);
+  assert.match(handler, /['"]\/health['"]/);
+  assert.match(handler, /export default handle\(/);
 });
 
 test('review app builds Astro SSR with the Vercel adapter from its documented root', async () => {
