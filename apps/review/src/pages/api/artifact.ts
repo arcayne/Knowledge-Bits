@@ -1,4 +1,4 @@
-export async function GET({ url }: { url: URL }): Promise<Response> {
+export async function GET({ url, locals }: { url: URL; locals: App.Locals }): Promise<Response> {
   const runId = url.searchParams.get('runId');
   const artifactId = url.searchParams.get('artifactId');
   if (!isUuid(runId) || !isUuid(artifactId)) {
@@ -7,13 +7,17 @@ export async function GET({ url }: { url: URL }): Promise<Response> {
 
   const apiUrl = import.meta.env.ENGINE_API_URL?.trim();
   const token = import.meta.env.ENGINE_REVIEW_TOKEN?.trim();
-  if (!apiUrl || !token) {
+  const reviewerId = (locals as { reviewerId?: string }).reviewerId;
+  if (!apiUrl || !token || !reviewerId) {
     return Response.json({ error: 'The review service is not configured' }, { status: 503 });
   }
 
   try {
     const response = await fetch(new URL(`/runs/${runId}/artifacts/${artifactId}`, apiUrl), {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Knowledge-Bits-Reviewer': reviewerId,
+      },
     });
     return new Response(response.body, {
       status: response.status,

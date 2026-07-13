@@ -13,8 +13,10 @@ const job: JobClaim = {
   claimedBy: 'fixture-worker',
   claimedAt: '2026-07-12T18:00:00.000Z',
   leaseExpiresAt: '2026-07-12T18:01:00.000Z',
+  executionDeadlineAt: '2026-07-12T18:05:00.000Z',
   attempt: 1,
   revision: 1,
+  input: { brief: {}, dependencies: [] },
 };
 
 test('maps a renewed heartbeat response to continue', async () => {
@@ -25,6 +27,38 @@ test('maps a renewed heartbeat response to continue', async () => {
   });
 
   assert.deepEqual(await client.heartbeat(job), { kind: 'continue' });
+});
+
+test('reads a declared artifact through the job-scoped control API', async () => {
+  let requestedUrl = '';
+  const artifactId = randomUUID();
+  const client = new HttpEngineClient({
+    baseUrl: 'https://engine.example.test',
+    workerToken: 'worker-token',
+    fetch: async (url) => {
+      requestedUrl = String(url);
+      return new Response('evidence bytes', { headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  const artifact = await client.readArtifact(job, artifactId);
+
+  assert.equal(requestedUrl, `https://engine.example.test/jobs/${job.jobId}/artifacts/${artifactId}`);
+  assert.equal(Buffer.from(artifact.body).toString(), 'evidence bytes');
+  assert.equal(artifact.mediaType, 'application/json');
+});
+
+test('bounds control API requests with an aborting deadline', async () => {
+  const client = new HttpEngineClient({
+    baseUrl: 'https://engine.example.test',
+    workerToken: 'worker-token',
+    requestTimeoutMs: 5,
+    fetch: async (_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+    }),
+  });
+
+  await assert.rejects(client.claim(60), /timed out/i);
 });
 
 test('maps a heartbeat lease conflict to interrupted', async () => {

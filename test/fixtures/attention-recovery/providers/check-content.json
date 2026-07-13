@@ -1,12 +1,13 @@
 {
   "deterministic": {
-    "contentChecksum": "5cd1cb4dc6f0c04cf3519ecef0a99039cef167e4369f7b0ba6befd690e2c4e10",
+    "contentChecksum": "$contentChecksum",
     "findings": [],
     "passed": true
   },
   "editorial": {
     "findings": [
       {
+        "blocking": false,
         "code": "specific-action",
         "message": "The reset and five minute action are concrete and observable.",
         "severity": "minor"

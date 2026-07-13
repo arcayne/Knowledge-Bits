@@ -18,6 +18,7 @@ test('review proxy returns and submits the exact surface checksum with server au
   const loaded = await forwardReviewRequest({
     apiUrl: 'https://engine.example.test',
     token: 'server-review-token',
+    reviewerId: 'operator-123',
     path: '/runs/run-1/review',
     fetch,
   });
@@ -27,10 +28,11 @@ test('review proxy returns and submits the exact surface checksum with server au
   const approved = await forwardReviewRequest({
     apiUrl: 'https://engine.example.test',
     token: 'server-review-token',
+    reviewerId: 'operator-123',
     path: '/runs/run-1/review',
     init: {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Knowledge-Bits-Reviewer': 'browser-spoof' },
       body: JSON.stringify({ decision: 'approve', packageChecksum: surface.currentPackageChecksum }),
     },
     fetch,
@@ -39,12 +41,14 @@ test('review proxy returns and submits the exact surface checksum with server au
   assert.equal(approved.status, 200);
   assert.equal(calls.length, 2);
   assert.ok(calls.every(({ init }) => new Headers(init.headers).get('Authorization') === 'Bearer server-review-token'));
+  assert.ok(calls.every(({ init }) => new Headers(init.headers).get('X-Knowledge-Bits-Reviewer') === 'operator-123'));
 });
 
 test('review proxy fails closed when its server configuration is missing', async () => {
   const response = await forwardReviewRequest({
     apiUrl: '',
     token: '',
+    reviewerId: '',
     path: '/runs/run-1/review',
     fetch: () => assert.fail('fetch must not run without server configuration'),
   });

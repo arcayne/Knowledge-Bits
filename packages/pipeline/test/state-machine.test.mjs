@@ -56,10 +56,10 @@ test('rejects malformed human review snapshots before starting work', () => {
 
 test('validates stage and state combinations for package changes', () => {
   assert.throws(
-    () => nextTransition(snapshot({ state: 'needs_human' }), {
+    () => nextTransition(snapshot({ state: 'done' }), {
       type: 'package_changed', packageChecksum: CHANGED_CHECKSUM,
     }),
-    /invalid workflow snapshot.*research\/needs_human/i,
+    /invalid workflow snapshot.*research\/done/i,
   );
 });
 
@@ -121,6 +121,17 @@ test('two failed revisions require a human', () => {
   assert.equal(result.stage, 'check');
   assert.equal(result.state, 'needs_human');
   assert.equal(result.effects[0].type, 'request_human');
+});
+
+test('operator-fixable configuration failures require human action in every automated stage', () => {
+  for (const stage of ['research', 'create', 'check', 'produce_assets']) {
+    const result = nextTransition(snapshot({ stage, state: 'running' }), {
+      type: 'job_needs_human', reason: 'provider_configuration_missing',
+    });
+    assert.equal(result.stage, stage);
+    assert.equal(result.state, 'needs_human');
+    assert.deepEqual(result.effects, [{ type: 'request_human', reason: 'provider_configuration_missing' }]);
+  }
 });
 
 test('approval moves human review to delivery without a second approval', () => {

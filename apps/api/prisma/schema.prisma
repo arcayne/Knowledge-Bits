@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("ENGINE_DATABASE_URL")
+  directUrl = env("ENGINE_MIGRATION_DATABASE_URL")
 }
 
 model Run {
@@ -53,6 +54,7 @@ model Job {
   availableAt    DateTime @default(now())
   leaseOwner     String?
   leaseExpiresAt DateTime?
+  executionDeadlineAt DateTime?
   attempt        Int      @default(0)
   input          Json
   result         Json?

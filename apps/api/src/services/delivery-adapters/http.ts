@@ -29,37 +29,49 @@ export class HttpDeliveryAdapter implements DeliveryAdapter {
     baseUrl: string;
     token?: string;
     fetch?: typeof fetch;
+    timeoutMs?: number;
   }) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
   }
 
-  async deliver(input: DeliveryAdapterInput): Promise<DeliveryAdapterResponse> {
+  async deliver(input: DeliveryAdapterInput, signal?: AbortSignal): Promise<DeliveryAdapterResponse> {
     try {
-      return deliveryResponseSchema.parse(await this.request('/deliver', input));
+      return deliveryResponseSchema.parse(await this.request('/deliver', input, signal));
     } catch (error) {
       if (error instanceof z.ZodError) throw new DeliveryPermanentSchemaError('delivery_adapter_invalid_response_schema');
       throw error;
     }
   }
 
-  async verify(input: { externalId: string; packageChecksum: string }): Promise<DeliveryVerificationResponse> {
+  async verify(input: { externalId: string; packageChecksum: string }, signal?: AbortSignal): Promise<DeliveryVerificationResponse> {
     try {
-      return verificationResponseSchema.parse(await this.request('/verify', input));
+      return verificationResponseSchema.parse(await this.request('/verify', input, signal));
     } catch (error) {
       if (error instanceof z.ZodError) throw new DeliveryPermanentSchemaError('delivery_adapter_invalid_verification_schema');
       throw error;
     }
   }
 
-  private async request(path: string, body: unknown): Promise<unknown> {
-    const response = await (this.options.fetch ?? fetch)(`${this.baseUrl}${path}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(this.options.token ? { Authorization: `Bearer ${this.options.token}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
+  private async request(path: string, body: unknown, callerSignal?: AbortSignal): Promise<unknown> {
+    const timeoutSignal = AbortSignal.timeout(this.options.timeoutMs ?? 30_000);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
+    let response: Response;
+    try {
+      response = await (this.options.fetch ?? fetch)(`${this.baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.options.token ? { Authorization: `Bearer ${this.options.token}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (error) {
+      if (timeoutSignal.aborted && !callerSignal?.aborted) {
+        throw new DeliveryTransientError('delivery_adapter_timeout');
+      }
+      throw error;
+    }
     const responseText = await response.text();
     if (!response.ok) {
       const message = `delivery_adapter_${response.status}${responseText ? `:${responseText}` : ''}`;

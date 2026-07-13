@@ -9,7 +9,9 @@
     "test": "tsx --test src/*.test.ts src/**/*.test.ts"
   },
   "dependencies": {
-    "@knowledge-bits/contracts": "workspace:*"
+    "@earendil-works/pi-ai": "0.80.2",
+    "@knowledge-bits/contracts": "workspace:*",
+    "@knowledge-bits/pipeline": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.1.0",

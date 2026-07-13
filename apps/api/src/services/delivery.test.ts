@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import { calculatePackageChecksum } from '@knowledge-bits/pipeline';
+import { calculateContentChecksum, calculatePackageChecksum } from '@knowledge-bits/pipeline';
 
 import {
   createInMemoryWorkflowStore,
@@ -12,6 +12,7 @@ import {
 } from '../repositories/workflow-repository.js';
 import {
   DeliveryPermanentSchemaError,
+  DeliveryProcessInterruptionError,
   DeliveryService,
   DeliveryTransientError,
 } from './delivery.js';
@@ -167,7 +168,33 @@ test('lease loss during verify preserves verification evidence without advancing
   assert.equal((delivery?.response?.lateEvidence as unknown[] | undefined)?.length, 1);
 });
 
-test('terminal and superseded deliveries cannot be run automatically', async () => {
+test('recovers idempotently after every persisted delivery boundary', async () => {
+  for (const boundary of ['running', 'delivered', 'verifying', 'succeeded'] as const) {
+    const fixture = await approvedFixture(`crash-${boundary}`, boundary);
+    await assert.rejects(
+      fixture.service.run(fixture.deliveryId, fixture.execution),
+      /simulated delivery interruption/i,
+    );
+    fixture.advanceClock(61_000);
+    assert.equal(await fixture.repository.releaseExpiredLeases(), 1);
+    const reclaimed = await fixture.claim();
+    fixture.adapter.nextStatus = 'already_imported';
+    const recovered = await new DeliveryService({
+      repository: fixture.repository,
+      adapter: fixture.adapter,
+      clock: fixture.clock,
+    }).run(fixture.deliveryId, reclaimed);
+
+    assert.equal(recovered.state, 'succeeded');
+    assert.equal(new Set(fixture.adapter.requests.map((request) => request.idempotencyKey)).size, 1);
+    if (boundary === 'verifying' || boundary === 'succeeded') {
+      assert.equal(fixture.adapter.requests.length, 1);
+    }
+    if (boundary === 'succeeded') assert.equal(fixture.adapter.verifyRequests, 1);
+  }
+});
+
+test('needs-human and superseded deliveries cannot be run automatically while succeeded finalizes idempotently', async () => {
   const fixtures = await Promise.all([
     approvedFixture('terminal-needs-human'),
     approvedFixture('terminal-succeeded'),
@@ -178,7 +205,7 @@ test('terminal and superseded deliveries cannot be run automatically', async () 
   await fixtures[1]!.service.run(fixtures[1]!.deliveryId, fixtures[1]!.execution);
   await fixtures[2]!.repository.recordPackageVersion(packageVersionInput(fixtures[2]!.runId, 'replacement'));
 
-  for (const fixture of fixtures) {
+  for (const fixture of [fixtures[0]!, fixtures[2]!]) {
     const requestCount = fixture.adapter.requests.length;
     await assert.rejects(
       fixture.service.run(fixture.deliveryId, fixture.execution),
@@ -186,6 +213,9 @@ test('terminal and superseded deliveries cannot be run automatically', async () 
     );
     assert.equal(fixture.adapter.requests.length, requestCount);
   }
+  const succeededRequestCount = fixtures[1]!.adapter.requests.length;
+  assert.equal((await fixtures[1]!.service.run(fixtures[1]!.deliveryId, fixtures[1]!.execution)).state, 'succeeded');
+  assert.equal(fixtures[1]!.adapter.requests.length, succeededRequestCount);
 });
 
 class RecordingAdapter implements DeliveryAdapter {
@@ -222,7 +252,10 @@ class RecordingAdapter implements DeliveryAdapter {
   }
 }
 
-async function approvedFixture(variant: string) {
+async function approvedFixture(
+  variant: string,
+  crashBoundary?: 'running' | 'delivered' | 'verifying' | 'succeeded',
+) {
   let now = new Date('2026-07-13T10:00:00.000Z');
   const clock = () => now;
   const repository = new WorkflowRepository(createInMemoryWorkflowStore({ clock }));
@@ -264,6 +297,7 @@ async function approvedFixture(variant: string) {
     execution,
     claim,
     advanceClock: (milliseconds: number) => { now = new Date(now.getTime() + milliseconds); },
+    clock,
     finishAttempt: async (result: Awaited<ReturnType<DeliveryService['run']>>) => {
       const retryAt = 'retryAt' in result ? result.retryAt : undefined;
       await repository.applyJobResult({
@@ -276,6 +310,7 @@ async function approvedFixture(variant: string) {
           completedAt: clock().toISOString(),
           outputChecksum: result.state === 'succeeded' ? result.packageChecksum : null,
           error: result.state === 'succeeded' ? null : result.error,
+          ...(result.state === 'needs_human' ? { needsHumanKind: 'configuration' as const } : {}),
         },
         transition: result.state === 'succeeded'
           ? { stage: 'deliver', state: 'done', revisionAttempts: 0, packageChecksum: packageVersion.packageChecksum, approvedChecksum: packageVersion.packageChecksum, effects: [{ type: 'record_delivery', state: 'succeeded' }] }
@@ -283,12 +318,46 @@ async function approvedFixture(variant: string) {
         ...(retryAt ? { retryAt } : {}),
       });
     },
-    service: new DeliveryService({ repository, adapter, clock }),
+    service: new DeliveryService({
+      repository,
+      adapter,
+      clock,
+      ...(crashBoundary ? {
+        onBoundary(boundary) {
+          if (boundary === crashBoundary) throw new DeliveryProcessInterruptionError('simulated delivery interruption');
+        },
+      } : {}),
+    }),
   };
 }
 
 function packageVersionInput(runId: string, variant: string): RecordPackageVersionInput {
   const sourceId = randomUUID();
+  const claimId = randomUUID();
+  const snapshotArtifactId = randomUUID();
+  const payload = {
+    title: `Package ${variant}`,
+    takeaway: 'Take one supported step.',
+    action: 'Write down the next action.',
+    depths: {
+      quick: 'Name the action.',
+      core: 'Use one concrete next action.',
+      deep: 'A specific next action reduces the decisions needed to restart.',
+    },
+    claims: [{
+      claimId,
+      statement: 'A concrete next action can reduce restart decisions.',
+      citations: [{ sourceId, snapshotArtifactId, excerpt: 'A defined next action reduces restart decisions.' }],
+    }],
+    claimCoverage: [
+      { path: 'title' as const, claimIds: [claimId] },
+      { path: 'takeaway' as const, claimIds: [claimId] },
+      { path: 'action' as const, claimIds: [claimId] },
+      { path: 'depths.quick' as const, claimIds: [claimId] },
+      { path: 'depths.core' as const, claimIds: [claimId] },
+      { path: 'depths.deep' as const, claimIds: [claimId] },
+    ],
+  };
   const material = {
     adapterVersion: 'knowledge-bits.review-package.v1',
     locale: 'en',
@@ -296,21 +365,35 @@ function packageVersionInput(runId: string, variant: string): RecordPackageVersi
     usageRights: { scope: 'internal-review' },
     content: {
       schemaVersion: 'knowledge-bits.content.v1' as const,
-      target: { kind: 'nuglet.lesson.v1' as const, payload: { title: `Package ${variant}` } },
+      target: { kind: 'nuglet.lesson.v1' as const, payload },
     },
     evidence: {
       schemaVersion: 'knowledge-bits.evidence.v1' as const,
-      sources: [{
+      acceptedSources: [{
         sourceId,
         url: 'https://example.test/source',
         title: 'Source',
         retrievedAt: '2026-07-13T09:00:00.000Z',
-        checksum: '1'.repeat(64),
+        snapshot: {
+          artifactId: snapshotArtifactId,
+          kind: 'source_snapshot',
+          mediaType: 'text/plain',
+          checksum: '1'.repeat(64),
+          storageKey: `sources/${snapshotArtifactId}`,
+          byteSize: 64,
+          createdAt: '2026-07-13T09:00:00.000Z',
+          provider: 'fixture',
+          inputChecksum: null,
+        },
+        readability: { passed: true, reason: null },
+        credibility: { passed: true, policy: 'fixture.v1', reason: null },
       }],
-      claims: [{ claimId: randomUUID(), statement: 'A grounded claim.', citations: [{ sourceId, excerpt: 'Evidence.' }] }],
+      rejectedSources: [],
+      coverageGaps: [],
+      claims: payload.claims,
     },
     qa: {
-      deterministic: { passed: true, findings: [] },
+      deterministic: { passed: true, contentChecksum: calculateContentChecksum(payload), findings: [] },
       editorial: { summary: 'Ready', findings: [] },
     },
     artifactInventory: [],

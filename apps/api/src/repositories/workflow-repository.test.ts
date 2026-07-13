@@ -2,17 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { JobResult } from '@knowledge-bits/contracts';
-import { calculatePackageChecksum, nextTransition } from '@knowledge-bits/pipeline';
+import { nextTransition } from '@knowledge-bits/pipeline';
 
 import {
   createInMemoryWorkflowStore,
-  type RecordPackageVersionInput,
   WorkflowRepository,
 } from './workflow-repository.js';
+import { strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 import {
   FORBIDDEN_NUGLET_ENGINE_ENV,
   assertEngineIsolation,
   createIsolatedPrismaClient,
+  migrationDatabaseEnvironment,
 } from '../config.js';
 
 const checksum = 'a'.repeat(64);
@@ -67,20 +68,8 @@ function completedResult(jobId: string, completedAt: Date): JobResult {
   };
 }
 
-function packageVersionInput(variant: string, revision = 1): RecordPackageVersionInput {
-  const material = {
-    runId,
-    revision,
-    adapterVersion: 'review-package@1',
-    locale: 'en',
-    owner: 'knowledge-bits-engine',
-    usageRights: { scope: 'internal-review' },
-    content: { schemaVersion: 'knowledge-bits.content.v1' as const, target: { kind: 'nuglet.lesson.v1' as const, payload: { title: `One task ${variant}` } } },
-    evidence: { schemaVersion: 'knowledge-bits.evidence.v1' as const, sources: [], claims: [] },
-    qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Ready', findings: [] } },
-    artifactInventory: [],
-  };
-  return { ...material, packageChecksum: calculatePackageChecksum({ ...material, assetInventory: material.artifactInventory }) };
+function packageVersionInput(variant: string, revision = 1) {
+  return strictPackageVersionInput(runId, variant, revision);
 }
 
 test('creates and retrieves a workflow run', async () => {
@@ -730,6 +719,66 @@ test('scheduled delivery retry requires its retry time before fencing waiting to
   assert.equal((await retryTransition(retryAt)).state, 'running');
 });
 
+test('delivery recovery rejects an active lease and reuses the expired delivery job', async () => {
+  const { repository, now, setNow } = createRepository();
+  const packageInput = packageVersionInput('delivery-crash-recovery');
+  await repository.createRun({
+    id: runId,
+    title: 'Delivery crash recovery',
+    locale: 'en',
+    brief: {},
+    currentStage: 'human_review',
+    packageChecksum: packageInput.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  const packageVersion = await repository.recordPackageVersion(packageInput);
+  await repository.reviewRun({
+    runId,
+    packageChecksum: packageVersion.packageChecksum,
+    decision: 'approve',
+    reviewerId: 'review-principal',
+  });
+  const delivery = await repository.getDeliveryForPackage(runId, packageVersion.packageChecksum);
+  assert.ok(delivery);
+  const claim = await repository.claimJob({
+    workerId: 'delivery-worker',
+    capabilities: ['deliver_package'],
+    leaseSeconds: 60,
+  });
+  assert.ok(claim);
+  await repository.transitionDeliveryForActiveLease({
+    id: delivery.id,
+    jobId: claim.jobId,
+    workerId: 'delivery-worker',
+    packageVersionId: packageVersion.id,
+    packageChecksum: packageVersion.packageChecksum,
+    expectedState: 'queued',
+    state: 'running',
+    incrementAttempts: true,
+    now,
+  });
+
+  await assert.rejects(repository.retryDelivery(delivery.id), /active.*lease/i);
+
+  const afterExpiry = new Date(now.getTime() + 61_000);
+  setNow(afterExpiry);
+  await repository.retryDelivery(delivery.id);
+  const reclaimed = await repository.claimJob({
+    workerId: 'recovery-worker',
+    capabilities: ['deliver_package'],
+    leaseSeconds: 60,
+    now: afterExpiry,
+  });
+  assert.equal(reclaimed?.jobId, claim.jobId);
+  assert.equal(reclaimed?.attempt, 2);
+  assert.equal(await repository.claimJob({
+    workerId: 'other-worker',
+    capabilities: ['deliver_package'],
+    leaseSeconds: 60,
+    now: afterExpiry,
+  }), null);
+});
+
 test('recordDelivery returns the existing row for its idempotency key', async () => {
   const { repository } = createRepository();
   await createRun(repository);
@@ -792,4 +841,23 @@ test('createIsolatedPrismaClient requires ENGINE_DATABASE_URL and rejects DATABA
     ENGINE_DATABASE_URL: 'postgresql://localhost:5432/knowledge_bits_engine',
   });
   await client.$disconnect();
+});
+
+test('runtime startup rejects migration-owner credentials and migration requires distinct roles', async () => {
+  assert.throws(() => createIsolatedPrismaClient({
+    ENGINE_DATABASE_URL: 'postgresql://runtime:runtime@localhost/knowledge_bits',
+    ENGINE_MIGRATION_DATABASE_URL: 'postgresql://owner:owner@localhost/knowledge_bits',
+  }), /migration.*deployed runtime/i);
+
+  assert.deepEqual(migrationDatabaseEnvironment({
+    ENGINE_DATABASE_URL: 'postgresql://runtime:runtime@localhost/knowledge_bits',
+    ENGINE_MIGRATION_DATABASE_URL: 'postgresql://owner:owner@localhost/knowledge_bits',
+  }), {
+    ENGINE_DATABASE_URL: 'postgresql://runtime:runtime@localhost/knowledge_bits',
+    ENGINE_MIGRATION_DATABASE_URL: 'postgresql://owner:owner@localhost/knowledge_bits',
+  });
+  assert.throws(() => migrationDatabaseEnvironment({
+    ENGINE_DATABASE_URL: 'postgresql://owner:runtime@localhost/knowledge_bits',
+    ENGINE_MIGRATION_DATABASE_URL: 'postgresql://owner:owner@localhost/knowledge_bits',
+  }), /distinct database roles/i);
 });

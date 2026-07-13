@@ -72,6 +72,7 @@ export interface WorkflowJob {
   availableAt: Date;
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;
+  executionDeadlineAt: Date | null;
   attempt: number;
   input: JsonObject;
   result: JobResult | null;
@@ -171,6 +172,7 @@ export interface ClaimJobInput {
   workerId: string;
   capabilities?: string[];
   leaseSeconds: number;
+  executionSeconds?: number;
   now?: Date;
 }
 
@@ -472,6 +474,7 @@ interface ClaimedJobRow {
   stage: string;
   attempt: number;
   leaseExpiresAt: Date;
+  executionDeadlineAt: Date;
   revision: number;
   input: Prisma.JsonValue;
 }
@@ -563,7 +566,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       where: {
         runId,
         state: 'done',
-        artifacts: { some: { revision } },
+        artifacts: { some: { revision: { lte: revision } } },
       },
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       select: { id: true, stage: true },
@@ -574,7 +577,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
     }
     if (!selectedJobIds.size) return [];
     const artifacts = await this.prisma.artifact.findMany({
-      where: { runId, revision, jobId: { in: [...selectedJobIds.values()] } },
+      where: { runId, revision: { lte: revision }, jobId: { in: [...selectedJobIds.values()] } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     return artifacts.map(toWorkflowArtifact);
@@ -664,9 +667,11 @@ export class PrismaWorkflowStore implements WorkflowStore {
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
     assertWorkerId(input.workerId);
     assertLeaseSeconds(input.leaseSeconds);
+    assertExecutionSeconds(input.executionSeconds);
     assertCapabilities(input.capabilities);
     const claimedAt = input.now ?? new Date();
     const leaseExpiresAt = new Date(claimedAt.getTime() + input.leaseSeconds * 1_000);
+    const executionDeadlineAt = new Date(claimedAt.getTime() + (input.executionSeconds ?? 300) * 1_000);
     const capabilityFilter = input.capabilities?.length
       ? Prisma.sql`AND "action" IN (${Prisma.join(input.capabilities)})`
       : Prisma.empty;
@@ -676,6 +681,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       SET "state" = 'running',
           "leaseOwner" = ${input.workerId},
           "leaseExpiresAt" = ${leaseExpiresAt},
+          "executionDeadlineAt" = ${executionDeadlineAt},
           "attempt" = "attempt" + 1,
           "updatedAt" = ${claimedAt}
       WHERE "id" = (
@@ -697,7 +703,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         FOR UPDATE OF "Job", "Run" SKIP LOCKED
         LIMIT 1
       ) AND "state" = 'queued'
-      RETURNING "id", "runId", "stage", "attempt", "leaseExpiresAt", "input",
+      RETURNING "id", "runId", "stage", "attempt", "leaseExpiresAt", "executionDeadlineAt", "input",
         (SELECT "currentRevision" FROM "Run" WHERE "Run"."id" = "Job"."runId") AS "revision"
       `);
       const row = rows[0];
@@ -716,8 +722,10 @@ export class PrismaWorkflowStore implements WorkflowStore {
         claimedBy: input.workerId,
         claimedAt: claimedAt.toISOString(),
         leaseExpiresAt: row.leaseExpiresAt.toISOString(),
+        executionDeadlineAt: row.executionDeadlineAt.toISOString(),
         attempt: row.attempt,
         revision: row.revision,
+        input: row.input as JsonObject,
         ...(deliveryInput ? deliveryClaimIdentity(deliveryInput) : {}),
       };
     });
@@ -734,6 +742,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         AND "Job"."state" = 'running'
         AND "Job"."leaseOwner" = ${input.workerId}
         AND "Job"."leaseExpiresAt" > CURRENT_TIMESTAMP
+        AND "Job"."executionDeadlineAt" > CURRENT_TIMESTAMP
         AND "Run"."currentStage" = "Job"."stage"
       RETURNING "Job"."id"
     `);
@@ -747,6 +756,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
           "result" = CAST(${JSON.stringify(input.result)} AS jsonb),
           "leaseOwner" = NULL,
           "leaseExpiresAt" = NULL,
+          "executionDeadlineAt" = NULL,
           "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${input.result.jobId}
         AND "runId" = ${input.result.packageId}
@@ -782,6 +792,9 @@ export class PrismaWorkflowStore implements WorkflowStore {
         runId: input.runId,
         OR: [
           { stage: 'produce_assets', action: 'produce_assets' },
+          ...(input.kind === 'source_snapshot' ? [
+            { stage: 'research', action: 'collect_sources' },
+          ] : []),
           ...(AUDIT_ARTIFACT_KINDS.has(input.kind) ? [
             { stage: 'research', action: 'collect_sources' },
             { stage: 'create', action: 'create_content' },
@@ -829,12 +842,17 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (!currentStage) throw new WorkflowConflictError('Current stage does not exist');
       const nextRevision = job.run.currentRevision
         + Number(transition.revisionAttempts > currentStage.revisionAttempt);
+      const completedArtifacts = (await transaction.artifact.findMany({
+        where: { jobId: job.id },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      })).map(toWorkflowArtifact);
       const completed = await transaction.$executeRaw(Prisma.sql`
         UPDATE "Job"
         SET "state" = ${input.result.state},
             "result" = CAST(${JSON.stringify(input.result)} AS jsonb),
             "leaseOwner" = NULL,
             "leaseExpiresAt" = NULL,
+            "executionDeadlineAt" = NULL,
             "updatedAt" = CURRENT_TIMESTAMP
         WHERE "id" = ${job.id}
           AND "state" = 'running'
@@ -897,7 +915,10 @@ export class PrismaWorkflowStore implements WorkflowStore {
               runId: job.runId,
               stage: effect.stage,
               revision: nextRevision,
-              input: { brief: job.run.brief as JsonObject },
+              input: {
+                brief: job.run.brief as JsonObject,
+                dependencies: nextJobDependencies(job.input as JsonObject, completedArtifacts, effect.stage),
+              },
             });
         }
         if (effect.type === 'queue_delivery') {
@@ -943,8 +964,8 @@ export class PrismaWorkflowStore implements WorkflowStore {
         }
         if (effect.type === 'request_human') {
           assertDurableEffect(
-            transition.stage === 'check' && transition.state === 'needs_human',
-            'Human request was not represented by the check stage',
+            transition.state === 'needs_human' && transition.stage !== 'human_review',
+            'Human request was not represented by an automated stage',
           );
         }
         if (effect.type === 'record_delivery') {
@@ -992,6 +1013,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         SET "state" = 'queued',
             "leaseOwner" = NULL,
             "leaseExpiresAt" = NULL,
+            "executionDeadlineAt" = NULL,
             "availableAt" = ${now},
             "updatedAt" = ${now}
         WHERE "state" = 'running' AND "leaseExpiresAt" <= ${now}
@@ -1067,6 +1089,11 @@ export class PrismaWorkflowStore implements WorkflowStore {
           AND "Job"."runId" = ${input.runId}
           AND (
             ("Job"."stage" = 'produce_assets' AND "Job"."action" = 'produce_assets')
+            OR (
+              ${input.kind} = 'source_snapshot'
+              AND "Job"."stage" = 'research'
+              AND "Job"."action" = 'collect_sources'
+            )
             OR (
               ${input.kind} IN ('raw_response', 'parsed_output', 'execution_report')
               AND (
@@ -1213,6 +1240,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
   async retryDelivery(deliveryId: string): Promise<RetryDeliveryResult> {
     return this.prisma.$transaction(async (transaction) => {
+      const now = new Date();
       const locked = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
         SELECT "Delivery"."id"
         FROM "Delivery"
@@ -1223,24 +1251,48 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (!locked[0]) throw new WorkflowNotFoundError('Delivery not found');
       const delivery = await transaction.delivery.findUniqueOrThrow({ where: { id: deliveryId } });
       const run = await transaction.run.findUniqueOrThrow({ where: { id: delivery.runId } });
-      if (!['failed', 'waiting'].includes(delivery.state)) {
-        throw new WorkflowConflictError('Only failed or waiting delivery can be retried');
+      if (!['failed', 'waiting', 'running', 'verifying', 'succeeded'].includes(delivery.state)) {
+        throw new WorkflowConflictError('Delivery state is not recoverable');
       }
       if (run.packageChecksum !== delivery.packageChecksum || run.approvedChecksum !== delivery.packageChecksum) {
         throw new WorkflowConflictError('Delivery checksum no longer matches the current approval');
       }
-      const queued = await transaction.job.findFirst({
+      const recoveryJobs = await transaction.job.findMany({
         where: {
           runId: delivery.runId,
           stage: 'deliver',
-          state: 'queued',
+          state: { in: ['queued', 'running'] },
           input: { path: ['deliveryId'], equals: delivery.id },
         },
         orderBy: { createdAt: 'desc' },
       });
+      const active = recoveryJobs.find((job) => (
+        job.state === 'running' && job.leaseExpiresAt && job.leaseExpiresAt > now
+      ));
+      if (active) throw new WorkflowConflictError('Delivery execution has an active lease');
+      const queued = recoveryJobs.find((job) => job.state === 'queued');
+      const expired = recoveryJobs.find((job) => job.state === 'running');
       const nextAttempt = delivery.attempts + 1;
       if (queued) {
-        await transaction.job.update({ where: { id: queued.id }, data: { availableAt: new Date() } });
+        if (queued.availableAt <= now) throw new WorkflowConflictError('Delivery recovery is already queued');
+        await transaction.job.update({ where: { id: queued.id }, data: { availableAt: now } });
+        if (expired) {
+          await transaction.job.update({
+            where: { id: expired.id },
+            data: { state: 'superseded', leaseOwner: null, leaseExpiresAt: null, executionDeadlineAt: null },
+          });
+        }
+      } else if (expired) {
+        await transaction.job.update({
+          where: { id: expired.id },
+          data: {
+            state: 'queued',
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            executionDeadlineAt: null,
+            availableAt: now,
+          },
+        });
       } else {
         await transaction.job.create({
           data: {
@@ -1259,7 +1311,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       });
       const updated = await transaction.delivery.update({
         where: { id: delivery.id },
-        data: { state: 'queued', nextAttemptAt: new Date() },
+        data: { nextAttemptAt: ['failed', 'waiting'].includes(delivery.state) ? now : delivery.nextAttemptAt },
       });
       return { delivery: toWorkflowDelivery(updated), nextAttempt };
     });
@@ -1377,12 +1429,20 @@ export class PrismaWorkflowStore implements WorkflowStore {
             if (effect.stage === 'human_review') {
               throw new WorkflowConflictError('Human review cannot be queued as a worker job');
             }
+            const packageArtifacts = await transaction.artifact.findMany({
+              where: {
+                runId: run.id,
+                id: { in: packageArtifactIds(packageVersion.artifactInventory) },
+                action: ACTION_BY_STAGE.research,
+              },
+            });
             await queueTransitionJob(transaction, {
               runId: run.id,
               stage: effect.stage,
               revision: nextRevision,
               input: {
                 brief: run.brief as JsonObject,
+                dependencies: packageArtifacts.map(toWorkflowArtifact).map(toJobArtifactDependency),
                 review: { comment: input.comment!, packageChecksum: input.packageChecksum },
               },
             });
@@ -1594,6 +1654,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       availableAt: now,
       leaseOwner: null,
       leaseExpiresAt: null,
+      executionDeadlineAt: null,
       attempt: 0,
       input: { brief: input.brief },
       result: null,
@@ -1625,7 +1686,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       .filter((job) => job.runId === runId
         && job.state === 'done'
         && [...this.artifactsById.values()].some((artifact) => (
-          artifact.jobId === job.id && artifact.revision === revision
+          artifact.jobId === job.id && artifact.revision <= revision
         )))
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id));
     for (const job of jobs) {
@@ -1633,7 +1694,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
     }
     return [...this.artifactsById.values()]
       .filter((artifact) => artifact.runId === runId
-        && artifact.revision === revision
+        && artifact.revision <= revision
         && artifact.jobId !== null
         && selectedJobIds.get(artifact.stage as WorkflowStage) === artifact.jobId)
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
@@ -1699,6 +1760,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       availableAt: input.availableAt ?? now,
       leaseOwner: null,
       leaseExpiresAt: null,
+      executionDeadlineAt: null,
       attempt: 0,
       input: input.input,
       result: null,
@@ -1714,6 +1776,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
     assertWorkerId(input.workerId);
     assertLeaseSeconds(input.leaseSeconds);
+    assertExecutionSeconds(input.executionSeconds);
     assertCapabilities(input.capabilities);
     const claimedAt = input.now ?? this.clock();
     const job = [...this.jobs.values()]
@@ -1732,6 +1795,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
     job.state = 'running';
     job.leaseOwner = input.workerId;
     job.leaseExpiresAt = new Date(claimedAt.getTime() + input.leaseSeconds * 1_000);
+    job.executionDeadlineAt = new Date(claimedAt.getTime() + (input.executionSeconds ?? 300) * 1_000);
     job.attempt += 1;
     job.updatedAt = claimedAt;
     const run = this.requireRun(job.runId);
@@ -1749,8 +1813,10 @@ class InMemoryWorkflowStore implements WorkflowStore {
       claimedBy: input.workerId,
       claimedAt: claimedAt.toISOString(),
       leaseExpiresAt: job.leaseExpiresAt.toISOString(),
+      executionDeadlineAt: job.executionDeadlineAt.toISOString(),
       attempt: job.attempt,
       revision: run.currentRevision,
+      input: job.input,
       ...(job.stage === 'deliver' ? deliveryClaimIdentity(job.input) : {}),
     };
   }
@@ -1766,6 +1832,8 @@ class InMemoryWorkflowStore implements WorkflowStore {
       || job.leaseOwner !== input.workerId
       || !job.leaseExpiresAt
       || job.leaseExpiresAt <= now
+      || !job.executionDeadlineAt
+      || job.executionDeadlineAt <= now
       || run.currentStage !== job.stage
     ) {
       throw new WorkflowConflictError('Job lease is no longer valid');
@@ -1796,6 +1864,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
     job.result = input.result;
     job.leaseOwner = null;
     job.leaseExpiresAt = null;
+    job.executionDeadlineAt = null;
     job.updatedAt = completedAt;
     return input.result;
   }
@@ -1870,7 +1939,11 @@ class InMemoryWorkflowStore implements WorkflowStore {
     job.result = input.result;
     job.leaseOwner = null;
     job.leaseExpiresAt = null;
+    job.executionDeadlineAt = null;
     job.updatedAt = completedAt;
+    const completedArtifacts = [...this.artifactsById.values()]
+      .filter((artifact) => artifact.jobId === job.id)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
     const nextRevision = run.currentRevision
       + Number(transition.revisionAttempts > currentStage.revisionAttempts);
     if (transition.stage !== job.stage) {
@@ -1903,7 +1976,10 @@ class InMemoryWorkflowStore implements WorkflowStore {
           stage: effect.stage,
           action: ACTION_BY_STAGE[effect.stage],
           idempotencyKey: transitionJobIdempotencyKey(run.id, effect.stage, nextRevision),
-          input: { brief: run.brief },
+          input: {
+            brief: run.brief,
+            dependencies: nextJobDependencies(job.input, completedArtifacts, effect.stage),
+          },
         });
       }
       if (effect.type === 'queue_delivery') {
@@ -1939,8 +2015,8 @@ class InMemoryWorkflowStore implements WorkflowStore {
       }
       if (effect.type === 'request_human') {
         assertDurableEffect(
-          transition.stage === 'check' && transition.state === 'needs_human',
-          'Human request was not represented by the check stage',
+          transition.state === 'needs_human' && transition.stage !== 'human_review',
+          'Human request was not represented by an automated stage',
         );
       }
       if (effect.type === 'record_delivery') {
@@ -1974,6 +2050,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
         job.state = 'queued';
         job.leaseOwner = null;
         job.leaseExpiresAt = null;
+        job.executionDeadlineAt = null;
         job.availableAt = now;
         job.updatedAt = now;
         const run = this.requireRun(job.runId);
@@ -2127,19 +2204,44 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const delivery = await this.getDelivery(deliveryId);
     if (!delivery) throw new WorkflowNotFoundError('Delivery not found');
     const run = this.requireRun(delivery.runId);
-    if (!['failed', 'waiting'].includes(delivery.state)) {
-      throw new WorkflowConflictError('Only failed or waiting delivery can be retried');
+    if (!['failed', 'waiting', 'running', 'verifying', 'succeeded'].includes(delivery.state)) {
+      throw new WorkflowConflictError('Delivery state is not recoverable');
     }
     if (run.packageChecksum !== delivery.packageChecksum || run.approvedChecksum !== delivery.packageChecksum) {
       throw new WorkflowConflictError('Delivery checksum no longer matches the current approval');
     }
-    const nextAttempt = delivery.attempts + 1;
-    const queued = [...this.jobs.values()].find((job) => (
-      job.runId === delivery.runId && job.stage === 'deliver' && job.state === 'queued' && job.input.deliveryId === delivery.id
+    const now = this.clock();
+    const recoveryJobs = [...this.jobs.values()]
+      .filter((job) => job.runId === delivery.runId
+        && job.stage === 'deliver'
+        && (job.state === 'queued' || job.state === 'running')
+        && job.input.deliveryId === delivery.id)
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
+    const active = recoveryJobs.find((job) => (
+      job.state === 'running' && job.leaseExpiresAt && job.leaseExpiresAt > now
     ));
+    if (active) throw new WorkflowConflictError('Delivery execution has an active lease');
+    const nextAttempt = delivery.attempts + 1;
+    const queued = recoveryJobs.find((job) => job.state === 'queued');
+    const expired = recoveryJobs.find((job) => job.state === 'running');
     if (queued) {
-      queued.availableAt = this.clock();
-      queued.updatedAt = this.clock();
+      if (queued.availableAt <= now) throw new WorkflowConflictError('Delivery recovery is already queued');
+      queued.availableAt = now;
+      queued.updatedAt = now;
+      if (expired) {
+        expired.state = 'superseded';
+        expired.leaseOwner = null;
+        expired.leaseExpiresAt = null;
+        expired.executionDeadlineAt = null;
+        expired.updatedAt = now;
+      }
+    } else if (expired) {
+      expired.state = 'queued';
+      expired.leaseOwner = null;
+      expired.leaseExpiresAt = null;
+      expired.executionDeadlineAt = null;
+      expired.availableAt = now;
+      expired.updatedAt = now;
     } else {
       await this.queueJob({
         runId: delivery.runId,
@@ -2153,9 +2255,8 @@ class InMemoryWorkflowStore implements WorkflowStore {
     if (!stage) throw new WorkflowConflictError('Delivery stage does not exist');
     stage.state = 'queued';
     stage.reason = null;
-    delivery.state = 'queued';
-    delivery.nextAttemptAt = this.clock();
-    delivery.updatedAt = this.clock();
+    if (delivery.state === 'failed' || delivery.state === 'waiting') delivery.nextAttemptAt = now;
+    delivery.updatedAt = now;
     return { delivery, nextAttempt };
   }
 
@@ -2252,6 +2353,11 @@ class InMemoryWorkflowStore implements WorkflowStore {
           idempotencyKey: transitionJobIdempotencyKey(run.id, effect.stage, run.currentRevision),
           input: {
             brief: run.brief,
+            dependencies: packageVersion.artifactInventory
+              .flatMap((reference) => {
+                const artifact = this.artifactsById.get(reference.artifactId);
+                return artifact?.action === ACTION_BY_STAGE.research ? [toJobArtifactDependency(artifact)] : [];
+              }),
             review: { comment: input.comment!, packageChecksum: input.packageChecksum },
           },
         });
@@ -2357,8 +2463,82 @@ function assertLeaseSeconds(leaseSeconds: number): void {
   }
 }
 
+function assertExecutionSeconds(executionSeconds: number | undefined): void {
+  if (executionSeconds !== undefined
+    && (!Number.isInteger(executionSeconds) || executionSeconds <= 0 || executionSeconds > 3_600)) {
+    throw new TypeError('Execution seconds must be a positive integer no greater than 3600');
+  }
+}
+
+interface JobArtifactDependency {
+  artifactId: string;
+  revision: number;
+  kind: string;
+  mediaType: string;
+  checksum: string;
+  action: string;
+  sourceId?: string;
+}
+
+function nextJobDependencies(
+  input: JsonObject,
+  completedArtifacts: readonly WorkflowArtifact[],
+  nextStage: Exclude<WorkflowStage, 'human_review' | 'deliver'>,
+): JobArtifactDependency[] {
+  const dependencies = [
+    ...dependenciesFromJobInput(input),
+    ...completedArtifacts.map(toJobArtifactDependency),
+  ];
+  const filtered = nextStage === 'create'
+    ? dependencies.filter((dependency) => dependency.action === ACTION_BY_STAGE.research)
+    : dependencies;
+  return [...new Map(filtered.map((dependency) => [dependency.artifactId, dependency])).values()];
+}
+
+function dependenciesFromJobInput(input: JsonObject): JobArtifactDependency[] {
+  if (!Array.isArray(input.dependencies)) return [];
+  return input.dependencies.filter(isJobArtifactDependency);
+}
+
+function isJobArtifactDependency(value: unknown): value is JobArtifactDependency {
+  return isRecord(value)
+    && typeof value.artifactId === 'string'
+    && Number.isInteger(value.revision)
+    && typeof value.kind === 'string'
+    && typeof value.mediaType === 'string'
+    && typeof value.checksum === 'string'
+    && typeof value.action === 'string'
+    && (value.sourceId === undefined || typeof value.sourceId === 'string');
+}
+
+function toJobArtifactDependency(artifact: WorkflowArtifact): JobArtifactDependency {
+  if (!artifact.action) throw new WorkflowConflictError('Artifact dependency is missing its producing action');
+  const sourceId = typeof artifact.provenance.sourceId === 'string' ? artifact.provenance.sourceId : undefined;
+  return {
+    artifactId: artifact.id,
+    revision: artifact.revision,
+    kind: artifact.kind,
+    mediaType: artifact.mediaType,
+    checksum: artifact.checksum,
+    action: artifact.action,
+    ...(sourceId ? { sourceId } : {}),
+  };
+}
+
+function packageArtifactIds(value: Prisma.JsonValue): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((reference) => (
+    isRecord(reference) && typeof reference.artifactId === 'string' ? [reference.artifactId] : []
+  ));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function isArtifactKindAuthorizedForJob(kind: string, job: WorkflowJob): boolean {
   if (job.stage === 'produce_assets' && job.action === 'produce_assets') return true;
+  if (job.stage === 'research' && job.action === 'collect_sources' && kind === 'source_snapshot') return true;
   return AUDIT_ARTIFACT_KINDS.has(kind)
     && job.stage !== 'human_review'
     && job.action === ACTION_BY_STAGE[job.stage];
@@ -2616,6 +2796,7 @@ function toWorkflowJob(job: {
   availableAt: Date;
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;
+  executionDeadlineAt: Date | null;
   attempt: number;
   input: Prisma.JsonValue;
   result: Prisma.JsonValue | null;

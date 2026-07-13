@@ -22,7 +22,8 @@ export interface ProviderBinaryAsset {
   kind: string;
   mediaType: string;
   body: Uint8Array;
-  inputChecksum: string;
+  inputChecksum: string | null;
+  provenance?: Readonly<Record<string, unknown>>;
 }
 
 export type ProviderExecution =
@@ -41,6 +42,7 @@ export type ProviderExecution =
   }
   | {
     kind: 'needs_human';
+    needsHumanKind: 'configuration' | 'quality';
     reason: string;
   };
 
@@ -69,7 +71,7 @@ export class ProviderWaitingError extends Error {
 }
 
 export class ProviderNeedsHumanError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly needsHumanKind: 'configuration' | 'quality' = 'configuration') {
     super(message);
     this.name = 'ProviderNeedsHumanError';
   }

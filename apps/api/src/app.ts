@@ -27,7 +27,7 @@ export function createApp(options: CreateAppOptions): Hono {
   const artifactStorage = options.artifactStorage ?? new UnavailableArtifactStorageAdapter();
   registerRunRoutes(app, dependencies);
   registerReviewRoutes(app, { ...dependencies, artifactStorage });
-  registerJobRoutes(app, dependencies);
+  registerJobRoutes(app, { ...dependencies, artifactStorage });
   registerArtifactRoutes(app, {
     ...dependencies,
     artifactStorage,

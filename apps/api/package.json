@@ -8,7 +8,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.vercel.json",
     "test": "pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/pipeline build && pnpm prisma:generate && tsx --test src/**/*.test.ts",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "tsx scripts/migrate-local.ts"
+    "prisma:migrate": "tsx scripts/migrate-local.ts",
+    "prisma:migrate:production": "tsx scripts/migrate-production.ts"
   },
   "dependencies": {
     "@knowledge-bits/contracts": "workspace:*",

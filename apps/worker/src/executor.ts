@@ -23,6 +23,8 @@ const ACTION_BY_STAGE: Readonly<Record<WorkflowStage, WorkerAction | null>> = {
 export interface IntervalScheduler {
   setInterval(callback: () => void | Promise<void>, delay: number): unknown;
   clearInterval(handle: unknown): void;
+  setTimeout(callback: () => void | Promise<void>, delay: number): unknown;
+  clearTimeout(handle: unknown): void;
 }
 
 export interface WorkerExecutorOptions {
@@ -63,6 +65,7 @@ export class WorkerExecutor {
     signal?.addEventListener('abort', abort, { once: true });
     let reportingAllowed = !signal?.aborted;
     let heartbeatInFlight = false;
+    let deadlineReached = false;
     const heartbeat = async () => {
       if (!reportingAllowed || heartbeatInFlight) return;
       heartbeatInFlight = true;
@@ -80,6 +83,11 @@ export class WorkerExecutor {
       }
     };
     const heartbeatHandle = this.scheduler.setInterval(heartbeat, heartbeatIntervalMs(job));
+    const deadlineHandle = this.scheduler.setTimeout(() => {
+      deadlineReached = true;
+      this.scheduler.clearInterval(heartbeatHandle);
+      controller.abort();
+    }, executionDeadlineMs(job, this.now()));
 
     try {
       const execution = await this.executeProvider(provider, {
@@ -88,10 +96,14 @@ export class WorkerExecutor {
         idempotencyKey: operationIdempotencyKey(job, action),
         signal: controller.signal,
       });
+      if (deadlineReached && !signal?.aborted) {
+        await this.reportTypedResult(job, deadlineWait(this.now()), signal);
+        return;
+      }
       if (!reportingAllowed || signal?.aborted || controller.signal.aborted) return;
 
       if (execution.kind !== 'success') {
-        await this.reportTypedResult(job, this.normalizedFailure(job, execution), controller.signal);
+        await this.reportTypedResult(job, execution, controller.signal);
         return;
       }
 
@@ -104,11 +116,15 @@ export class WorkerExecutor {
         idempotencyKey: operationIdempotencyKey(job, action),
       });
       const outputChecksum = checksum(reportBytes);
-      if (execution.assets?.length && job.stage !== 'produce_assets') {
-        await this.reportTypedResult(job, this.normalizedFailure(job, {
+      if (execution.assets?.some((asset) => !(
+        job.stage === 'produce_assets'
+        || (job.stage === 'research' && asset.kind === 'source_snapshot')
+      ))) {
+        await this.reportTypedResult(job, {
           kind: 'needs_human',
+          needsHumanKind: 'configuration',
           reason: 'provider_assets_not_allowed_for_stage',
-        }), controller.signal);
+        }, controller.signal);
         return;
       }
       await this.uploadExecutionArtifacts(job, provider.name, execution, reportBytes, controller.signal);
@@ -125,10 +141,15 @@ export class WorkerExecutor {
       }, undefined, controller.signal);
       if (controller.signal.aborted) return;
     } catch (error) {
+      if (deadlineReached && !signal?.aborted) {
+        await this.reportTypedResult(job, deadlineWait(this.now()), signal);
+        return;
+      }
       if (controller.signal.aborted) return;
       throw error;
     } finally {
       this.scheduler.clearInterval(heartbeatHandle);
+      this.scheduler.clearTimeout(deadlineHandle);
       signal?.removeEventListener('abort', abort);
     }
   }
@@ -151,10 +172,17 @@ export class WorkerExecutor {
       }
     };
     const heartbeatHandle = this.scheduler.setInterval(heartbeat, heartbeatIntervalMs(job));
+    const deadlineHandle = this.scheduler.setTimeout(() => {
+      this.scheduler.clearInterval(heartbeatHandle);
+      controller.abort();
+    }, executionDeadlineMs(job, this.now()));
     try {
       await this.options.client.runDelivery(job, controller.signal);
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
     } finally {
       this.scheduler.clearInterval(heartbeatHandle);
+      this.scheduler.clearTimeout(deadlineHandle);
       signal?.removeEventListener('abort', abort);
     }
   }
@@ -170,9 +198,13 @@ export class WorkerExecutor {
         return { kind: 'waiting', reason: error.message, retryAt: error.retryAt };
       }
       if (error instanceof ProviderNeedsHumanError) {
-        return { kind: 'needs_human', reason: error.message };
+        return { kind: 'needs_human', needsHumanKind: error.needsHumanKind, reason: error.message };
       }
-      return { kind: 'needs_human', reason: errorMessage(error) };
+      return {
+        kind: 'waiting',
+        reason: errorMessage(error),
+        retryAt: new Date(this.now().getTime() + 60_000).toISOString(),
+      };
     }
   }
 
@@ -192,6 +224,7 @@ export class WorkerExecutor {
         body: asset.body,
         mediaType: asset.mediaType,
         inputChecksum: asset.inputChecksum,
+        provenance: asset.provenance,
       })),
       { kind: 'raw_response', body: execution.rawResponse, inputChecksum: execution.inputChecksum ?? null },
       { kind: 'parsed_output', body: parsedBytes, inputChecksum: rawChecksum },
@@ -225,6 +258,7 @@ export class WorkerExecutor {
           action: actionForStage(job.stage),
           idempotencyKey: operationIdempotencyKey(job, actionForStage(job.stage)!),
           jobId: job.jobId,
+          ...artifact.provenance,
         },
       };
       await this.options.client.completeArtifact(completion, signal);
@@ -246,6 +280,7 @@ export class WorkerExecutor {
       completedAt: this.now().toISOString(),
       outputChecksum: null,
       error: execution.reason,
+      ...(execution.kind === 'needs_human' ? { needsHumanKind: execution.needsHumanKind } : {}),
     };
     await this.options.client.reportResult(
       result,
@@ -254,23 +289,11 @@ export class WorkerExecutor {
     );
   }
 
-  private normalizedFailure(
-    job: JobClaim,
-    execution: Exclude<ProviderExecution, { kind: 'success' }>,
-  ): Exclude<ProviderExecution, { kind: 'success' }> {
-    if (execution.kind !== 'needs_human' || job.stage === 'check') return execution;
-    return {
-      kind: 'waiting',
-      reason: execution.reason,
-      retryAt: new Date(this.now().getTime() + 60_000).toISOString(),
-    };
-  }
-
   private async reportUnsupportedAction(job: JobClaim, action: WorkerAction, signal?: AbortSignal): Promise<void> {
     const reason = `No configured provider supports ${action}`;
-    const execution: Exclude<ProviderExecution, { kind: 'success' }> = job.stage === 'check'
-      ? { kind: 'needs_human', reason }
-      : { kind: 'waiting', reason, retryAt: new Date(this.now().getTime() + 60_000).toISOString() };
+    const execution: Exclude<ProviderExecution, { kind: 'success' }> = {
+      kind: 'needs_human', needsHumanKind: 'configuration', reason,
+    };
     await this.reportTypedResult(job, execution, signal);
   }
 }
@@ -280,6 +303,7 @@ interface ExecutionArtifact {
   body: Uint8Array;
   mediaType?: string;
   inputChecksum: string | null;
+  provenance?: Readonly<Record<string, unknown>>;
 }
 
 export function actionForStage(stage: WorkflowStage): WorkerAction | null {
@@ -294,6 +318,19 @@ export function heartbeatIntervalMs(job: JobClaim): number {
   const leaseDuration = new Date(job.leaseExpiresAt).getTime() - new Date(job.claimedAt).getTime();
   if (!Number.isFinite(leaseDuration) || leaseDuration <= 0) return 1_000;
   return Math.max(1_000, Math.floor(leaseDuration / 3));
+}
+
+export function executionDeadlineMs(job: JobClaim, now = new Date()): number {
+  const remaining = new Date(job.executionDeadlineAt).getTime() - now.getTime();
+  return Number.isFinite(remaining) ? Math.max(0, remaining) : 0;
+}
+
+function deadlineWait(now: Date): Extract<ProviderExecution, { kind: 'waiting' }> {
+  return {
+    kind: 'waiting',
+    reason: 'execution_deadline_exceeded',
+    retryAt: new Date(now.getTime() + 60_000).toISOString(),
+  };
 }
 
 function checksum(bytes: Uint8Array): string {
@@ -331,5 +368,11 @@ const systemScheduler: IntervalScheduler = {
   },
   clearInterval(handle) {
     globalThis.clearInterval(handle as NodeJS.Timeout);
+  },
+  setTimeout(callback, delay) {
+    return globalThis.setTimeout(() => void callback(), delay);
+  },
+  clearTimeout(handle) {
+    globalThis.clearTimeout(handle as NodeJS.Timeout);
   },
 };

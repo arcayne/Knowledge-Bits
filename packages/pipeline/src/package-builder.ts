@@ -7,6 +7,7 @@ import {
   type KnowledgeBitsContent,
   type KnowledgeBitsEvidence,
   type KnowledgeBitsQa,
+  type NugletLessonV1Payload,
 } from '@knowledge-bits/contracts';
 
 type JsonPrimitive = boolean | null | number | string;
@@ -46,6 +47,10 @@ export function calculatePackageChecksum(input: KnowledgeBitsChecksumInput): str
   return createHash('sha256').update(canonicalJson(checksumMaterial)).digest('hex');
 }
 
+export function calculateContentChecksum(content: NugletLessonV1Payload): string {
+  return createHash('sha256').update(canonicalJson(content)).digest('hex');
+}
+
 export function buildKnowledgeBits(input: BuildKnowledgeBitsInput): KnowledgeBits {
   const packageChecksum = calculatePackageChecksum(input);
   const approval = input.approval ?? {
@@ -72,7 +77,7 @@ export function buildKnowledgeBits(input: BuildKnowledgeBitsInput): KnowledgeBit
   });
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null) return 'null';
 
   switch (typeof value) {

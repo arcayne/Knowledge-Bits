@@ -23,5 +23,6 @@ execFileSync('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
     ...process.env,
     DATABASE_URL: '',
     ENGINE_DATABASE_URL: databaseUrl,
+    ENGINE_MIGRATION_DATABASE_URL: databaseUrl,
   },
 });

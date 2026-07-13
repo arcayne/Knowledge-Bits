@@ -2,8 +2,17 @@
   "conversationId": "conversation_fixture_02",
   "answer": {
     "action": "Write one next task on paper and work on it for five minutes.",
+    "claimCoverage": [
+      { "claimIds": ["22222222-2222-4222-8222-222222222222"], "path": "title" },
+      { "claimIds": ["22222222-2222-4222-8222-222222222222"], "path": "takeaway" },
+      { "claimIds": ["22222222-2222-4222-8222-222222222222"], "path": "action" },
+      { "claimIds": ["22222222-2222-4222-8222-222222222222"], "path": "depths.quick" },
+      { "claimIds": ["22222222-2222-4222-8222-222222222222"], "path": "depths.core" },
+      { "claimIds": ["22222222-2222-4222-8222-222222222222"], "path": "depths.deep" }
+    ],
     "claims": [
       {
+        "claimId": "22222222-2222-4222-8222-222222222222",
         "statement": "A concrete next step reduces the effort of returning to work.",
         "citations": [
           {

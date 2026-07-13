@@ -15,10 +15,16 @@ import {
   WorkflowValidationError,
   type WorkflowRepository,
 } from '../repositories/workflow-repository.js';
+import {
+  ArtifactStorageObjectNotFoundError,
+  ArtifactStorageOperationError,
+  readArtifactStorageObject,
+  type ArtifactStorageAdapter,
+} from '../services/artifacts.js';
 
 export function registerJobRoutes(
   app: Hono,
-  dependencies: { repository: WorkflowRepository; auth: EngineAuthConfig },
+  dependencies: { repository: WorkflowRepository; auth: EngineAuthConfig; artifactStorage: ArtifactStorageAdapter },
 ): void {
   app.post('/jobs/claim', async (context) => {
     const principal = requireWorkerPrincipal(context, dependencies.auth);
@@ -48,6 +54,39 @@ export function registerJobRoutes(
       if (error instanceof WorkflowConflictError) {
         return context.json({ error: error.message }, 409);
       }
+      throw error;
+    }
+  });
+
+  app.get('/jobs/:id/artifacts/:artifactId', async (context) => {
+    const principal = requireWorkerPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const job = await dependencies.repository.getJobContext(context.req.param('id'));
+    if (!job) return context.json({ error: 'Job not found' }, 404);
+    const active = await dependencies.repository.hasActiveJobLease({
+      jobId: job.job.id,
+      runId: job.run.id,
+      workerId: principal.workerId,
+    });
+    const declared = Array.isArray(job.job.input.dependencies)
+      && job.job.input.dependencies.some((value) => (
+        isRecord(value)
+        && value.artifactId === context.req.param('artifactId')
+        && typeof value.checksum === 'string'
+      ));
+    if (!active || !declared) {
+      return context.json({ error: 'Artifact is not declared for the active job lease' }, 409);
+    }
+    const artifact = await dependencies.repository.getArtifact(job.run.id, context.req.param('artifactId'));
+    if (!artifact) return context.json({ error: 'Artifact not found' }, 404);
+    try {
+      const body = await readArtifactStorageObject(dependencies.artifactStorage, artifact.storageKey);
+      return new Response(Buffer.from(body), {
+        headers: { 'Content-Type': artifact.mediaType, 'Cache-Control': 'private, no-store' },
+      });
+    } catch (error) {
+      if (error instanceof ArtifactStorageObjectNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof ArtifactStorageOperationError) return context.json({ error: error.message }, 503);
       throw error;
     }
   });
@@ -107,10 +146,12 @@ function transitionForResult(
       if (!result.error) throw new ResultMappingError('Waiting results require a reason');
       return nextTransition(snapshot, { type: 'job_waiting', reason: result.error });
     case 'needs_human':
-      if (context.stage.name !== 'check' || !result.error) {
-        throw new ResultMappingError('Only check results may require human intervention');
+      if (!result.error || !result.needsHumanKind) {
+        throw new ResultMappingError('Human intervention results require a reason and kind');
       }
-      return nextTransition(snapshot, { type: 'quality_failed', reason: result.error });
+      return result.needsHumanKind === 'quality' && context.stage.name === 'check'
+        ? nextTransition(snapshot, { type: 'quality_failed', reason: result.error })
+        : nextTransition(snapshot, { type: 'job_needs_human', reason: result.error });
     default:
       throw new ResultMappingError(`Workers cannot report ${result.state} as a result`);
   }
@@ -124,4 +165,8 @@ async function readJson(request: Request): Promise<unknown> {
   } catch {
     return undefined;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

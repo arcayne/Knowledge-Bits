@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import {
   artifactReferenceSchema,
   knowledgeBitsContentSchema,
@@ -11,7 +9,7 @@ import {
   type KnowledgeBitsEvidence,
   type ReviewReadModel,
 } from '@knowledge-bits/contracts';
-import { calculatePackageChecksum } from '@knowledge-bits/pipeline';
+import { calculateContentChecksum, calculatePackageChecksum } from '@knowledge-bits/pipeline';
 
 import type {
   WorkflowArtifact,
@@ -50,16 +48,22 @@ export class ReviewPackageService {
       const evidenceArtifact = requiredParsedArtifact(artifacts, 'collect_sources', 'evidence');
       const contentArtifact = requiredParsedArtifact(artifacts, 'create_content', 'content');
       const qaArtifact = requiredParsedArtifact(artifacts, 'check_content', 'QA');
-      const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
       const contentOutput = await this.readJson(contentArtifact, 'content');
       const qaOutput = await this.readJson(qaArtifact, 'QA');
-      const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact);
       const content = knowledgeBitsContentSchema.parse({
         schemaVersion: 'knowledge-bits.content.v1',
         target: { kind: 'nuglet.lesson.v1', payload: contentOutput },
       });
+      const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
+      const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, artifacts, content.target.payload.claims);
       const qa = knowledgeBitsQaSchema.parse(qaOutput);
       const artifactInventory = artifacts.map(toArtifactReference);
+      const contentChecksum = calculateContentChecksum(content.target.payload);
+      const approvalIssues = [
+        ...mediaIssues,
+        ...qaApprovalIssues(qa, contentChecksum),
+        ...assetChecksumIssues(artifacts, contentChecksum),
+      ];
       const packageChecksum = calculatePackageChecksum({
         content,
         evidence,
@@ -110,8 +114,8 @@ export class ReviewPackageService {
         decisionAllowed: current.currentStage === 'human_review'
           && current.reviewStatus === 'pending'
           && current.packageChecksum === packageVersion.packageChecksum
-          && mediaIssues.length === 0,
-        issues: mediaIssues,
+          && approvalIssues.length === 0,
+        issues: approvalIssues,
         package: packageVersion,
         assets,
       });
@@ -216,48 +220,70 @@ function toArtifactReference(artifact: WorkflowArtifact): ArtifactReference {
   });
 }
 
-function normalizeEvidence(output: Record<string, unknown>, artifact: WorkflowArtifact): KnowledgeBitsEvidence {
-  if (!Array.isArray(output.sources) || !Array.isArray(output.claims)) {
-    throw new ReviewPackageAssemblyError('evidence artifact is unreadable: sources and claims are required');
+function normalizeEvidence(
+  output: Record<string, unknown>,
+  artifact: WorkflowArtifact,
+  artifacts: readonly WorkflowArtifact[],
+  claims: unknown,
+): KnowledgeBitsEvidence {
+  if (!Array.isArray(output.acceptedSources)
+    || !Array.isArray(output.rejectedSources)
+    || !Array.isArray(output.coverageGaps)) {
+    throw new ReviewPackageAssemblyError('evidence artifact is unreadable: accepted, rejected, and coverage gap decisions are required');
   }
-  const sources = output.sources.map((value) => {
+  const acceptedSources = output.acceptedSources.map((value) => {
     if (!isRecord(value)
       || typeof value.sourceId !== 'string'
       || typeof value.url !== 'string'
-      || typeof value.title !== 'string') {
+      || typeof value.title !== 'string'
+      || typeof value.snapshotChecksum !== 'string'
+      || !isRecord(value.readability)
+      || !isRecord(value.credibility)) {
       throw new ReviewPackageAssemblyError('evidence artifact is unreadable: invalid source');
+    }
+    const snapshot = artifacts.find((candidate) => (
+      candidate.kind === 'source_snapshot'
+      && candidate.action === 'collect_sources'
+      && candidate.provenance.sourceId === value.sourceId
+      && candidate.checksum === value.snapshotChecksum
+    ));
+    if (!snapshot) {
+      throw new ReviewPackageAssemblyError(`evidence artifact is unreadable: accepted source ${value.sourceId} has no immutable snapshot`);
     }
     return {
       sourceId: value.sourceId,
       url: value.url,
       title: value.title,
-      retrievedAt: artifact.createdAt.toISOString(),
-      checksum: createHash('sha256').update(JSON.stringify({ sourceId: value.sourceId, title: value.title, url: value.url })).digest('hex'),
-    };
-  });
-  const claims = output.claims.map((value, index) => {
-    if (!isRecord(value) || typeof value.statement !== 'string' || !Array.isArray(value.citations)) {
-      throw new ReviewPackageAssemblyError('evidence artifact is unreadable: invalid claim');
-    }
-    return {
-      claimId: stableUuid(`${artifact.checksum}:claim:${index}:${value.statement}`),
-      statement: value.statement,
-      citations: value.citations,
+      retrievedAt: typeof value.retrievedAt === 'string' ? value.retrievedAt : artifact.createdAt.toISOString(),
+      snapshot: toArtifactReference(snapshot),
+      readability: value.readability,
+      credibility: value.credibility,
     };
   });
   return knowledgeBitsEvidenceSchema.parse({
     schemaVersion: 'knowledge-bits.evidence.v1',
-    sources,
+    acceptedSources,
+    rejectedSources: output.rejectedSources,
+    coverageGaps: output.coverageGaps,
     claims,
   });
 }
 
-function stableUuid(value: string): string {
-  const hash = createHash('sha256').update(value).digest('hex').slice(0, 32).split('');
-  hash[12] = '4';
-  hash[16] = '8';
-  const compact = hash.join('');
-  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+function qaApprovalIssues(qa: ReturnType<typeof knowledgeBitsQaSchema.parse>, contentChecksum: string): string[] {
+  return [
+    ...(!qa.deterministic.passed ? ['Deterministic QA did not pass'] : []),
+    ...(qa.deterministic.contentChecksum !== contentChecksum ? ['Deterministic QA content checksum does not match learner content'] : []),
+    ...(qa.editorial.findings.some((finding) => finding.blocking) ? ['Editorial QA contains blocking findings'] : []),
+  ];
+}
+
+function assetChecksumIssues(artifacts: readonly WorkflowArtifact[], contentChecksum: string): string[] {
+  return REVIEW_ASSET_KINDS.flatMap((kind) => {
+    const artifact = latestArtifact(artifacts, kind);
+    return artifact && artifact.inputChecksum !== contentChecksum
+      ? [`Required ${kind} input checksum does not match learner content`]
+      : [];
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

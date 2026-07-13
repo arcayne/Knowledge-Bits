@@ -15,6 +15,7 @@ test('workflow migrations define immutable package identity, review identity, an
   const hardening = migrationText('20260712200000_harden_workflow_leases');
   const packages = migrationText('20260713130000_bind_reviews_to_packages');
   const delivery = migrationText('20260713160000_add_delivery_control');
+  const runtimeRole = migrationText('20260713200000_restrict_runtime_role');
 
   assert.match(initial, /CREATE TABLE "public"\."Job"/);
   assert.match(initial, /CREATE INDEX "Job_state_availableAt_idx" ON "public"\."Job"\("state", "availableAt"\)/);
@@ -37,4 +38,10 @@ test('workflow migrations define immutable package identity, review identity, an
   assert.match(delivery, /DELETE FROM "public"\."Delivery"/);
   assert.match(delivery, /Delivery_runId_packageChecksum_key/);
   assert.match(delivery, /Delivery_packageVersionId_fkey/);
+  assert.match(runtimeRole, /CREATE ROLE knowledge_bits_runtime NOLOGIN/);
+  assert.match(runtimeRole, /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE[\s\S]*"Run"[\s\S]*"Delivery"[\s\S]*TO knowledge_bits_runtime/);
+  assert.doesNotMatch(runtimeRole, /GRANT[^;]*ON ALL TABLES/);
+  assert.doesNotMatch(runtimeRole, /ALTER DEFAULT PRIVILEGES/);
+  assert.match(runtimeRole, /REVOKE CREATE ON SCHEMA public FROM PUBLIC/);
+  assert.match(runtimeRole, /REVOKE CREATE ON SCHEMA public FROM knowledge_bits_runtime/);
 });

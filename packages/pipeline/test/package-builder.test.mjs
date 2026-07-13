@@ -10,10 +10,11 @@ const checksum = 'a'.repeat(64);
 const packageId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const sourceId = '0f8fad5b-d9cb-469f-a165-70867728950f';
 const claimId = '0f8fad5b-d9cb-469f-a165-708677289510';
+const snapshotArtifactId = '0f8fad5b-d9cb-469f-a165-708677289511';
 
 function artifact(kind) {
   return {
-    artifactId: '0f8fad5b-d9cb-469f-a165-708677289511',
+    artifactId: snapshotArtifactId,
     kind,
     mediaType: 'application/json',
     checksum,
@@ -26,6 +27,36 @@ function artifact(kind) {
 }
 
 function input(overrides = {}) {
+  const citation = {
+    sourceId,
+    snapshotArtifactId,
+    excerpt: 'An emergency fund covers unexpected expenses.',
+  };
+  const claim = {
+    claimId,
+    statement: 'A rainy day fund can help cover an unexpected expense.',
+    citations: [citation],
+  };
+  const payload = {
+    title: 'Build a rainy day fund',
+    takeaway: 'A small buffer can reduce financial disruption.',
+    action: 'Set aside one affordable amount today.',
+    depths: {
+      quick: 'Choose one amount you can save today.',
+      core: 'Keep the first transfer small enough to repeat.',
+      deep: 'Review the buffer after an unexpected expense and adjust your contribution.',
+    },
+    claims: [claim],
+    claimCoverage: [
+      { path: 'title', claimIds: [claimId] },
+      { path: 'takeaway', claimIds: [claimId] },
+      { path: 'action', claimIds: [claimId] },
+      { path: 'depths.quick', claimIds: [claimId] },
+      { path: 'depths.core', claimIds: [claimId] },
+      { path: 'depths.deep', claimIds: [claimId] },
+    ],
+  };
+  const snapshot = artifact('source_snapshot');
   return {
     packageId,
     revision: 1,
@@ -36,26 +67,26 @@ function input(overrides = {}) {
       schemaVersion: 'knowledge-bits.content.v1',
       target: {
         kind: 'nuglet.lesson.v1',
-        payload: { title: 'Build a rainy day fund', lessonId: packageId },
+        payload,
       },
     },
     evidence: {
       schemaVersion: 'knowledge-bits.evidence.v1',
-      sources: [{
+      acceptedSources: [{
         sourceId,
         url: 'https://example.com/source',
         title: 'Example source',
         retrievedAt: '2026-07-12T12:00:00.000Z',
-        checksum,
+        snapshot,
+        readability: { passed: true, reason: null },
+        credibility: { passed: true, policy: 'trusted-host', reason: null },
       }],
-      claims: [{
-        claimId,
-        statement: 'A rainy day fund can help cover an unexpected expense.',
-        citations: [{ sourceId, excerpt: 'An emergency fund covers unexpected expenses.' }],
-      }],
+      rejectedSources: [],
+      coverageGaps: [],
+      claims: [claim],
     },
     qa: {
-      deterministic: { passed: true, findings: [] },
+      deterministic: { passed: true, contentChecksum: checksum, findings: [] },
       editorial: { summary: 'Ready for review.', findings: [] },
     },
     surfaces: {
@@ -75,13 +106,6 @@ test('calculates a stable checksum independent of object key order', () => {
   const first = input();
   const second = input({
     usageRights: { expiresAt: null, license: 'CC-BY-4.0' },
-    content: {
-      target: {
-        payload: { lessonId: packageId, title: 'Build a rainy day fund' },
-        kind: 'nuglet.lesson.v1',
-      },
-      schemaVersion: 'knowledge-bits.content.v1',
-    },
   });
 
   assert.equal(calculatePackageChecksum(first), calculatePackageChecksum(second));

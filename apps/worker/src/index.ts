@@ -7,7 +7,7 @@ const workerToken = requiredEnvironment('ENGINE_WORKER_TOKEN');
 const leaseSeconds = positiveInteger(process.env.ENGINE_WORKER_LEASE_SECONDS ?? '90');
 
 const client = new HttpEngineClient({ baseUrl, workerToken });
-const executor = new WorkerExecutor({ client, providers: composeWorkerProviders({ env: process.env }) });
+const executor = new WorkerExecutor({ client, providers: composeWorkerProviders({ env: process.env, engineClient: client }) });
 const job = await client.claim(leaseSeconds);
 
 if (job) await executor.execute(job);

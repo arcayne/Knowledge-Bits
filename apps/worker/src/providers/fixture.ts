@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  type ProviderBinaryAsset,
   type ProviderExecution,
   type ProviderExecutionInput,
   type WorkerAction,
@@ -32,7 +33,7 @@ export class FixtureProvider implements WorkerProvider {
     const rawResponse = await readFile(new URL(fixtureName, this.fixtureDirectory));
     const fixture = JSON.parse(rawResponse.toString('utf8')) as unknown;
     const fixtureChecksum = createHash('sha256').update(rawResponse).digest('hex');
-    const parsed = parseFixture(fixture);
+    const parsed = parseFixture(fixture, input.job);
 
     return {
       kind: 'success',
@@ -59,19 +60,21 @@ function trailingSlashUrl(url: URL): URL {
   return url.href.endsWith('/') ? url : new URL(`${url.href}/`);
 }
 
-function parseFixture(value: unknown): {
+function parseFixture(value: unknown, job: ProviderExecutionInput['job']): {
   parsedOutput: unknown;
-  assets?: Array<{ kind: string; mediaType: string; body: Uint8Array; inputChecksum: string }>;
+  assets?: ProviderBinaryAsset[];
 } {
   if (!isRecord(value) || value.fixtureSchemaVersion !== 'knowledge-bits.fixture-provider.v1') {
-    return { parsedOutput: value };
+    return { parsedOutput: resolveFixturePlaceholders(value, job) };
   }
   if (!('parsedOutput' in value)) throw new TypeError('Fixture provider envelope requires parsedOutput');
-  if (value.assets === undefined) return { parsedOutput: value.parsedOutput };
+  if (value.assets === undefined) {
+    return { parsedOutput: resolveFixturePlaceholders(value.parsedOutput, job) };
+  }
   if (!Array.isArray(value.assets)) throw new TypeError('Fixture provider assets must be an array');
 
   return {
-    parsedOutput: value.parsedOutput,
+    parsedOutput: resolveFixturePlaceholders(value.parsedOutput, job),
     assets: value.assets.map((asset) => {
       if (!isRecord(asset)
         || typeof asset.kind !== 'string'
@@ -79,8 +82,11 @@ function parseFixture(value: unknown): {
         || typeof asset.mediaType !== 'string'
         || !asset.mediaType.trim()
         || typeof asset.bodyBase64 !== 'string'
-        || typeof asset.inputChecksum !== 'string'
-        || !/^[a-f0-9]{64}$/.test(asset.inputChecksum)) {
+        || !(asset.inputChecksum === null || typeof asset.inputChecksum === 'string')
+        || (typeof asset.inputChecksum === 'string'
+          && asset.inputChecksum !== '$contentChecksum'
+          && !/^[a-f0-9]{64}$/.test(asset.inputChecksum))
+        || (asset.provenance !== undefined && !isRecord(asset.provenance))) {
         throw new TypeError('Fixture provider asset is invalid');
       }
       const body = Buffer.from(asset.bodyBase64, 'base64');
@@ -89,10 +95,69 @@ function parseFixture(value: unknown): {
         kind: asset.kind,
         mediaType: asset.mediaType,
         body,
-        inputChecksum: asset.inputChecksum,
+        inputChecksum: asset.inputChecksum === '$contentChecksum'
+          ? contentChecksumDependency(job)
+          : asset.inputChecksum,
+        ...(asset.provenance ? { provenance: asset.provenance } : {}),
       };
     }),
   };
+}
+
+function resolveFixturePlaceholders(value: unknown, job: ProviderExecutionInput['job']): unknown {
+  if (typeof value === 'string') {
+    if (value === '$contentChecksum') return contentChecksumDependency(job);
+    const prefix = '$snapshotArtifactId:';
+    if (value.startsWith(prefix)) {
+      const sourceId = value.slice(prefix.length);
+      const dependency = artifactDependencies(job).find((candidate) => (
+        candidate.kind === 'source_snapshot' && candidate.sourceId === sourceId
+      ));
+      if (!dependency) throw new TypeError(`Fixture provider cannot resolve source snapshot ${sourceId}`);
+      return dependency.artifactId;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((item) => resolveFixturePlaceholders(item, job));
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      resolveFixturePlaceholders(item, job),
+    ]));
+  }
+  return value;
+}
+
+function contentChecksumDependency(job: ProviderExecutionInput['job']): string {
+  const dependency = artifactDependencies(job).find((candidate) => (
+    candidate.kind === 'parsed_output' && candidate.action === 'create_content'
+  ));
+  if (!dependency) throw new TypeError('Fixture provider cannot resolve the content checksum');
+  return dependency.checksum;
+}
+
+function artifactDependencies(job: ProviderExecutionInput['job']): Array<{
+  artifactId: string;
+  kind: string;
+  checksum: string;
+  action: string;
+  sourceId?: string;
+}> {
+  if (!Array.isArray(job.input.dependencies)) return [];
+  return job.input.dependencies.filter((value): value is {
+    artifactId: string;
+    kind: string;
+    checksum: string;
+    action: string;
+    sourceId?: string;
+  } => (
+    isRecord(value)
+      && typeof value.artifactId === 'string'
+      && typeof value.kind === 'string'
+      && typeof value.checksum === 'string'
+      && typeof value.action === 'string'
+      && (value.sourceId === undefined || typeof value.sourceId === 'string')
+  ));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

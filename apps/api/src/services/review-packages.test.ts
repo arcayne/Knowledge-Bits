@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { calculateContentChecksum } from '@knowledge-bits/pipeline';
+import type { NugletLessonV1Payload } from '@knowledge-bits/contracts';
+
 import type { ArtifactStorageAdapter } from './artifacts.js';
 import {
   ArtifactStorageObjectNotFoundError,
@@ -15,6 +18,8 @@ import {
 const runId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const workerChecksum = 'f'.repeat(64);
 const sourceId = '11111111-1111-4111-8111-111111111111';
+const claimId = '11111111-1111-4111-8111-111111111112';
+const snapshotArtifactId = '20000000-0000-4000-8000-000000000000';
 
 class ReadableStorage implements ArtifactStorageAdapter {
   readonly objects = new Map<string, { body: Uint8Array; mediaType: string }>();
@@ -49,7 +54,7 @@ test('assembles and persists one checksum-bound review model from accepted artif
 
   assert.equal(model.decisionAllowed, true);
   assert.equal(model.package?.content.target.payload.title, 'Return to one task');
-  assert.equal(model.package?.evidence.sources[0]?.title, 'Focused work evidence');
+  assert.equal(model.package?.evidence.acceptedSources[0]?.title, 'Focused work evidence');
   assert.equal(model.package?.qa.deterministic.passed, true);
   assert.equal(model.assets.hero.state, 'available');
   assert.match(model.assets.hero.previewPath ?? '', new RegExp(`/runs/${runId}/artifacts/`));
@@ -91,15 +96,28 @@ test('blocks decisions when only required review media is missing', async () => 
     env: {
       ENGINE_API_TOKEN: 'api-token',
       ENGINE_REVIEW_TOKEN: 'review-token',
-      ENGINE_REVIEWER_ID: 'review-principal',
     },
   });
   const decision = await app.request(`/runs/${runId}/review`, {
     method: 'POST',
-    headers: { Authorization: 'Bearer review-token' },
+    headers: { Authorization: 'Bearer review-token', 'X-Knowledge-Bits-Reviewer': 'review-principal' },
     body: JSON.stringify({ decision: 'approve', packageChecksum: model.package?.packageChecksum }),
   });
   assert.equal(decision.status, 409, await decision.clone().text());
+});
+
+test('blocks approval for failed QA, blocking editorial findings, or stale asset inputs', async () => {
+  for (const options of [
+    { qaPassed: false },
+    { blockingEditorial: true },
+    { assetInputChecksum: 'd'.repeat(64) },
+  ]) {
+    const { repository, storage } = await fixture(options);
+    const model = await new ReviewPackageService({ repository, storage }).load(runId);
+    assert.equal(model.decisionAllowed, false);
+    assert.ok(model.package);
+    assert.match(model.issues.join(' '), /deterministic|editorial|checksum/i);
+  }
 });
 
 test('reads only an artifact included in the current immutable package', async () => {
@@ -121,14 +139,13 @@ test('serves the review model and artifact bytes only to the configured review p
     env: {
       ENGINE_API_TOKEN: 'api-token',
       ENGINE_REVIEW_TOKEN: 'review-token',
-      ENGINE_REVIEWER_ID: 'review-principal',
     },
   });
 
   const missingAuth = await app.request(`/runs/${runId}/review`);
   assert.equal(missingAuth.status, 401);
   const response = await app.request(`/runs/${runId}/review`, {
-    headers: { Authorization: 'Bearer review-token' },
+    headers: { Authorization: 'Bearer review-token', 'X-Knowledge-Bits-Reviewer': 'review-principal' },
   });
   assert.equal(response.status, 200, await response.clone().text());
   const model = await response.json() as { decisionAllowed: boolean; package: { packageChecksum: string } };
@@ -150,10 +167,9 @@ test('maps authenticated artifact-read object misses to 404 and generic adapter 
     env: {
       ENGINE_API_TOKEN: 'api-token',
       ENGINE_REVIEW_TOKEN: 'review-token',
-      ENGINE_REVIEWER_ID: 'review-principal',
     },
   });
-  const headers = { Authorization: 'Bearer review-token' };
+  const headers = { Authorization: 'Bearer review-token', 'X-Knowledge-Bits-Reviewer': 'review-principal' };
   const loaded = await app.request(`/runs/${runId}/review`, { headers });
   assert.equal(loaded.status, 200);
 
@@ -166,7 +182,12 @@ test('maps authenticated artifact-read object misses to 404 and generic adapter 
   assert.equal(unavailable.status, 503, await unavailable.clone().text());
 });
 
-async function fixture(options: { includeMedia?: boolean } = {}) {
+async function fixture(options: {
+  includeMedia?: boolean;
+  qaPassed?: boolean;
+  blockingEditorial?: boolean;
+  assetInputChecksum?: string;
+} = {}) {
   const repository = new WorkflowRepository(createInMemoryWorkflowStore());
   repository.listArtifactsForSuccessfulStageJobs = (id, revision) => repository.listArtifacts(id, revision);
   const storage = new ReadableStorage();
@@ -187,6 +208,7 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
     hero: 'objects/hero',
     infographic: 'objects/infographic',
     audio: 'objects/audio',
+    snapshot: 'objects/snapshot',
   };
   const inputs: Array<{
     id: string;
@@ -195,7 +217,18 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
     action: string;
     mediaType: string;
     body: unknown;
+    inputChecksum?: string | null;
+    provenance?: Record<string, unknown>;
   }> = [
+    {
+      id: snapshotArtifactId,
+      kind: 'source_snapshot',
+      storageKey: artifactKeys.snapshot,
+      action: 'collect_sources',
+      mediaType: 'text/plain',
+      body: 'A short reset followed by one written next action can reduce restart friction.',
+      provenance: { sourceId },
+    },
     {
       id: '20000000-0000-4000-8000-000000000001',
       kind: 'parsed_output',
@@ -203,8 +236,17 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
       action: 'collect_sources',
       mediaType: 'application/json',
       body: {
-        sources: [{ sourceId, title: 'Focused work evidence', url: 'https://example.test/focused-work', status: 'candidate' }],
-        claims: [{ statement: 'A short reset can help.', citations: [{ sourceId, excerpt: 'Brief breaks can help.' }] }],
+        acceptedSources: [{
+          sourceId,
+          title: 'Focused work evidence',
+          url: 'https://example.test/focused-work',
+          retrievedAt: '2026-07-13T10:00:00.000Z',
+          snapshotChecksum: 'a'.repeat(64),
+          readability: { passed: true, reason: null },
+          credibility: { passed: true, policy: 'fixture-trusted-hosts.v1', reason: null },
+        }],
+        rejectedSources: [],
+        coverageGaps: [],
       },
     },
     {
@@ -213,13 +255,7 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
       storageKey: artifactKeys.content,
       action: 'create_content',
       mediaType: 'application/json',
-      body: {
-        title: 'Return to one task',
-        takeaway: 'Name the next step.',
-        action: 'Write the next step down.',
-        depths: { quick: 'Name it.', core: 'Write it down.', deep: 'Remove restart friction.' },
-        claims: [{ statement: 'A short reset can help.', citations: [{ sourceId, excerpt: 'Brief breaks can help.' }] }],
-      },
+      body: contentOutput(),
     },
     {
       id: '20000000-0000-4000-8000-000000000003',
@@ -228,8 +264,17 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
       action: 'check_content',
       mediaType: 'application/json',
       body: {
-        deterministic: { passed: true, contentChecksum: 'c'.repeat(64), findings: [] },
-        editorial: { summary: 'Ready for structural review.', findings: [] },
+        deterministic: {
+          passed: options.qaPassed !== false,
+          contentChecksum: calculateContentChecksum(contentOutput()),
+          findings: options.qaPassed === false ? [{ code: 'claim-coverage', message: 'Coverage is incomplete.' }] : [],
+        },
+        editorial: {
+          summary: options.blockingEditorial ? 'Needs revision.' : 'Ready for structural review.',
+          findings: options.blockingEditorial
+            ? [{ code: 'unsupported-claim', severity: 'major', blocking: true, message: 'A claim is unsupported.' }]
+            : [],
+        },
       },
     },
   ];
@@ -242,6 +287,7 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
         action: 'produce_assets',
         mediaType: 'image/webp',
         body: 'hero-image',
+        inputChecksum: options.assetInputChecksum ?? calculateContentChecksum(contentOutput()),
       },
       {
         id: '20000000-0000-4000-8000-000000000005',
@@ -250,6 +296,7 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
         action: 'produce_assets',
         mediaType: 'image/webp',
         body: 'infographic-image',
+        inputChecksum: options.assetInputChecksum ?? calculateContentChecksum(contentOutput()),
       },
       {
         id: '20000000-0000-4000-8000-000000000006',
@@ -258,6 +305,7 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
         action: 'produce_assets',
         mediaType: 'audio/mpeg',
         body: 'audio-bytes',
+        inputChecksum: options.assetInputChecksum ?? calculateContentChecksum(contentOutput()),
       },
     );
   }
@@ -274,8 +322,8 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
       checksum: 'a'.repeat(64),
       storageKey: input.storageKey,
       byteSize: bytes.byteLength,
-      provenance: { action: input.action, provider: 'fixture' },
-      inputChecksum: null,
+      provenance: { action: input.action, provider: 'fixture', ...input.provenance },
+      inputChecksum: input.inputChecksum ?? null,
       jobId: `30000000-0000-4000-8000-00000000000${inputs.indexOf(input) + 1}`,
       stage: input.action === 'collect_sources'
         ? 'research'
@@ -293,5 +341,28 @@ async function fixture(options: { includeMedia?: boolean } = {}) {
     storage,
     artifactKeys,
     mediaId: options.includeMedia === false ? null : '20000000-0000-4000-8000-000000000004',
+  };
+}
+
+function contentOutput(): NugletLessonV1Payload {
+  const citation = {
+    sourceId,
+    snapshotArtifactId,
+    excerpt: 'A short reset followed by one written next action can reduce restart friction.',
+  };
+  return {
+    title: 'Return to one task',
+    takeaway: 'Name the next step.',
+    action: 'Write the next step down.',
+    depths: { quick: 'Name it.', core: 'Write it down.', deep: 'Remove restart friction.' },
+    claims: [{ claimId, statement: 'A short reset can help.', citations: [citation] }],
+    claimCoverage: [
+      { path: 'title', claimIds: [claimId] },
+      { path: 'takeaway', claimIds: [claimId] },
+      { path: 'action', claimIds: [claimId] },
+      { path: 'depths.quick', claimIds: [claimId] },
+      { path: 'depths.core', claimIds: [claimId] },
+      { path: 'depths.deep', claimIds: [claimId] },
+    ],
   };
 }

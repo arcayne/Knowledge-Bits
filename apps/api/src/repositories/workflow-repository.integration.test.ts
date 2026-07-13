@@ -7,14 +7,14 @@ import { fileURLToPath } from 'node:url';
 
 import test from 'node:test';
 
-import { calculatePackageChecksum, nextTransition } from '@knowledge-bits/pipeline';
+import { nextTransition } from '@knowledge-bits/pipeline';
 
 import { createIsolatedPrismaClient } from '../config.js';
 import {
   createWorkflowRepository,
-  type RecordPackageVersionInput,
   WorkflowConflictError,
 } from './workflow-repository.js';
+import { strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 
 const apiRoot = fileURLToPath(new URL('../../', import.meta.url));
 const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0;
@@ -29,9 +29,23 @@ test(
     t.after(() => removeContainer(containerName));
 
     await deployMigrations(databaseUrl);
+    const runtimeDatabaseUrl = createRestrictedRuntimeLogin(containerName, databaseName, databaseUrl);
 
-    const prisma = createIsolatedPrismaClient({ ENGINE_DATABASE_URL: databaseUrl });
+    const prisma = createIsolatedPrismaClient({ ENGINE_DATABASE_URL: runtimeDatabaseUrl });
     t.after(() => prisma.$disconnect());
+    const identity = await prisma.$queryRaw<Array<{ currentUser: string; canCreate: boolean }>>`
+      SELECT current_user AS "currentUser", has_schema_privilege(current_user, 'public', 'CREATE') AS "canCreate"
+    `;
+    assert.equal(identity[0]?.currentUser, 'knowledge_bits_runtime_login');
+    assert.equal(identity[0]?.canCreate, false);
+    await assert.rejects(
+      prisma.$executeRawUnsafe('CREATE TABLE "runtime_must_not_create" ("id" text)'),
+      /permission denied/i,
+    );
+    await assert.rejects(
+      prisma.$executeRawUnsafe('DELETE FROM "_prisma_migrations"'),
+      /permission denied/i,
+    );
     const repository = createWorkflowRepository(prisma);
     const runId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
@@ -237,6 +251,22 @@ test(
       leaseSeconds: 120,
     });
     assert.equal(reclaimed?.jobId, claim!.jobId);
+    const snapshot = await repository.recordArtifactForActiveLease({
+      workerId: 'worker-c',
+      jobId: reclaimed!.jobId,
+      id: '55555555-5555-4555-8555-555555555555',
+      runId,
+      revision: 1,
+      kind: 'source_snapshot',
+      mediaType: 'text/plain',
+      checksum: '5'.repeat(64),
+      storageKey: 'integration/artifacts/source-snapshot.txt',
+      byteSize: 64,
+      provenance: { provider: 'integration-source-verifier', sourceId: '66666666-6666-4666-8666-666666666666' },
+      inputChecksum: null,
+    });
+    assert.equal(snapshot.kind, 'source_snapshot');
+    assert.equal(snapshot.action, 'collect_sources');
     const researchTransition = nextTransition({
       stage: 'research',
       state: 'running',
@@ -386,11 +416,23 @@ test(
       incrementAttempts: true,
       nextAttemptAt: null,
     });
+    await assert.rejects(repository.retryDelivery(approvedDelivery.id), /active.*lease/i);
+    await prisma.job.update({
+      where: { id: approvedClaim!.jobId },
+      data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    await repository.retryDelivery(approvedDelivery.id);
+    const recoveredDeliveryClaim = await repository.claimJob({
+      workerId: 'database-delivery-recovery-worker',
+      capabilities: ['deliver_package'],
+      leaseSeconds: 120,
+    });
+    assert.equal(recoveredDeliveryClaim?.jobId, approvedClaim!.jobId);
     const deliveryRetryAt = new Date(Date.now() + 60_000);
     await repository.transitionDeliveryForActiveLease({
       id: approvedDelivery.id,
-      jobId: approvedClaim!.jobId,
-      workerId: 'database-delivery-worker',
+      jobId: recoveredDeliveryClaim!.jobId,
+      workerId: 'database-delivery-recovery-worker',
       packageVersionId: approvedPackage.id,
       packageChecksum: checksum,
       expectedState: 'running',
@@ -399,9 +441,9 @@ test(
       nextAttemptAt: deliveryRetryAt,
     });
     await repository.applyJobResult({
-      workerId: 'database-delivery-worker',
+      workerId: 'database-delivery-recovery-worker',
       result: {
-        jobId: approvedClaim!.jobId,
+        jobId: recoveredDeliveryClaim!.jobId,
         packageId: runId,
         stage: 'deliver',
         state: 'waiting',
@@ -775,35 +817,11 @@ test(
   },
 );
 
-const checksum = canonicalChecksum('A');
-const changedChecksum = canonicalChecksum('B');
+const checksum = strictPackageVersionInput('00000000-0000-4000-8000-000000000001', 'A').packageChecksum;
+const changedChecksum = strictPackageVersionInput('00000000-0000-4000-8000-000000000001', 'B').packageChecksum;
 
-function packageVersionInput(runId: string, packageChecksum: string): RecordPackageVersionInput {
-  const material = canonicalMaterial(packageChecksum === changedChecksum ? 'B' : 'A');
-  return {
-    runId,
-    revision: 1,
-    packageChecksum,
-    ...material,
-  };
-}
-
-function canonicalChecksum(variant: string): string {
-  const material = canonicalMaterial(variant);
-  return calculatePackageChecksum({ ...material, assetInventory: material.artifactInventory });
-}
-
-function canonicalMaterial(variant: string) {
-  return {
-    adapterVersion: 'review-package@1',
-    locale: 'en',
-    owner: 'knowledge-bits-engine',
-    usageRights: { scope: 'internal-review' },
-    content: { schemaVersion: 'knowledge-bits.content.v1' as const, target: { kind: 'nuglet.lesson.v1' as const, payload: { title: `Database package ${variant}` } } },
-    evidence: { schemaVersion: 'knowledge-bits.evidence.v1' as const, sources: [], claims: [] },
-    qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Ready', findings: [] } },
-    artifactInventory: [],
-  };
+function packageVersionInput(runId: string, packageChecksum: string) {
+  return strictPackageVersionInput(runId, packageChecksum === changedChecksum ? 'B' : 'A');
 }
 
 function readMigration(name: string): string {
@@ -904,9 +922,16 @@ async function startPostgres(containerName: string, databaseName: string): Promi
   ]);
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (spawnSync('docker', ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', databaseName], {
+    const ready = spawnSync('docker', ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', databaseName], {
       stdio: 'ignore',
-    }).status === 0) {
+    }).status === 0;
+    if (ready) {
+      // Do not mistake the image entrypoint's temporary initialization server for the final postmaster.
+      await delay(750);
+      const stable = spawnSync('docker', ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', databaseName], {
+        stdio: 'ignore',
+      }).status === 0;
+      if (!stable) continue;
       const published = run('docker', ['port', containerName, '5432/tcp']);
       const port = published.match(/:(\d+)\s*$/m)?.[1];
       if (!port) throw new Error(`Could not resolve PostgreSQL port: ${published}`);
@@ -928,6 +953,7 @@ async function deployMigrations(databaseUrl: string): Promise<void> {
           ...process.env,
           DATABASE_URL: '',
           ENGINE_DATABASE_URL: databaseUrl,
+          ENGINE_MIGRATION_DATABASE_URL: databaseUrl,
         },
       });
       return;
@@ -937,6 +963,17 @@ async function deployMigrations(databaseUrl: string): Promise<void> {
     }
   }
   throw lastError;
+}
+
+function createRestrictedRuntimeLogin(containerName: string, databaseName: string, ownerUrl: string): string {
+  applySql(containerName, databaseName, `
+    CREATE ROLE knowledge_bits_runtime_login LOGIN PASSWORD 'runtime-test-password';
+    GRANT knowledge_bits_runtime TO knowledge_bits_runtime_login;
+  `);
+  const runtimeUrl = new URL(ownerUrl);
+  runtimeUrl.username = 'knowledge_bits_runtime_login';
+  runtimeUrl.password = 'runtime-test-password';
+  return runtimeUrl.toString();
 }
 
 function removeContainer(containerName: string): void {

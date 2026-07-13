@@ -2,16 +2,14 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import { calculatePackageChecksum } from '@knowledge-bits/pipeline';
-
 import { createApp } from '../app.js';
 import {
   createInMemoryWorkflowStore,
-  type RecordPackageVersionInput,
   WorkflowRepository,
 } from '../repositories/workflow-repository.js';
 import { DeliveryTransientError } from '../services/delivery.js';
 import type { DeliveryAdapter } from '../services/delivery-adapters/types.js';
+import { strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 
 test('the queued delivery action runs the delivery service instead of a fixture provider', async () => {
   const fixture = await routeFixture();
@@ -119,7 +117,6 @@ async function routeFixture() {
     env: {
       ENGINE_API_TOKEN: 'api-token',
       ENGINE_REVIEW_TOKEN: 'review-token',
-      ENGINE_REVIEWER_ID: 'editor-1',
       ENGINE_WORKER_CREDENTIALS: JSON.stringify([{
         token: 'delivery-worker-token',
         workerId: 'delivery-worker',
@@ -140,19 +137,6 @@ async function claimDelivery(app: ReturnType<typeof createApp>) {
   return response.json() as Promise<{ jobId: string; deliveryId: string }>;
 }
 
-function packageVersionInput(runId: string, variant: string): RecordPackageVersionInput {
-  const sourceId = randomUUID();
-  const material = {
-    adapterVersion: 'knowledge-bits.review-package.v1', locale: 'en', owner: 'knowledge-bits-engine',
-    usageRights: { scope: 'internal-review' },
-    content: { schemaVersion: 'knowledge-bits.content.v1' as const, target: { kind: 'nuglet.lesson.v1' as const, payload: { title: `Package ${variant}` } } },
-    evidence: {
-      schemaVersion: 'knowledge-bits.evidence.v1' as const,
-      sources: [{ sourceId, url: 'https://example.test/source', title: 'Source', retrievedAt: '2026-07-13T09:00:00.000Z', checksum: '1'.repeat(64) }],
-      claims: [{ claimId: randomUUID(), statement: 'A claim.', citations: [{ sourceId, excerpt: 'Evidence.' }] }],
-    },
-    qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Ready', findings: [] } },
-    artifactInventory: [],
-  };
-  return { runId, revision: 1, packageChecksum: calculatePackageChecksum({ ...material, assetInventory: [] }), ...material };
+function packageVersionInput(runId: string, variant: string) {
+  return strictPackageVersionInput(runId, variant);
 }

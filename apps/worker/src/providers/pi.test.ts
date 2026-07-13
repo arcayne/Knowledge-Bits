@@ -5,7 +5,7 @@ import test from 'node:test';
 import { PiEditorialProvider, type PiSdkClient } from './pi.js';
 import type { ProviderExecutionInput } from './types.js';
 
-test('Pi receives only candidate, evidence, and rubric and records editorial provenance', async () => {
+test('Pi receives only review context and execution controls and records editorial provenance', async () => {
   let request: Record<string, unknown> | undefined;
   const provider = new PiEditorialProvider({
     client: {
@@ -20,7 +20,7 @@ test('Pi receives only candidate, evidence, and rubric and records editorial pro
   const result = await provider.execute(input());
 
   assert.equal(result.kind, 'success');
-  assert.deepEqual(Object.keys(request ?? {}).sort(), ['candidate', 'evidence', 'rubric']);
+  assert.deepEqual(Object.keys(request ?? {}).sort(), ['candidate', 'evidence', 'idempotencyKey', 'rubric', 'signal']);
   if (result.kind !== 'success') return;
   const report = result.executionReport as { promptVersion: string; provider: string; renderedPrompt: string };
   assert.equal(report.promptVersion, 'editorial-check.v1');
@@ -51,9 +51,14 @@ test('Pi blocks critical and unsupported-claim findings without a rewrite or sch
 });
 
 const evidence = {
-  sources: [{ sourceId: '11111111-1111-4111-8111-111111111111', title: 'Focused work evidence' }],
+  sources: [{
+    sourceId: '11111111-1111-4111-8111-111111111111',
+    title: 'Focused work evidence',
+    snapshotArtifactId: '22222222-2222-4222-8222-222222222222',
+  }],
 };
 
+const claimId = '55555555-5555-4555-8555-555555555555';
 const candidate = {
   title: 'Return to one task',
   takeaway: 'A written next step makes returning easier.',
@@ -63,7 +68,23 @@ const candidate = {
     core: 'Choose the task that matters now, then define the next visible step.',
     deep: 'Restart friction often comes from having to decide what to do again.',
   },
-  claims: [{ statement: 'A concrete next step reduces restart friction.', citations: [{ sourceId: '11111111-1111-4111-8111-111111111111', excerpt: 'A defined next action lowers restart friction.' }] }],
+  claims: [{
+    claimId,
+    statement: 'A concrete next step reduces restart friction.',
+    citations: [{
+      sourceId: evidence.sources[0]!.sourceId,
+      snapshotArtifactId: evidence.sources[0]!.snapshotArtifactId,
+      excerpt: 'A defined next action lowers restart friction.',
+    }],
+  }],
+  claimCoverage: [
+    { path: 'title' as const, claimIds: [claimId] },
+    { path: 'takeaway' as const, claimIds: [claimId] },
+    { path: 'action' as const, claimIds: [claimId] },
+    { path: 'depths.quick' as const, claimIds: [claimId] },
+    { path: 'depths.core' as const, claimIds: [claimId] },
+    { path: 'depths.deep' as const, claimIds: [claimId] },
+  ],
 };
 
 function input(): ProviderExecutionInput {
@@ -77,8 +98,10 @@ function input(): ProviderExecutionInput {
       claimedBy: 'test-worker',
       claimedAt: '2026-07-13T10:00:00.000Z',
       leaseExpiresAt: '2026-07-13T10:02:00.000Z',
+      executionDeadlineAt: '2026-07-13T10:05:00.000Z',
       attempt: 1,
       revision: 1,
+      input: { brief: {}, dependencies: [] },
     },
     signal: new AbortController().signal,
   };

@@ -7,6 +7,7 @@ import {
 } from '../delivery.js';
 import { HttpDeliveryAdapter } from './http.js';
 import type { DeliveryAdapterInput } from './types.js';
+import { strictPackageVersionInput } from '../../testing/knowledge-bits-fixture.js';
 
 test('HTTP delivery sends the immutable package identity', async () => {
   let requestBody: unknown;
@@ -72,30 +73,47 @@ test('HTTP delivery treats malformed success and error payloads deliberately', a
   await assert.rejects(malformedTransientError.deliver(input()), DeliveryTransientError);
 });
 
+test('HTTP delivery aborts bounded destination work as a transient timeout', async () => {
+  const adapter = new HttpDeliveryAdapter({
+    baseUrl: 'https://destination.example.test',
+    timeoutMs: 5,
+    fetch: async (_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+    }),
+  });
+
+  await assert.rejects(adapter.deliver(input()), /timeout/i);
+});
+
 function input(): DeliveryAdapterInput {
+  const packageId = '22222222-2222-4222-8222-222222222222';
+  const packageVersionId = '11111111-1111-4111-8111-111111111111';
+  const version = strictPackageVersionInput(packageId, 'http-adapter');
   return {
-    packageVersionId: '11111111-1111-4111-8111-111111111111',
-    packageChecksum: 'a'.repeat(64),
+    packageVersionId,
+    packageChecksum: version.packageChecksum,
     idempotencyKey: 'stable-operation',
     knowledgeBits: {
-      id: '11111111-1111-4111-8111-111111111111',
+      id: packageVersionId,
       schemaVersion: 'knowledge-bits.review-package.v1',
-      packageId: '22222222-2222-4222-8222-222222222222',
-      revision: 1,
-      packageChecksum: 'a'.repeat(64),
-      adapterVersion: 'knowledge-bits.review-package.v1',
-      locale: 'en',
-      owner: 'knowledge-bits-engine',
-      usageRights: { scope: 'internal-review' },
-      content: { schemaVersion: 'knowledge-bits.content.v1', target: { kind: 'nuglet.lesson.v1', payload: { title: 'Test' } } },
-      evidence: {
-        schemaVersion: 'knowledge-bits.evidence.v1',
-        sources: [{ sourceId: '33333333-3333-4333-8333-333333333333', url: 'https://example.test', title: 'Source', retrievedAt: '2026-07-13T09:00:00.000Z', checksum: 'b'.repeat(64) }],
-        claims: [{ claimId: '44444444-4444-4444-8444-444444444444', statement: 'Claim', citations: [{ sourceId: '33333333-3333-4333-8333-333333333333', excerpt: 'Evidence' }] }],
+      packageId,
+      revision: version.revision,
+      packageChecksum: version.packageChecksum,
+      adapterVersion: version.adapterVersion,
+      locale: version.locale,
+      owner: version.owner,
+      usageRights: version.usageRights,
+      content: version.content,
+      evidence: version.evidence,
+      qa: version.qa,
+      artifactInventory: version.artifactInventory,
+      approval: {
+        status: 'approved',
+        reviewerId: 'editor',
+        decidedAt: '2026-07-13T10:00:00.000Z',
+        approvedChecksum: version.packageChecksum,
+        comment: null,
       },
-      qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Ready', findings: [] } },
-      artifactInventory: [],
-      approval: { status: 'approved', reviewerId: 'editor', decidedAt: '2026-07-13T10:00:00.000Z', approvedChecksum: 'a'.repeat(64), comment: null },
     },
   };
 }

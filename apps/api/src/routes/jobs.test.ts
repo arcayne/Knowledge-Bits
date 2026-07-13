@@ -9,6 +9,7 @@ import {
   createInMemoryWorkflowStore,
   WorkflowRepository,
 } from '../repositories/workflow-repository.js';
+import type { ArtifactStorageAdapter } from '../services/artifacts.js';
 
 const checksum = 'a'.repeat(64);
 const validBrief = { audience: 'People rebuilding focus', objective: 'Create one practical lesson' };
@@ -122,6 +123,78 @@ test('renews only the current worker lease through the heartbeat endpoint', asyn
     headers: { Authorization: 'Bearer asset-worker-token' },
   });
   assert.equal(rejected.status, 409);
+});
+
+test('serves only declared artifact dependencies through the active worker lease', async () => {
+  const repository = new WorkflowRepository(createInMemoryWorkflowStore());
+  const dependencyId = '55555555-5555-4555-8555-555555555555';
+  const otherId = '66666666-6666-4666-8666-666666666666';
+  await repository.createRun({
+    id: '77777777-7777-4777-8777-777777777777',
+    title: 'Lease scoped context',
+    locale: 'en',
+    brief: { title: 'Lease scoped context' },
+    currentStage: 'create',
+    stages: [{ name: 'create', state: 'queued' }],
+  });
+  for (const [artifactId, storageKey] of [[dependencyId, 'objects/dependency'], [otherId, 'objects/other']]) {
+    await repository.recordArtifact({
+      id: artifactId,
+      runId: '77777777-7777-4777-8777-777777777777',
+      revision: 1,
+      kind: 'parsed_output',
+      mediaType: 'application/json',
+      checksum,
+      storageKey,
+      byteSize: 2,
+      provenance: { provider: 'fixture' },
+      inputChecksum: null,
+      action: 'collect_sources',
+      stage: 'research',
+    });
+  }
+  await repository.queueJob({
+    runId: '77777777-7777-4777-8777-777777777777',
+    stage: 'create',
+    action: 'create_content',
+    idempotencyKey: 'lease-scoped-context',
+    input: {
+      brief: { title: 'Lease scoped context' },
+      dependencies: [{ artifactId: dependencyId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum, action: 'collect_sources' }],
+    },
+  });
+  const storage: ArtifactStorageAdapter = {
+    async preparePut() { throw new Error('not used'); },
+    async inspect() { throw new Error('not used'); },
+    async read(storageKey) { return Buffer.from(storageKey === 'objects/dependency' ? '{}' : 'other'); },
+  };
+  const app = createApp({
+    repository,
+    artifactStorage: storage,
+    env: {
+      ENGINE_WORKER_CREDENTIALS: JSON.stringify([{
+        token: 'create-worker-token', workerId: 'create-worker', capabilities: ['create_content'],
+      }]),
+    },
+  });
+  const claimResponse = await app.request('/jobs/claim', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer create-worker-token' },
+    body: JSON.stringify({ leaseSeconds: 120 }),
+  });
+  const claim = await claimResponse.json() as { jobId: string; input: Record<string, unknown>; executionDeadlineAt: string };
+  assert.ok(Array.isArray(claim.input.dependencies));
+  assert.ok(new Date(claim.executionDeadlineAt) > new Date());
+
+  const allowed = await app.request(`/jobs/${claim.jobId}/artifacts/${dependencyId}`, {
+    headers: { Authorization: 'Bearer create-worker-token' },
+  });
+  assert.equal(allowed.status, 200, await allowed.clone().text());
+  assert.equal(await allowed.text(), '{}');
+  const denied = await app.request(`/jobs/${claim.jobId}/artifacts/${otherId}`, {
+    headers: { Authorization: 'Bearer create-worker-token' },
+  });
+  assert.equal(denied.status, 409);
 });
 
 test('replays an identical completed result and rejects a conflicting retry', async () => {
@@ -355,4 +428,33 @@ test('persists a waiting outcome and its retry time', async () => {
   const body = await response.json();
   assert.equal(body.stages.research.state, 'waiting');
   assert.equal(body.nextRetryAt, retryAt);
+});
+
+test('keeps non-Check quality failures in the current stage for human action', async () => {
+  const app = createTestApp();
+  await createRun(app);
+  const claim = await claimResearchJob(app);
+
+  const response = await app.request(`/jobs/${claim.jobId}/result`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-worker-test' },
+    body: JSON.stringify({
+      result: {
+        jobId: claim.jobId,
+        packageId: claim.packageId,
+        stage: claim.stage,
+        state: 'needs_human',
+        completedAt: '2026-07-12T12:00:00.000Z',
+        outputChecksum: null,
+        error: 'source_snapshot_unreadable',
+        needsHumanKind: 'quality',
+      },
+    }),
+  });
+
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.currentStage, 'research');
+  assert.equal(body.stages.research.state, 'needs_human');
+  assert.equal(body.stages.research.reason, 'source_snapshot_unreadable');
 });

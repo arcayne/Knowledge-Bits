@@ -44,8 +44,10 @@ export const jobClaimSchema = z.object({
   claimedBy: z.string().min(1),
   claimedAt: z.string().datetime(),
   leaseExpiresAt: z.string().datetime(),
+  executionDeadlineAt: z.string().datetime(),
   attempt: z.number().int().nonnegative(),
   revision: z.number().int().positive(),
+  input: z.record(z.unknown()),
   deliveryId: z.string().uuid().optional(),
   packageVersionId: z.string().uuid().optional(),
   packageChecksum: checksumSchema.optional(),
@@ -66,7 +68,23 @@ export const jobResultSchema = z.object({
   completedAt: z.string().datetime(),
   outputChecksum: checksumSchema.nullable(),
   error: z.string().min(1).nullable(),
-}).strict();
+  needsHumanKind: z.enum(['configuration', 'quality']).optional(),
+}).strict().superRefine((result, context) => {
+  if (result.state === 'needs_human' && !result.needsHumanKind) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'needsHumanKind is required for needs_human results',
+      path: ['needsHumanKind'],
+    });
+  }
+  if (result.state !== 'needs_human' && result.needsHumanKind) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'needsHumanKind is only allowed for needs_human results',
+      path: ['needsHumanKind'],
+    });
+  }
+});
 
 export const createRunRequestSchema = z.object({
   title: z.string().trim().min(1),

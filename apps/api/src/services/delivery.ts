@@ -1,9 +1,11 @@
 import {
   WorkflowConflictError,
+  type WorkflowDelivery,
   type WorkflowRepository,
 } from '../repositories/workflow-repository.js';
 import type {
   DeliveryAdapter,
+  DeliveryAdapterResponse,
   ImmutableApprovedKnowledgeBits,
 } from './delivery-adapters/types.js';
 
@@ -17,6 +19,8 @@ export interface DeliveryExecutionContext {
   workerId: string;
 }
 
+export type DeliveryBoundary = 'running' | 'delivered' | 'verifying' | 'succeeded';
+
 export class DeliveryService {
   private readonly clock: () => Date;
 
@@ -25,14 +29,24 @@ export class DeliveryService {
     adapter: DeliveryAdapter;
     clock?: () => Date;
     retryDelayMs?: number;
+    timeoutMs?: number;
+    onBoundary?: (boundary: DeliveryBoundary) => void;
   }) {
     this.clock = dependencies.clock ?? (() => new Date());
   }
 
-  async run(deliveryId: string, execution: DeliveryExecutionContext): Promise<DeliveryRunResult> {
-    const delivery = await this.dependencies.repository.getDelivery(deliveryId);
-    if (!delivery) throw new DeliveryNotFoundError('Delivery not found');
-    if (delivery.state !== 'queued' && delivery.state !== 'waiting') {
+  async run(
+    deliveryId: string,
+    execution: DeliveryExecutionContext,
+    callerSignal?: AbortSignal,
+  ): Promise<DeliveryRunResult> {
+    const initialDelivery = await this.dependencies.repository.getDelivery(deliveryId);
+    if (!initialDelivery) throw new DeliveryNotFoundError('Delivery not found');
+    let delivery: WorkflowDelivery = initialDelivery;
+    if (delivery.state === 'needs_human' || delivery.state === 'superseded') {
+      throw new DeliveryConflictError(`Delivery cannot be run from state ${delivery.state}`);
+    }
+    if (!['queued', 'waiting', 'failed', 'running', 'verifying', 'succeeded'].includes(delivery.state)) {
       throw new DeliveryConflictError(`Delivery cannot be run from state ${delivery.state}`);
     }
     const packageVersion = await this.dependencies.repository.getPackageVersionById(delivery.packageVersionId);
@@ -52,7 +66,11 @@ export class DeliveryService {
       throw new DeliveryConflictError('Delivery requires a matching current approved checksum');
     }
 
-    const transition = (
+    if (delivery.state === 'succeeded') {
+      return { state: 'succeeded', packageChecksum: delivery.packageChecksum };
+    }
+
+    const transition = async (
       expectedState: string,
       state: string,
       options: {
@@ -60,18 +78,20 @@ export class DeliveryService {
         nextAttemptAt?: Date | null;
         incrementAttempts?: boolean;
       } = {},
-    ) => this.dependencies.repository.transitionDeliveryForActiveLease({
-      id: delivery.id,
-      jobId: execution.jobId,
-      workerId: execution.workerId,
-      packageVersionId: delivery.packageVersionId,
-      packageChecksum: delivery.packageChecksum,
-      expectedState,
-      state,
-      now: this.clock(),
-      ...options,
-    });
-    await transition(delivery.state, 'running', { incrementAttempts: true, nextAttemptAt: null });
+    ) => {
+      delivery = await this.dependencies.repository.transitionDeliveryForActiveLease({
+        id: delivery.id,
+        jobId: execution.jobId,
+        workerId: execution.workerId,
+        packageVersionId: delivery.packageVersionId,
+        packageChecksum: delivery.packageChecksum,
+        expectedState,
+        state,
+        now: this.clock(),
+        ...options,
+      });
+      return delivery;
+    };
     const knowledgeBits: ImmutableApprovedKnowledgeBits = {
       id: packageVersion.id,
       schemaVersion: 'knowledge-bits.review-package.v1',
@@ -94,24 +114,46 @@ export class DeliveryService {
         comment: null,
       },
     };
+    const timeoutSignal = AbortSignal.timeout(this.dependencies.timeoutMs ?? 30_000);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
 
-    let expectedState = 'running';
+    let expectedState = delivery.state;
     try {
-      const response = await this.dependencies.adapter.deliver({
-        knowledgeBits,
-        packageVersionId: packageVersion.id,
-        packageChecksum: packageVersion.packageChecksum,
-        idempotencyKey: delivery.idempotencyKey,
-      });
-      await transition('running', 'verifying', {
-        response: response as unknown as Record<string, unknown>,
-        nextAttemptAt: null,
-      });
-      expectedState = 'verifying';
+      let response = deliveryResponse(delivery);
+      if (delivery.state === 'queued' || ((delivery.state === 'waiting' || delivery.state === 'failed') && !response)) {
+        await transition(delivery.state, 'running', { incrementAttempts: true, nextAttemptAt: null });
+        expectedState = 'running';
+        this.boundary('running');
+      } else if ((delivery.state === 'waiting' || delivery.state === 'failed') && response) {
+        await transition(delivery.state, 'verifying', { incrementAttempts: true, nextAttemptAt: null });
+        expectedState = 'verifying';
+        this.boundary('verifying');
+      }
+
+      if (expectedState === 'running') {
+        response = await this.dependencies.adapter.deliver({
+          knowledgeBits,
+          packageVersionId: packageVersion.id,
+          packageChecksum: packageVersion.packageChecksum,
+          idempotencyKey: delivery.idempotencyKey,
+        }, signal);
+        this.boundary('delivered');
+        await transition('running', 'verifying', {
+          response: response as unknown as Record<string, unknown>,
+          nextAttemptAt: null,
+        });
+        expectedState = 'verifying';
+        this.boundary('verifying');
+      }
+
+      response ??= deliveryResponse(delivery);
+      if (expectedState !== 'verifying' || !response) {
+        throw new DeliveryConflictError('Delivery verification requires a persisted adapter response');
+      }
       const verification = await this.dependencies.adapter.verify({
         externalId: response.externalId,
         packageChecksum: packageVersion.packageChecksum,
-      });
+      }, signal);
       if (!verification.matches) {
         const retryAt = this.retryAt();
         await transition('verifying', 'failed', {
@@ -124,11 +166,15 @@ export class DeliveryService {
         response: { ...response, verification },
         nextAttemptAt: null,
       });
+      this.boundary('succeeded');
       return { state: 'succeeded', packageChecksum: delivery.packageChecksum };
     } catch (error) {
-      if (error instanceof WorkflowConflictError) throw error;
+      if (error instanceof DeliveryProcessInterruptionError
+        || error instanceof WorkflowConflictError
+        || error instanceof DeliveryConflictError) throw error;
       const persisted = await this.dependencies.repository.getDelivery(delivery.id);
-      const response = { ...(persisted?.response ?? {}), error: errorMessage(error) };
+      expectedState = persisted?.state ?? expectedState;
+      const response = { ...(persisted?.response ?? {}), error: timeoutMessage(error, timeoutSignal, callerSignal) };
       if (error instanceof DeliveryPermanentSchemaError) {
         await transition(expectedState, 'needs_human', {
           response: { ...response, kind: 'permanent_schema' },
@@ -137,13 +183,22 @@ export class DeliveryService {
         return { state: 'needs_human', packageChecksum: delivery.packageChecksum, error: error.message };
       }
       const retryAt = this.retryAt();
-      const message = errorMessage(error);
+      const message = timeoutMessage(error, timeoutSignal, callerSignal);
       await transition(expectedState, 'waiting', {
-        response: { ...response, kind: error instanceof DeliveryTransientError ? 'transient' : 'adapter_error' },
+        response: {
+          ...response,
+          kind: timeoutSignal.aborted && !callerSignal?.aborted
+            ? 'timeout'
+            : error instanceof DeliveryTransientError ? 'transient' : 'adapter_error',
+        },
         nextAttemptAt: retryAt,
       });
       return { state: 'waiting', packageChecksum: delivery.packageChecksum, error: message, retryAt };
     }
+  }
+
+  private boundary(boundary: DeliveryBoundary): void {
+    this.dependencies.onBoundary?.(boundary);
   }
 
   private retryAt(): Date {
@@ -155,7 +210,22 @@ export class DeliveryNotFoundError extends Error {}
 export class DeliveryConflictError extends Error {}
 export class DeliveryTransientError extends Error {}
 export class DeliveryPermanentSchemaError extends Error {}
+export class DeliveryProcessInterruptionError extends Error {}
 
-function errorMessage(error: unknown): string {
+function deliveryResponse(delivery: WorkflowDelivery): DeliveryAdapterResponse | undefined {
+  const response = delivery.response;
+  if (!response
+    || typeof response.externalId !== 'string'
+    || typeof response.previewUrl !== 'string'
+    || (response.status !== 'imported' && response.status !== 'already_imported')) return undefined;
+  return {
+    externalId: response.externalId,
+    previewUrl: response.previewUrl,
+    status: response.status,
+  };
+}
+
+function timeoutMessage(error: unknown, timeoutSignal: AbortSignal, callerSignal?: AbortSignal): string {
+  if (timeoutSignal.aborted && !callerSignal?.aborted) return 'delivery_timeout';
   return error instanceof Error ? error.message : String(error);
 }

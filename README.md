@@ -4,38 +4,55 @@ Knowledge Bits is a standalone content workflow engine. It owns its database, wo
 provider execution, review package, approval record, and delivery history. It does not read Nuglet
 production credentials or write to Nuglet directly.
 
-The workflow has six stages: research, create, check, produce assets, human review, and delivery. A
-worker lease protects each automated stage. Human review makes one decision over the complete package
-checksum. Approval queues delivery for that exact immutable package version.
+The workflow has exactly six stages: research, create, check, produce assets, human review, and
+delivery. A worker lease protects each automated stage. Human review makes one decision over the
+complete package checksum. Approval queues delivery for that immutable `KnowledgeBits` package.
 
 ## Requirements
 
 - Node 24
 - pnpm 9.12.0
 - PostgreSQL 16 or a separate Supabase PostgreSQL project
-- Docker for the clean end-to-end fixture test
+- Docker for the clean end-to-end proof
 
-Install and generate the Prisma client:
+Install dependencies and generate the Prisma client:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm prisma:generate
 ```
 
-## Database
+## Database roles
 
 Create a Supabase project dedicated to Knowledge Bits. Do not reuse a Nuglet project, database,
-service role key, connection pool, or migration history. Store its PostgreSQL connection string as
-`ENGINE_DATABASE_URL`.
+service role key, connection pool, or migration history. The engine uses two PostgreSQL logins:
 
-Apply the committed migrations to the dedicated database:
+- `ENGINE_MIGRATION_DATABASE_URL` is an owner connection used only by the migration command.
+- `ENGINE_DATABASE_URL` is a restricted runtime connection used by the API.
 
-```bash
-ENGINE_DATABASE_URL="postgresql://..." \
-  pnpm --filter @knowledge-bits/api exec prisma migrate deploy
+Create the runtime login without ownership or schema creation rights. The committed migration revokes
+schema creation from `PUBLIC`, creates the `knowledge_bits_runtime` group, and grants only the table
+access used by the API. Grant that group to the runtime login after the first migration:
+
+```sql
+CREATE ROLE knowledge_bits_runtime_login LOGIN PASSWORD 'managed-outside-the-repository';
+GRANT knowledge_bits_runtime TO knowledge_bits_runtime_login;
 ```
 
-For a local throwaway database whose name contains `test`, the guarded migration helper is available:
+The group has DML access only to the eight engine tables. It cannot modify Prisma migration history.
+Any future migration that adds an API-owned table must grant that table explicitly.
+
+Apply migrations with distinct owner and runtime usernames:
+
+```bash
+ENGINE_DATABASE_URL="postgresql://knowledge_bits_runtime_login:...@.../postgres" \
+ENGINE_MIGRATION_DATABASE_URL="postgresql://migration_owner:...@.../postgres" \
+  pnpm --filter @knowledge-bits/api prisma:migrate:production
+```
+
+The production migration command rejects missing URLs and matching usernames. The deployed API
+rejects `ENGINE_MIGRATION_DATABASE_URL`; only the restricted runtime URL belongs in the API project.
+For a local throwaway database whose name contains `test`, use the guarded helper:
 
 ```bash
 TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/knowledge_bits_test" \
@@ -45,16 +62,15 @@ TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/knowledge_bits_
 The engine rejects `DATABASE_URL` and the forbidden Nuglet database and Supabase credential variables.
 CI also scans tracked files for credential assignments, project URLs, and token-shaped values.
 
-## API And Review
+## API and review
 
-The API requires its database, API token, review token, fixed reviewer identity, worker credential map,
-delivery adapter URL, and delivery adapter token. Start the Node API with:
+The API requires its runtime database, API token, review token, worker credential map, delivery adapter
+URL, and delivery adapter token:
 
 ```bash
-ENGINE_DATABASE_URL="postgresql://..." \
+ENGINE_DATABASE_URL="postgresql://knowledge_bits_runtime_login:...@.../postgres" \
 ENGINE_API_TOKEN="local-api-token" \
 ENGINE_REVIEW_TOKEN="local-review-token" \
-ENGINE_REVIEWER_ID="local-editor" \
 ENGINE_WORKER_CREDENTIALS='[{"token":"local-worker-token","workerId":"local-worker","capabilities":["collect_sources","create_content","check_content","produce_assets","deliver_package"]}]' \
 DELIVERY_ADAPTER_URL="https://delivery.example.test/import" \
 DELIVERY_ADAPTER_TOKEN="local-delivery-token" \
@@ -64,78 +80,92 @@ pnpm --filter @knowledge-bits/api exec tsx src/main.ts
 Artifact storage is an injected `ArtifactStorageAdapter` passed to `createApp`. A real host must inject
 an adapter that prepares uploads, inspects stored checksums and media types, and reads review bytes.
 The default API entrypoint deliberately uses the unavailable adapter, so it cannot accept artifacts
-until the host provides storage. The end-to-end test injects an isolated in-memory fixture adapter and
-does not contact object storage.
+until the host provides storage. The end-to-end test uses isolated fixture storage.
 
-Start the review app on port 4321:
+Place the review deployment behind an identity proxy that injects a signed OIDC JWT on every request.
+The app verifies the token against the configured issuer, audience, and JWKS before serving a page or
+proxying a review read or decision. `Cf-Access-Jwt-Assertion` is the default header; set
+`REVIEW_AUTH_HEADER` when the identity proxy uses another name.
 
 ```bash
 ENGINE_API_URL="http://127.0.0.1:3000" \
 ENGINE_REVIEW_TOKEN="local-review-token" \
+REVIEW_AUTH_JWKS_URL="https://identity.example.test/.well-known/jwks.json" \
+REVIEW_AUTH_ISSUER="https://identity.example.test" \
+REVIEW_AUTH_AUDIENCE="knowledge-bits-review" \
+REVIEW_AUTH_REQUIRED_GROUP="knowledge-bits-editors" \
+REVIEW_PUBLIC_ORIGIN="http://127.0.0.1:4321" \
 pnpm --filter @knowledge-bits/review exec astro dev --port 4321
 ```
 
-The review server holds the review token and reviewer identity boundary. Browser requests do not set
-or forward a reviewer identity. The review page displays the package checksum used by the single
-overall approve or request changes decision.
+The authenticated JWT subject becomes the recorded reviewer identity. Browser input cannot override
+it. Review mutations also require the exact configured origin and a page-issued, cookie-bound CSRF
+token. Missing identity or CSRF configuration fails closed. The review page displays every delivered
+lesson field and the package checksum used by the single overall decision.
 
-## Workers And Providers
+## Local worker
 
-Workers run as separate one-shot processes. They are not hosted in either web application. The API
-maps each bearer token in `ENGINE_WORKER_CREDENTIALS` to a server-owned worker ID and capability list.
-The worker receives only its own token:
+Workers run as separate one-shot processes, not in either web application. The API maps each bearer
+token in `ENGINE_WORKER_CREDENTIALS` to a server-owned worker ID and capability list. The worker
+receives only its own token:
 
 ```bash
 ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
 ENGINE_WORKER_TOKEN="local-worker-token" \
 WORKER_PROVIDER_MODE="production" \
-PROVIDER_CONTEXT_URL="https://providers.example.test/context" \
-PROVIDER_CONTEXT_TOKEN="local-provider-context-token" \
-PI_EDITORIAL_URL="https://providers.example.test/editorial" \
-PI_EDITORIAL_TOKEN="local-editorial-token" \
-MEDIA_GENERATION_URL="https://providers.example.test/media" \
-MEDIA_GENERATION_TOKEN="local-media-token" \
+NOTEBOOKLM_NOTEBOOK_ID="local-notebook-id" \
+NOTEBOOKLM_TRUSTED_SOURCE_HOSTS="example.org,research.example.edu" \
+PI_PROVIDER="configured-pi-provider" \
+PI_MODEL="configured-pi-model" \
+MEDIA_GENERATION_COMMAND="/absolute/path/to/local-media-adapter" \
+MEDIA_GENERATION_ARGS='["--json"]' \
 pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 ```
 
-Production mode uses the configured provider context service, the local NotebookLM CLI process, the
-editorial service, and the media service. Missing production configuration produces a typed human or
-waiting result. It never falls back to fixture content.
+Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker. The
+control API supplies lease-scoped job inputs and permits reads only for declared artifact dependencies.
+The worker captures exact trusted source bytes before accepting evidence, binds citations to those
+snapshots, and passes content to the local Pi and media adapters. Provider calls and subprocesses use
+bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
+moves the affected stage to `needs_human`; production never falls back to fixture content.
 
-Fixture mode reads committed provider responses from `WORKER_FIXTURE_DIRECTORY`. The Task 10 proof
-starts a clean PostgreSQL container, injects fixture storage, runs the package fixture, interrupts and
-reclaims a lease, approves once, and verifies an idempotent delivery retry:
+Fixture mode reads committed provider responses from `WORKER_FIXTURE_DIRECTORY`. The clean proof
+starts a fresh PostgreSQL container, provisions a restricted runtime login, runs every stage, interrupts
+and reclaims a lease, authenticates the reviewer, approves once, and resumes delivery verification
+without repeating the import:
 
 ```bash
-pnpm build
+TURBO_FORCE=true pnpm build
 pnpm test:e2e
 ```
 
-The fixture provider and fixture delivery adapter are test utilities. They must not be selected in a
-real worker or API deployment.
+The fixture provider and fixture delivery adapter are test utilities. Do not select them in a real
+worker or API deployment.
 
 ## Delivery
 
 `DELIVERY_ADAPTER_URL` points to the service that imports an approved Knowledge Bits package.
 `DELIVERY_ADAPTER_TOKEN` authenticates only that request. Delivery receives the persisted immutable
-package version, approved checksum, and stable idempotency key. A retry reuses that key so a destination
-can return `already_imported` without creating a duplicate.
+package version, approved checksum, and stable idempotency key. Once an import response is persisted,
+a reclaimed delivery verifies that response instead of issuing another import. Retries from before a
+persisted response reuse the same idempotency key.
 
 The Nuglet delivery adapter remains inactive until the companion Nuglet integration plan passes. This
-repository does not contain an active Nuglet adapter, and completing this fixture proof does not permit
+repository does not contain an active Nuglet adapter, and completing the fixture proof does not permit
 one to be enabled.
 
-## Vercel Boundary
+## Vercel boundary
 
-Use separate Vercel projects rooted at `apps/api` and `apps/review`, with source files outside each
-Root Directory included so Vercel can resolve the pnpm workspace. Each app runs its commands directly
-from that root: `pnpm install --frozen-lockfile` and `pnpm build`. The API catch-all routes to its Hono
-Vercel Function, and the review build emits Astro Vercel SSR output. Do not create a Vercel project
-for `apps/worker`, and do not run provider CLIs, worker loops, or migrations during a Vercel build.
+Use separate Vercel projects rooted at `apps/api` and `apps/review`, with source files outside each Root
+Directory included so Vercel can resolve the pnpm workspace. Each app runs `pnpm install
+--frozen-lockfile` and `pnpm build` from its root. The API catch-all routes to its Hono Vercel Function,
+and the review build emits Astro Vercel SSR output. Do not create a Vercel project for `apps/worker`, and
+do not run provider CLIs, worker loops, or migrations during a Vercel build.
 
-The API and review projects receive only their own runtime secrets. Provider credentials stay with the
-external worker runtime. Database owner or migration credentials stay outside Vercel. Delivery secrets
-stay with the API. Fixture values are never production credentials.
+The review project must sit behind the configured identity proxy. The API and review projects receive
+only their own runtime secrets. Provider credentials stay with the local worker. Database owner or
+migration credentials stay outside Vercel. Delivery secrets stay with the API. Fixture values are never
+production credentials.
 
 ## Verification
 
@@ -145,11 +175,12 @@ Run the same checks as CI:
 pnpm install --frozen-lockfile
 pnpm prisma:generate
 pnpm scan:forbidden-credentials
-pnpm build
-pnpm test
-pnpm typecheck
+TURBO_FORCE=true pnpm build
+TURBO_FORCE=true pnpm test
+TURBO_FORCE=true pnpm typecheck
+git diff --check
 ```
 
-`pnpm test` includes the clean PostgreSQL end-to-end fixture. It exercises every stage, required source
-citations and media, worker restart and reclaim, checksum-bound approval, package-bound delivery, and
-the `already_imported` retry path.
+`pnpm test` includes the clean PostgreSQL end-to-end proof. It exercises every stage, immutable source
+snapshots, required claim coverage and media, worker restart and reclaim, authenticated checksum-bound
+approval, restricted runtime grants, and package-bound delivery recovery.

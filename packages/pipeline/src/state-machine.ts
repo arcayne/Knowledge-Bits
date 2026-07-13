@@ -10,10 +10,10 @@ export const STAGES = [
 ] as const satisfies readonly WorkflowStage[];
 
 const LEGAL_STATES_BY_STAGE = {
-  research: ['queued', 'running', 'waiting'],
-  create: ['queued', 'running', 'waiting'],
+  research: ['queued', 'running', 'waiting', 'needs_human'],
+  create: ['queued', 'running', 'waiting', 'needs_human'],
   check: ['queued', 'running', 'waiting', 'needs_human'],
-  produce_assets: ['queued', 'running', 'waiting'],
+  produce_assets: ['queued', 'running', 'waiting', 'needs_human'],
   human_review: ['needs_human'],
   deliver: ['queued', 'running', 'waiting', 'needs_human', 'done'],
 } as const satisfies Record<WorkflowStage, readonly StageState[]>;
@@ -30,6 +30,7 @@ export interface WorkflowSnapshot {
 export type WorkflowEvent =
   | { type: 'job_started' }
   | { type: 'job_waiting'; reason: string }
+  | { type: 'job_needs_human'; reason: string }
   | { type: 'stage_completed'; packageChecksum: Checksum }
   | { type: 'quality_failed'; reason: string }
   | { type: 'review_approved'; packageChecksum: Checksum; reviewerId: string }
@@ -72,6 +73,15 @@ export function nextTransition(
     case 'job_waiting':
       requireState(snapshot, 'running');
       return transition(snapshot, { state: 'waiting', reason: event.reason });
+
+    case 'job_needs_human':
+      requireState(snapshot, 'running');
+      if (snapshot.stage === 'human_review') {
+        throw new WorkflowTransitionError('Human review cannot report an automated configuration failure');
+      }
+      return transition(snapshot, { state: 'needs_human', reason: event.reason }, [
+        { type: 'request_human', reason: event.reason },
+      ]);
 
     case 'stage_completed':
       return completeStage(snapshot, event.packageChecksum);

@@ -7,6 +7,8 @@ import {
   renderNotebookLmResearchPrompt,
 } from '../prompts/notebooklm-research.v1.js';
 import type { EvidenceManifest, GroundedClaim } from '../checks/deterministic.js';
+import type { VerifiedResearchEvidence } from '../checks/source-verifier.js';
+import { nugletLessonV1PayloadSchema } from '@knowledge-bits/contracts';
 
 import {
   ProviderNeedsHumanError,
@@ -35,6 +37,13 @@ export interface NotebookLmContext {
   evidence?: EvidenceManifest;
 }
 
+export interface ResearchSourceVerifier {
+  verify(value: unknown, signal: AbortSignal): Promise<{
+    evidence: VerifiedResearchEvidence;
+    snapshots: NonNullable<Extract<ProviderExecution, { kind: 'success' }>['assets']>;
+  }>;
+}
+
 export class NotebookLmProvider implements ContentProvider {
   readonly name = 'notebooklm';
   readonly capabilities = ['collect_sources', 'create_content'] as const;
@@ -43,6 +52,7 @@ export class NotebookLmProvider implements ContentProvider {
   constructor(private readonly options: {
     process: NotebookLmProcess;
     context: (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
+    sourceVerifier?: ResearchSourceVerifier;
     now?: () => Date;
     timeoutMs?: number;
   }) {
@@ -65,7 +75,11 @@ export class NotebookLmProvider implements ContentProvider {
     const response = await this.query(context.notebookId, prompt, input.signal);
     const parsed = await this.parseOrRepair(context.notebookId, prompt, response, input.signal);
     validateCitations(parsed.answer, input.action === 'create_content' ? context.evidence : undefined);
-    const parsedOutput = input.action === 'collect_sources' ? markSourceCandidates(parsed.answer) : parsed.answer;
+    const verified = input.action === 'collect_sources'
+      ? await this.verifyResearch(parsed.answer, input.signal)
+      : undefined;
+    const parsedOutput = verified?.evidence
+      ?? parseCreateOutput(parsed.answer, context.evidence);
 
     return {
       kind: 'success',
@@ -79,7 +93,17 @@ export class NotebookLmProvider implements ContentProvider {
         renderedPrompt: prompt,
         sourceIds: sourceIds(parsed.answer),
       },
+      ...(verified ? { assets: verified.snapshots } : {}),
     };
+  }
+
+  private async verifyResearch(answer: Record<string, unknown>, signal: AbortSignal) {
+    if (!this.options.sourceVerifier) throw new ProviderNeedsHumanError('source_verifier_unconfigured');
+    const verified = await this.options.sourceVerifier.verify(answer, signal);
+    if (verified.evidence.acceptedSources.length === 0) {
+      throw new ProviderNeedsHumanError('research_no_accepted_sources', 'quality');
+    }
+    return verified;
   }
 
   private async version(signal: AbortSignal): Promise<string> {
@@ -179,23 +203,33 @@ function validateCitations(answer: Record<string, unknown>, acceptedEvidence?: E
   }
 }
 
+function parseCreateOutput(answer: Record<string, unknown>, evidence: EvidenceManifest | undefined) {
+  if (!evidence) throw new ProviderNeedsHumanError('notebooklm_create_evidence_missing');
+  const snapshotsBySource = new Map(evidence.sources.map((source) => [source.sourceId, source.snapshotArtifactId]));
+  const claims = Array.isArray(answer.claims) ? answer.claims.map((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const claim = value as Record<string, unknown>;
+    const citations = Array.isArray(claim.citations) ? claim.citations.map((citationValue) => {
+      if (!citationValue || typeof citationValue !== 'object' || Array.isArray(citationValue)) return citationValue;
+      const citation = citationValue as Record<string, unknown>;
+      const snapshotArtifactId = typeof citation.sourceId === 'string'
+        ? snapshotsBySource.get(citation.sourceId)
+        : undefined;
+      return { ...citation, snapshotArtifactId };
+    }) : claim.citations;
+    return { ...claim, citations };
+  }) : answer.claims;
+  const parsed = nugletLessonV1PayloadSchema.safeParse({ ...answer, claims });
+  if (!parsed.success) throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
+  return parsed.data;
+}
+
 function sourceIds(answer: Record<string, unknown>): string[] {
   if (!Array.isArray(answer.sources)) return [];
   return answer.sources.flatMap((source) => {
     if (!source || typeof source !== 'object' || typeof (source as { sourceId?: unknown }).sourceId !== 'string') return [];
     return [(source as { sourceId: string }).sourceId];
   });
-}
-
-function markSourceCandidates(answer: Record<string, unknown>): Record<string, unknown> {
-  if (!Array.isArray(answer.sources)) return answer;
-  return {
-    ...answer,
-    sources: answer.sources.map((source) => ({
-      ...(source && typeof source === 'object' && !Array.isArray(source) ? source : {}),
-      status: 'candidate',
-    })),
-  };
 }
 
 function retryAfterSeconds(value: string): number {

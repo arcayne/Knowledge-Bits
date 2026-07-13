@@ -1,9 +1,17 @@
 import { spawn } from 'node:child_process';
 
+import {
+  knowledgeBitsQaSchema,
+  nugletLessonV1PayloadSchema,
+} from '@knowledge-bits/contracts';
+import { calculateContentChecksum } from '@knowledge-bits/pipeline';
+
 import type { ContentCandidate, EvidenceManifest } from './checks/deterministic.js';
+import { DeterministicSourceVerifier } from './checks/source-verifier.js';
+import type { WorkerEngineClient } from './engine-client.js';
 import { FixtureProvider } from './providers/fixture.js';
-import { MediaProviderAdapter, type MediaClient } from './providers/media.js';
-import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess } from './providers/notebooklm.js';
+import { MediaProviderAdapter, type MediaClient, type MediaKind } from './providers/media.js';
+import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess, type ResearchSourceVerifier } from './providers/notebooklm.js';
 import { PiEditorialProvider, type PiSdkClient } from './providers/pi.js';
 import {
   ProviderNeedsHumanError,
@@ -29,6 +37,7 @@ type MediaContextResolver = (input: ProviderExecutionInput) => Promise<{
 export interface ProviderRuntime {
   notebookProcess?: NotebookLmProcess;
   notebookContext?: NotebookContextResolver;
+  sourceVerifier?: ResearchSourceVerifier;
   piClient?: PiSdkClient;
   piContext?: PiContextResolver;
   mediaClient?: MediaClient;
@@ -38,6 +47,7 @@ export interface ProviderRuntime {
 export function composeWorkerProviders(options: {
   env?: NodeJS.ProcessEnv;
   runtime?: ProviderRuntime;
+  engineClient?: WorkerEngineClient;
   fetch?: typeof fetch;
 }): readonly WorkerProvider[] {
   const env = options.env ?? process.env;
@@ -49,10 +59,14 @@ export function composeWorkerProviders(options: {
     return [new UnavailableProvider('runtime', ['collect_sources', 'create_content', 'check_content', 'produce_assets'], 'provider_runtime_mode_invalid')];
   }
 
-  const runtime = options.runtime ?? configuredRuntime(env, options.fetch ?? fetch);
+  const runtime = options.runtime ?? configuredRuntime(env, options.engineClient, options.fetch ?? fetch);
   return [
-    runtime.notebookProcess && runtime.notebookContext
-      ? new NotebookLmProvider({ process: runtime.notebookProcess, context: runtime.notebookContext })
+    runtime.notebookProcess && runtime.notebookContext && runtime.sourceVerifier
+      ? new NotebookLmProvider({
+        process: runtime.notebookProcess,
+        context: runtime.notebookContext,
+        sourceVerifier: runtime.sourceVerifier,
+      })
       : new UnavailableProvider('notebooklm', ['collect_sources', 'create_content']),
     runtime.piClient && runtime.piContext
       ? new PiEditorialProvider({ client: runtime.piClient, context: runtime.piContext })
@@ -63,22 +77,245 @@ export function composeWorkerProviders(options: {
   ];
 }
 
-function configuredRuntime(env: NodeJS.ProcessEnv, request: typeof fetch): ProviderRuntime {
-  const contextUrl = configuredValue(env, 'PROVIDER_CONTEXT_URL');
-  const context = contextUrl ? new HttpProviderContextResolver({ url: contextUrl, token: configuredValue(env, 'PROVIDER_CONTEXT_TOKEN'), fetch: request }) : undefined;
-  const piUrl = configuredValue(env, 'PI_EDITORIAL_URL');
-  const mediaUrl = configuredValue(env, 'MEDIA_GENERATION_URL');
+function configuredRuntime(
+  env: NodeJS.ProcessEnv,
+  engineClient: WorkerEngineClient | undefined,
+  request: typeof fetch,
+): ProviderRuntime {
+  if (!engineClient) return {};
+  const contexts = new LeaseScopedJobContextResolver(engineClient);
+  const notebookId = configuredValue(env, 'NOTEBOOKLM_NOTEBOOK_ID');
+  const trustedHosts = commaSeparated(env.NOTEBOOKLM_TRUSTED_SOURCE_HOSTS);
+  const piProvider = configuredValue(env, 'PI_PROVIDER');
+  const piModel = configuredValue(env, 'PI_MODEL');
+  const mediaCommand = configuredValue(env, 'MEDIA_GENERATION_COMMAND');
 
   return {
-    ...(context ? {
+    ...(notebookId && trustedHosts.length ? {
       notebookProcess: new SpawnNotebookLmProcess(),
-      notebookContext: (input) => context.notebook(input),
-      piContext: (input) => context.pi(input),
-      mediaContext: (input) => context.media(input),
+      notebookContext: (input: ProviderExecutionInput) => contexts.notebook(input, notebookId),
+      sourceVerifier: new DeterministicSourceVerifier({ trustedHosts, fetch: request }),
     } : {}),
-    ...(piUrl ? { piClient: new HttpPiSdkClient({ url: piUrl, token: configuredValue(env, 'PI_EDITORIAL_TOKEN'), fetch: request }) } : {}),
-    ...(mediaUrl ? { mediaClient: new HttpMediaClient({ url: mediaUrl, token: configuredValue(env, 'MEDIA_GENERATION_TOKEN'), fetch: request }) } : {}),
+    ...(piProvider && piModel ? {
+      piClient: new LocalPiSdkClient({ provider: piProvider, model: piModel }),
+      piContext: (input: ProviderExecutionInput) => contexts.pi(input),
+    } : {}),
+    ...(mediaCommand ? {
+      mediaClient: new LocalMediaCommandClient({
+        command: mediaCommand,
+        args: jsonStringArray(env.MEDIA_GENERATION_ARGS, 'MEDIA_GENERATION_ARGS'),
+        process: new SpawnMediaCommandProcess(),
+      }),
+      mediaContext: (input: ProviderExecutionInput) => contexts.media(input),
+    } : {}),
   };
+}
+
+export class LeaseScopedJobContextResolver {
+  constructor(private readonly client: WorkerEngineClient) {}
+
+  async notebook(input: ProviderExecutionInput, notebookId: string): Promise<NotebookLmContext> {
+    const brief = jobBrief(input);
+    const research = input.action === 'create_content' ? await this.verifiedResearch(input) : undefined;
+    return {
+      notebookId,
+      sourceUrls: research?.sourceUrls ?? stringArray(brief.sourceUrls),
+      topic: stringValue(brief.title) ?? stringValue(brief.topic) ?? stringValue(brief.objective) ?? 'Knowledge Bits lesson',
+      ...(research ? { evidence: research.evidence } : {}),
+    };
+  }
+
+  async pi(input: ProviderExecutionInput) {
+    return {
+      candidate: await this.content(input),
+      evidence: await this.evidence(input),
+      rubric: 'Reject unsupported claims, harmful guidance, source leakage, generic filler, and unusable lesson structure.',
+    };
+  }
+
+  async media(input: ProviderExecutionInput) {
+    const content = await this.content(input);
+    const qa = knowledgeBitsQaSchema.parse(await this.readJsonDependency(input, 'check_content', 'parsed_output'));
+    const contentChecksum = calculateContentChecksum(content);
+    return {
+      passedCheck: qa.deterministic.passed
+        && qa.deterministic.contentChecksum === contentChecksum
+        && !qa.editorial.findings.some((finding) => finding.blocking),
+      content,
+      contentChecksum,
+    };
+  }
+
+  private async content(input: ProviderExecutionInput): Promise<ContentCandidate> {
+    return nugletLessonV1PayloadSchema.parse(await this.readJsonDependency(input, 'create_content', 'parsed_output'));
+  }
+
+  private async evidence(input: ProviderExecutionInput): Promise<EvidenceManifest> {
+    return (await this.verifiedResearch(input)).evidence;
+  }
+
+  private async verifiedResearch(input: ProviderExecutionInput): Promise<{
+    evidence: EvidenceManifest;
+    sourceUrls: string[];
+  }> {
+    const research = await this.readJsonDependency(input, 'collect_sources', 'parsed_output');
+    if (!Array.isArray(research.acceptedSources)) {
+      throw new ProviderNeedsHumanError('research_evidence_invalid');
+    }
+    const dependencies = dependencyRecords(input);
+    const accepted = research.acceptedSources.map((value) => {
+        if (!isRecord(value)
+          || typeof value.sourceId !== 'string'
+          || typeof value.title !== 'string'
+          || typeof value.url !== 'string') {
+          throw new ProviderNeedsHumanError('research_evidence_invalid');
+        }
+        const snapshot = dependencies.find((dependency) => (
+          dependency.action === 'collect_sources'
+          && dependency.kind === 'source_snapshot'
+          && dependency.sourceId === value.sourceId
+        ));
+        if (!snapshot) throw new ProviderNeedsHumanError('research_snapshot_dependency_missing');
+        return {
+          source: { sourceId: value.sourceId, title: value.title, snapshotArtifactId: snapshot.artifactId },
+          url: value.url,
+        };
+      });
+    return {
+      evidence: { sources: accepted.map(({ source }) => source) },
+      sourceUrls: accepted.map(({ url }) => url),
+    };
+  }
+
+  private async readJsonDependency(input: ProviderExecutionInput, action: string, kind: string): Promise<Record<string, unknown>> {
+    const dependency = [...dependencyRecords(input)].reverse().find((candidate) => (
+      candidate.action === action && candidate.kind === kind
+    ));
+    if (!dependency) throw new ProviderNeedsHumanError(`job_dependency_missing:${action}:${kind}`);
+    const artifact = await this.client.readArtifact(input.job, dependency.artifactId, input.signal);
+    try {
+      const value: unknown = JSON.parse(Buffer.from(artifact.body).toString('utf8'));
+      if (!isRecord(value)) throw new TypeError('not an object');
+      return value;
+    } catch {
+      throw new ProviderNeedsHumanError(`job_dependency_invalid:${action}:${kind}`);
+    }
+  }
+}
+
+export interface PiModelsAdapter {
+  complete(input: {
+    provider: string;
+    model: string;
+    systemPrompt: string;
+    userPrompt: string;
+    sessionId: string;
+    signal: AbortSignal;
+  }): Promise<string>;
+}
+
+export class LocalPiSdkClient implements PiSdkClient {
+  constructor(private readonly options: {
+    provider: string;
+    model: string;
+    timeoutMs?: number;
+    models?: PiModelsAdapter;
+  }) {}
+
+  async check(input: {
+    candidate: ContentCandidate;
+    evidence: EvidenceManifest;
+    rubric: string;
+    idempotencyKey: string;
+    signal: AbortSignal;
+  }): Promise<unknown> {
+    const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 60_000);
+    const signal = AbortSignal.any([input.signal, timeout]);
+    try {
+      const response = await (this.options.models ?? new PiSdkModelsAdapter()).complete({
+        provider: this.options.provider,
+        model: this.options.model,
+        systemPrompt: 'Return one strict JSON object with summary and findings. Do not rewrite content or request tools.',
+        userPrompt: JSON.stringify({ candidate: input.candidate, evidence: input.evidence, rubric: input.rubric }),
+        sessionId: input.idempotencyKey,
+        signal,
+      });
+      return parseJsonObject(response, 'pi_editorial_invalid_response');
+    } catch (error) {
+      if (error instanceof ProviderNeedsHumanError || input.signal.aborted) throw error;
+      if (timeout.aborted) {
+        throw new ProviderWaitingError('pi_editorial_timeout', new Date(Date.now() + 60_000).toISOString());
+      }
+      throw new ProviderWaitingError('pi_editorial_unavailable', new Date(Date.now() + 60_000).toISOString());
+    }
+  }
+}
+
+class PiSdkModelsAdapter implements PiModelsAdapter {
+  async complete(input: {
+    provider: string;
+    model: string;
+    systemPrompt: string;
+    userPrompt: string;
+    sessionId: string;
+    signal: AbortSignal;
+  }): Promise<string> {
+    const { builtinModels } = await import('@earendil-works/pi-ai/providers/all');
+    const models = builtinModels();
+    const model = models.getModel(input.provider, input.model);
+    if (!model || !await models.getAuth(model)) throw new ProviderNeedsHumanError('pi_model_or_credentials_unconfigured');
+    const response = await models.complete(model, {
+      systemPrompt: input.systemPrompt,
+      messages: [{ role: 'user', content: input.userPrompt, timestamp: Date.now() }],
+    }, { signal: input.signal, sessionId: input.sessionId });
+    if (response.stopReason === 'aborted') throw input.signal.reason;
+    if (response.stopReason === 'error') throw new Error(response.errorMessage ?? 'Pi request failed');
+    return response.content.flatMap((block) => block.type === 'text' ? [block.text] : []).join('\n');
+  }
+}
+
+export interface MediaCommandProcess {
+  run(input: {
+    command: string;
+    args: readonly string[];
+    stdin: string;
+    timeoutMs: number;
+    signal: AbortSignal;
+  }): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }>;
+}
+
+export class LocalMediaCommandClient implements MediaClient {
+  constructor(private readonly options: {
+    command: string;
+    args?: readonly string[];
+    process: MediaCommandProcess;
+    timeoutMs?: number;
+  }) {}
+
+  async generate(input: {
+    content: ContentCandidate;
+    inputChecksum: string;
+    kinds: readonly MediaKind[];
+    idempotencyKey: string;
+    signal: AbortSignal;
+  }) {
+    const result = await this.options.process.run({
+      command: this.options.command,
+      args: this.options.args ?? [],
+      stdin: JSON.stringify(input),
+      timeoutMs: this.options.timeoutMs ?? 120_000,
+      signal: input.signal,
+    });
+    if (result.timedOut) {
+      throw new ProviderWaitingError('media_generation_timeout', new Date(Date.now() + 60_000).toISOString());
+    }
+    if (result.exitCode !== 0) {
+      throw new ProviderNeedsHumanError(`media_generation_command_failed:${result.exitCode ?? 'signal'}`);
+    }
+    const response = parseJsonObject(result.stdout, 'media_generation_invalid_response');
+    if (!Array.isArray(response.assets)) throw new ProviderNeedsHumanError('media_generation_invalid_response');
+    return response.assets.map(parseMediaAsset);
+  }
 }
 
 class UnavailableProvider implements WorkerProvider {
@@ -104,126 +341,163 @@ class SpawnNotebookLmProcess implements NotebookLmProcess {
     stdin?: string;
     timeoutMs: number;
     signal: AbortSignal;
-  }): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(input.command, [...input.args], { stdio: ['pipe', 'pipe', 'pipe'] });
-      const stdout: Buffer[] = [];
-      const stderr: Buffer[] = [];
-      let timedOut = false;
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        child.kill();
-      }, input.timeoutMs);
-      const abort = () => child.kill();
-      input.signal.addEventListener('abort', abort, { once: true });
-      child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-      child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
-      child.once('error', (error) => {
-        clearTimeout(timeout);
-        input.signal.removeEventListener('abort', abort);
-        reject(error);
-      });
-      child.once('close', (exitCode) => {
-        clearTimeout(timeout);
-        input.signal.removeEventListener('abort', abort);
-        resolve({ stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), exitCode, timedOut });
-      });
-      if (input.stdin) child.stdin.write(input.stdin);
-      child.stdin.end();
+  }) {
+    return runProcess(input);
+  }
+}
+
+class SpawnMediaCommandProcess implements MediaCommandProcess {
+  async run(input: {
+    command: string;
+    args: readonly string[];
+    stdin: string;
+    timeoutMs: number;
+    signal: AbortSignal;
+  }) {
+    return runProcess(input);
+  }
+}
+
+export function runProcess(input: {
+  command: string;
+  args: readonly string[];
+  stdin?: string;
+  timeoutMs: number;
+  signal: AbortSignal;
+}): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(input.command, [...input.args], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let timedOut = false;
+    let forceKill: NodeJS.Timeout | undefined;
+    const terminate = () => {
+      child.kill('SIGTERM');
+      forceKill ??= setTimeout(() => child.kill('SIGKILL'), 1_000);
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      terminate();
+    }, input.timeoutMs);
+    const abort = () => terminate();
+    input.signal.addEventListener('abort', abort, { once: true });
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      if (forceKill) clearTimeout(forceKill);
+      input.signal.removeEventListener('abort', abort);
+      reject(error);
     });
-  }
-}
-
-class HttpProviderContextResolver {
-  constructor(private readonly options: { url: string; token?: string; fetch: typeof fetch }) {}
-
-  async notebook(input: ProviderExecutionInput): Promise<NotebookLmContext> {
-    return this.request('notebooklm', input) as Promise<NotebookLmContext>;
-  }
-
-  async pi(input: ProviderExecutionInput): Promise<Awaited<ReturnType<PiContextResolver>>> {
-    return this.request('pi', input) as Promise<Awaited<ReturnType<PiContextResolver>>>;
-  }
-
-  async media(input: ProviderExecutionInput): Promise<Awaited<ReturnType<MediaContextResolver>>> {
-    return this.request('media', input) as Promise<Awaited<ReturnType<MediaContextResolver>>>;
-  }
-
-  private async request(provider: string, input: ProviderExecutionInput): Promise<unknown> {
-    const response = await this.options.fetch(this.options.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(this.options.token ? { Authorization: `Bearer ${this.options.token}` } : {}),
-      },
-      body: JSON.stringify({ provider, action: input.action, job: input.job, idempotencyKey: input.idempotencyKey }),
-      signal: input.signal,
+    child.once('close', (exitCode) => {
+      clearTimeout(timeout);
+      if (forceKill) clearTimeout(forceKill);
+      input.signal.removeEventListener('abort', abort);
+      resolve({
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+        exitCode,
+        timedOut,
+      });
     });
-    if (response.status === 429 || response.status >= 500) {
-      throw new ProviderWaitingError(`provider_context_unavailable:${provider}`, new Date(Date.now() + 60_000).toISOString());
-    }
-    if (!response.ok) throw new ProviderNeedsHumanError(`provider_context_invalid:${provider}`);
-    return response.json();
-  }
-}
-
-class HttpPiSdkClient implements PiSdkClient {
-  constructor(private readonly options: { url: string; token?: string; fetch: typeof fetch }) {}
-
-  async check(input: { candidate: ContentCandidate; evidence: EvidenceManifest; rubric: string }): Promise<unknown> {
-    return postJson(this.options, input, 'pi_editorial_unavailable');
-  }
-}
-
-class HttpMediaClient implements MediaClient {
-  constructor(private readonly options: { url: string; token?: string; fetch: typeof fetch }) {}
-
-  async generate(input: { content: ContentCandidate; inputChecksum: string; kinds: readonly ('hero' | 'infographic' | 'audio')[] }) {
-    const response = await postJson(this.options, input, 'media_generation_unavailable');
-    if (!response || typeof response !== 'object' || !Array.isArray((response as { assets?: unknown }).assets)) {
-      throw new ProviderNeedsHumanError('media_generation_invalid_response');
-    }
-    return (response as { assets: unknown[] }).assets.map((asset) => parseMediaAsset(asset));
-  }
-}
-
-async function postJson(
-  options: { url: string; token?: string; fetch: typeof fetch },
-  body: unknown,
-  unavailableReason: string,
-): Promise<unknown> {
-  const response = await options.fetch(options.url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-    },
-    body: JSON.stringify(body),
+    if (input.stdin) child.stdin.write(input.stdin);
+    child.stdin.end();
+    if (input.signal.aborted) abort();
   });
-  if (response.status === 429 || response.status >= 500) {
-    throw new ProviderWaitingError(unavailableReason, new Date(Date.now() + 60_000).toISOString());
-  }
-  if (!response.ok) throw new ProviderNeedsHumanError(unavailableReason);
-  return response.json();
 }
 
-function parseMediaAsset(value: unknown): { kind: 'hero' | 'infographic' | 'audio'; mediaType: string; bytes: Uint8Array; inputChecksum: string } {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ProviderNeedsHumanError('media_generation_invalid_response');
-  const asset = value as Record<string, unknown>;
-  if (
-    (asset.kind !== 'hero' && asset.kind !== 'infographic' && asset.kind !== 'audio')
-    || typeof asset.mediaType !== 'string'
-    || !asset.mediaType.trim()
-    || typeof asset.bytesBase64 !== 'string'
-    || typeof asset.inputChecksum !== 'string'
-  ) {
+function dependencyRecords(input: ProviderExecutionInput): Array<{
+  artifactId: string;
+  revision: number;
+  kind: string;
+  mediaType: string;
+  checksum: string;
+  action: string;
+  sourceId?: string;
+}> {
+  if (!Array.isArray(input.job.input.dependencies)) return [];
+  return input.job.input.dependencies.flatMap((value) => {
+    if (!isRecord(value)
+      || typeof value.artifactId !== 'string'
+      || typeof value.revision !== 'number'
+      || typeof value.kind !== 'string'
+      || typeof value.mediaType !== 'string'
+      || typeof value.checksum !== 'string'
+      || typeof value.action !== 'string') return [];
+    return [{
+      artifactId: value.artifactId,
+      revision: value.revision,
+      kind: value.kind,
+      mediaType: value.mediaType,
+      checksum: value.checksum,
+      action: value.action,
+      ...(typeof value.sourceId === 'string' ? { sourceId: value.sourceId } : {}),
+    }];
+  });
+}
+
+function jobBrief(input: ProviderExecutionInput): Record<string, unknown> {
+  const brief = input.job.input.brief;
+  if (!isRecord(brief)) throw new ProviderNeedsHumanError('job_brief_missing');
+  return brief;
+}
+
+function parseMediaAsset(value: unknown): {
+  kind: MediaKind;
+  mediaType: string;
+  bytes: Uint8Array;
+  inputChecksum: string;
+} {
+  if (!isRecord(value)
+    || (value.kind !== 'hero' && value.kind !== 'infographic' && value.kind !== 'audio')
+    || typeof value.mediaType !== 'string'
+    || typeof value.bytesBase64 !== 'string'
+    || typeof value.inputChecksum !== 'string') {
     throw new ProviderNeedsHumanError('media_generation_invalid_response');
   }
-  const bytes = Buffer.from(asset.bytesBase64, 'base64');
+  const bytes = Buffer.from(value.bytesBase64, 'base64');
   if (bytes.byteLength === 0) throw new ProviderNeedsHumanError('media_generation_invalid_response');
-  return { kind: asset.kind, mediaType: asset.mediaType, bytes, inputChecksum: asset.inputChecksum };
+  return { kind: value.kind, mediaType: value.mediaType, bytes, inputChecksum: value.inputChecksum };
+}
+
+function parseJsonObject(value: string, reason: string): Record<string, unknown> {
+  try {
+    const unfenced = value.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    const parsed: unknown = JSON.parse(unfenced);
+    if (!isRecord(parsed)) throw new TypeError('not an object');
+    return parsed;
+  } catch {
+    throw new ProviderNeedsHumanError(reason);
+  }
+}
+
+function commaSeparated(value: string | undefined): string[] {
+  return value?.split(',').map((item) => item.trim()).filter(Boolean) ?? [];
+}
+
+function jsonStringArray(value: string | undefined, name: string): string[] {
+  if (!value?.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) throw new TypeError();
+    return parsed;
+  } catch {
+    throw new ProviderNeedsHumanError(`${name.toLowerCase()}_invalid`);
+  }
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())) : [];
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function configuredValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
   return env[name]?.trim() || undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

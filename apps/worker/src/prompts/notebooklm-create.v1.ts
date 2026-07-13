@@ -5,7 +5,8 @@ export function renderNotebookLmCreatePrompt(input: { topic: string; revision: n
     'Return JSON only.',
     `Topic: ${input.topic}`,
     `Candidate revision: ${input.revision}`,
-    'Draft a complete candidate with title, takeaway, action, quick, core, deep, and grounded claims.',
+    'Draft a complete candidate with title, takeaway, action, depths.quick, depths.core, depths.deep, grounded claims with UUID claimId values, and claimCoverage.',
+    'Claim coverage must list title, takeaway, action, depths.quick, depths.core, and depths.deep exactly once with supported claim IDs.',
     'Use only cited source material. Do not provide a partial patch.',
   ].join('\n');
 }

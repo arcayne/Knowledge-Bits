@@ -3,6 +3,7 @@ export type EditorialSeverity = 'critical' | 'major' | 'minor';
 export interface EditorialFinding {
   code: string;
   severity: EditorialSeverity;
+  blocking: boolean;
   message: string;
 }
 
@@ -24,7 +25,7 @@ export function parseEditorialCheck(value: unknown): EditorialCheckReport {
 }
 
 export function requiresEditorialFailure(report: EditorialCheckReport): boolean {
-  return report.findings.some(({ code, severity }) => severity === 'critical' || code === 'unsupported-claim');
+  return report.findings.some(({ blocking }) => blocking);
 }
 
 function parseFinding(value: unknown): EditorialFinding {
@@ -38,5 +39,10 @@ function parseFinding(value: unknown): EditorialFinding {
   if (finding.severity !== 'critical' && finding.severity !== 'major' && finding.severity !== 'minor') {
     throw new TypeError('Editorial finding severity must be critical, major, or minor');
   }
-  return { code: finding.code, severity: finding.severity, message: finding.message };
+  return {
+    code: finding.code,
+    severity: finding.severity,
+    blocking: finding.severity === 'critical' || finding.code === 'unsupported-claim',
+    message: finding.message,
+  };
 }

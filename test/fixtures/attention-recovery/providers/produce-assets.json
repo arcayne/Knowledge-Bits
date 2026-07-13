@@ -2,19 +2,19 @@
   "assets": [
     {
       "bodyBase64": "UklGRhIAAABXRUJQVlA4TAYAAAAvAAAAAA==",
-      "inputChecksum": "5cd1cb4dc6f0c04cf3519ecef0a99039cef167e4369f7b0ba6befd690e2c4e10",
+      "inputChecksum": "$contentChecksum",
       "kind": "hero",
       "mediaType": "image/webp"
     },
     {
       "bodyBase64": "UklGRhIAAABXRUJQVlA4TAYAAAAvAAAAAQ==",
-      "inputChecksum": "5cd1cb4dc6f0c04cf3519ecef0a99039cef167e4369f7b0ba6befd690e2c4e10",
+      "inputChecksum": "$contentChecksum",
       "kind": "infographic",
       "mediaType": "image/webp"
     },
     {
       "bodyBase64": "UklGRgQAAABXQVZF",
-      "inputChecksum": "5cd1cb4dc6f0c04cf3519ecef0a99039cef167e4369f7b0ba6befd690e2c4e10",
+      "inputChecksum": "$contentChecksum",
       "kind": "audio",
       "mediaType": "audio/wav"
     }

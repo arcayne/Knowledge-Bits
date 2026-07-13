@@ -16,6 +16,8 @@ export interface MediaClient {
     content: ContentCandidate;
     inputChecksum: string;
     kinds: readonly MediaKind[];
+    idempotencyKey: string;
+    signal: AbortSignal;
   }): Promise<readonly {
     kind: MediaKind;
     mediaType: string;
@@ -50,6 +52,8 @@ export class MediaProviderAdapter implements MediaProvider {
       content: context.content,
       inputChecksum: context.contentChecksum,
       kinds,
+      idempotencyKey: input.idempotencyKey,
+      signal: input.signal,
     });
     if (generated.length === 0) throw new ProviderNeedsHumanError('media_empty_response');
     if (generated.length !== kinds.length || kinds.some((kind) => generated.filter((asset) => asset.kind === kind).length !== 1)) {

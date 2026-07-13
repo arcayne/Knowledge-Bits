@@ -57,7 +57,7 @@ export function registerDeliveryRoutes(
       const result = await dependencies.deliveryService.run(delivery.id, {
         jobId: jobContext.job.id,
         workerId: principal.workerId,
-      });
+      }, context.req.raw.signal);
       const snapshot = {
         stage: jobContext.stage.name,
         state: jobContext.stage.state,

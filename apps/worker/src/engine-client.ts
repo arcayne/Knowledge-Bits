@@ -15,6 +15,7 @@ export type HeartbeatResult = { kind: 'continue' } | { kind: 'interrupted' };
 export interface WorkerEngineClient {
   claim(leaseSeconds: number): Promise<JobClaim | null>;
   heartbeat(job: JobClaim): Promise<HeartbeatResult>;
+  readArtifact(job: JobClaim, artifactId: string, signal?: AbortSignal): Promise<{ body: Uint8Array; mediaType: string }>;
   prepareArtifact(input: ArtifactPrepareRequest, signal?: AbortSignal): Promise<ArtifactPrepareResponse>;
   uploadArtifact(prepared: ArtifactPrepareResponse, body: Uint8Array, signal?: AbortSignal): Promise<void>;
   completeArtifact(input: ArtifactCompleteRequest, signal?: AbortSignal): Promise<void>;
@@ -37,6 +38,7 @@ export class HttpEngineClient implements WorkerEngineClient {
       baseUrl: string;
       workerToken: string;
       fetch?: typeof fetch;
+      requestTimeoutMs?: number;
     },
   ) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
@@ -58,6 +60,14 @@ export class HttpEngineClient implements WorkerEngineClient {
     throw new EngineClientError('Invalid heartbeat response', response.status);
   }
 
+  async readArtifact(job: JobClaim, artifactId: string, signal?: AbortSignal): Promise<{ body: Uint8Array; mediaType: string }> {
+    const response = await this.request(`/jobs/${job.jobId}/artifacts/${artifactId}`, { method: 'GET', signal });
+    return {
+      body: new Uint8Array(await response.arrayBuffer()),
+      mediaType: response.headers.get('Content-Type') ?? 'application/octet-stream',
+    };
+  }
+
   async prepareArtifact(input: ArtifactPrepareRequest, signal?: AbortSignal): Promise<ArtifactPrepareResponse> {
     const response = await this.request('/artifacts/prepare', {
       method: 'POST',
@@ -68,7 +78,7 @@ export class HttpEngineClient implements WorkerEngineClient {
   }
 
   async uploadArtifact(prepared: ArtifactPrepareResponse, body: Uint8Array, signal?: AbortSignal): Promise<void> {
-    const response = await (this.options.fetch ?? fetch)(prepared.uploadUrl, {
+    const response = await this.fetchWithDeadline(prepared.uploadUrl, {
       method: 'PUT',
       headers: prepared.requiredHeaders,
       body: Buffer.from(body),
@@ -107,7 +117,7 @@ export class HttpEngineClient implements WorkerEngineClient {
   }
 
   private async request(path: string, init: RequestInit, acceptedStatuses: readonly number[] = []): Promise<Response> {
-    const response = await (this.options.fetch ?? fetch)(`${this.baseUrl}${path}`, {
+    const response = await this.fetchWithDeadline(`${this.baseUrl}${path}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${this.options.workerToken}`,
@@ -122,6 +132,20 @@ export class HttpEngineClient implements WorkerEngineClient {
       body ? `Engine API request failed with ${response.status}: ${body}` : `Engine API request failed with ${response.status}`,
       response.status,
     );
+  }
+
+  private async fetchWithDeadline(url: string, init: RequestInit): Promise<Response> {
+    const timeoutSignal = AbortSignal.timeout(this.options.requestTimeoutMs ?? 30_000);
+    const callerSignal = init.signal instanceof AbortSignal ? init.signal : undefined;
+    const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
+    try {
+      return await (this.options.fetch ?? fetch)(url, { ...init, signal });
+    } catch (error) {
+      if (timeoutSignal.aborted && !callerSignal?.aborted) {
+        throw new EngineClientError('Engine API request timed out');
+      }
+      throw error;
+    }
   }
 
   private async readJson(response: Response): Promise<unknown> {

@@ -47,9 +47,9 @@ export interface DeliveryVerificationResponse {
 }
 
 export interface DeliveryAdapter {
-  deliver(input: DeliveryAdapterInput): Promise<DeliveryAdapterResponse>;
+  deliver(input: DeliveryAdapterInput, signal?: AbortSignal): Promise<DeliveryAdapterResponse>;
   verify(input: {
     externalId: string;
     packageChecksum: string;
-  }): Promise<DeliveryVerificationResponse>;
+  }, signal?: AbortSignal): Promise<DeliveryVerificationResponse>;
 }

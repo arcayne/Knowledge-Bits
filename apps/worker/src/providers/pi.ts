@@ -14,6 +14,8 @@ export interface PiSdkClient {
     candidate: ContentCandidate;
     evidence: EvidenceManifest;
     rubric: string;
+    idempotencyKey: string;
+    signal: AbortSignal;
   }): Promise<unknown>;
 }
 
@@ -34,15 +36,17 @@ export class PiEditorialProvider implements ContentProvider {
     if (input.action !== 'check_content') throw new ProviderNeedsHumanError(`pi_unsupported_action:${input.action}`);
     const context = await this.options.context(input);
     const deterministic = runDeterministicChecks(context);
-    if (!deterministic.passed) throw new ProviderNeedsHumanError('deterministic_check_failed');
+    if (!deterministic.passed) throw new ProviderNeedsHumanError('deterministic_check_failed', 'quality');
 
     const response = await this.options.client.check({
       candidate: context.candidate,
       evidence: context.evidence,
       rubric: context.rubric,
+      idempotencyKey: input.idempotencyKey,
+      signal: input.signal,
     });
     const editorial = parseEditorialCheck(response);
-    if (requiresEditorialFailure(editorial)) throw new ProviderNeedsHumanError('editorial_check_failed');
+    if (requiresEditorialFailure(editorial)) throw new ProviderNeedsHumanError('editorial_check_failed', 'quality');
 
     return {
       kind: 'success',

@@ -25,6 +25,7 @@ test('NotebookLM fixtures contain no credential names or absolute home paths', a
 test('discovers the exact NotebookLM CLI version and records prompt provenance', async () => {
   const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
       { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
@@ -45,12 +46,14 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
   assert.equal(report.cliVersion, 'nlm 0.9.4');
   assert.equal(report.promptVersion, 'notebooklm-research.v1');
   assert.match(report.renderedPrompt, /returning to focused work/);
-  const output = result.parsedOutput as { sources: Array<{ status: string }> };
-  assert.equal(output.sources[0]?.status, 'candidate');
+  const output = result.parsedOutput as { acceptedSources: Array<{ sourceId: string }> };
+  assert.equal(output.acceptedSources[0]?.sourceId, sourceId);
+  assert.equal(result.assets?.[0]?.kind, 'source_snapshot');
 });
 
 test('classifies a provider cooldown without attempting a structured repair', async () => {
   const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
     now: () => new Date('2026-07-13T10:00:00.000Z'),
     process: processWith([], [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
@@ -69,6 +72,7 @@ test('classifies a provider cooldown without attempting a structured repair', as
 test('uses exactly one repair request for malformed structured output', async () => {
   const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
       { stdout: 'not json', stderr: '', exitCode: 0 },
@@ -85,6 +89,7 @@ test('uses exactly one repair request for malformed structured output', async ()
 
 test('rejects malformed structured output after its one repair attempt', async () => {
   const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
     process: processWith([], [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
       { stdout: 'not json', stderr: '', exitCode: 0 },
@@ -98,6 +103,7 @@ test('rejects malformed structured output after its one repair attempt', async (
 
 test('rejects citations that do not resolve to a returned source', async () => {
   const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
     process: processWith([], [
       { stdout: 'nlm 0.9.4\\n', stderr: '', exitCode: 0 },
       {
@@ -123,6 +129,7 @@ test('classifies process timeouts as a typed wait', async () => {
     },
   };
   const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
     now: () => new Date('2026-07-13T10:00:00.000Z'),
     process: timeoutProcess,
     context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
@@ -132,6 +139,7 @@ test('classifies process timeouts as a typed wait', async () => {
 
 test('allows a fourth revision because revision policy belongs to the state machine', async () => {
   const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
     process: processWith([], [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
       { stdout: await fixture('notebooklm-create.json'), stderr: '', exitCode: 0 },
@@ -140,17 +148,60 @@ test('allows a fourth revision because revision policy belongs to the state mach
       notebookId: 'notebook_fixture_01',
       sourceUrls: [],
       topic: 'focus',
-      evidence: { sources: [{ sourceId, title: 'Accepted source' }] },
+      evidence: { sources: [{ sourceId, title: 'Accepted source', snapshotArtifactId: '55555555-5555-4555-8555-555555555555' }] },
     }),
   });
   const result = await provider.execute(input('create_content', 4));
 
   assert.equal(result.kind, 'success');
+  if (result.kind === 'success') {
+    const output = result.parsedOutput as { claims: Array<{ citations: Array<{ snapshotArtifactId: string }> }> };
+    assert.equal(output.claims[0]?.citations[0]?.snapshotArtifactId, '55555555-5555-4555-8555-555555555555');
+  }
+});
+
+test('classifies incomplete learner claim coverage as a quality failure at Create', async () => {
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith([], [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify({
+          conversationId: 'conversation_fixture_01',
+          answer: {
+            title: 'Incomplete lesson',
+            takeaway: 'A takeaway.',
+            action: 'An action.',
+            depths: { quick: 'Quick.', core: 'Core.', deep: 'Deep.' },
+            claims: [],
+            claimCoverage: [],
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: 'focus',
+      evidence: { sources: [{ sourceId, title: 'Accepted source', snapshotArtifactId: '55555555-5555-4555-8555-555555555555' }] },
+    }),
+  });
+
+  await assert.rejects(
+    () => provider.execute(input('create_content')),
+    (error: unknown) => error instanceof Error
+      && error.message === 'notebooklm_content_invalid'
+      && 'needsHumanKind' in error
+      && error.needsHumanKind === 'quality',
+  );
 });
 
 test('does not let a create response authorize citations with its recommended sources', async () => {
   const selfAuthorizedSource = '22222222-2222-4222-8222-222222222222';
   const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
     process: processWith([], [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
       {
@@ -169,7 +220,7 @@ test('does not let a create response authorize citations with its recommended so
       notebookId: 'notebook_fixture_01',
       sourceUrls: [],
       topic: 'focus',
-      evidence: { sources: [{ sourceId, title: 'Accepted source' }] },
+      evidence: { sources: [{ sourceId, title: 'Accepted source', snapshotArtifactId: '55555555-5555-4555-8555-555555555555' }] },
     }),
   });
 
@@ -187,8 +238,10 @@ function input(action: ProviderExecutionInput['action'], revision = 1): Provider
       claimedBy: 'test-worker',
       claimedAt: '2026-07-13T10:00:00.000Z',
       leaseExpiresAt: '2026-07-13T10:02:00.000Z',
+      executionDeadlineAt: '2026-07-13T10:05:00.000Z',
       attempt: 1,
       revision,
+      input: { brief: {}, dependencies: [] },
     },
     signal: new AbortController().signal,
   };
@@ -219,3 +272,29 @@ function keysOf(value: unknown): string[] {
 }
 
 void sourceId;
+
+const fakeSourceVerifier = {
+  async verify(value: unknown) {
+    const sources = (value as { sources: Array<{ sourceId: string; title: string; url: string }> }).sources;
+    return {
+      evidence: {
+        acceptedSources: sources.map((source) => ({
+          ...source,
+          retrievedAt: '2026-07-13T10:00:00.000Z',
+          snapshotChecksum: 'a'.repeat(64),
+          readability: { passed: true, reason: null },
+          credibility: { passed: true, policy: 'fixture-trusted-hosts.v1', reason: null },
+        })),
+        rejectedSources: [],
+        coverageGaps: [],
+      },
+      snapshots: [{
+        kind: 'source_snapshot',
+        mediaType: 'text/plain',
+        body: Buffer.from('fixture source snapshot'),
+        inputChecksum: null,
+        provenance: { sourceId: sources[0]?.sourceId },
+      }],
+    };
+  },
+};

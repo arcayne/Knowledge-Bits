@@ -1,5 +1,14 @@
 ---
+import { createCsrfToken, REVIEW_CSRF_COOKIE } from '../../operator-auth.mjs';
+
 const { runId } = Astro.params;
+const csrfToken = Astro.cookies.get(REVIEW_CSRF_COOKIE)?.value ?? createCsrfToken();
+Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
+  httpOnly: true,
+  sameSite: 'strict',
+  secure: import.meta.env.PROD,
+  path: '/',
+});
 ---
 
 <!doctype html>
@@ -7,20 +16,24 @@ const { runId } = Astro.params;
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="review-csrf-token" content={csrfToken} />
     <title>Content review</title>
     <style>
       :root { color: #15211e; background: #f5f7f5; font-family: Arial, sans-serif; }
       body { margin: 0; padding-bottom: 9rem; }
       main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem; }
       header { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; border-bottom: 1px solid #b9c6c0; padding-bottom: 1rem; }
-      h1, h2, h3, p { margin-top: 0; }
+      h1, h2, h3, h4, p { margin-top: 0; }
       h1 { font-size: 1.45rem; }
       h2 { font-size: 1rem; margin-bottom: .75rem; }
-      .status { color: #46625b; font-size: .875rem; }
+      h3 { font-size: 1.2rem; }
+      h4 { font-size: .8rem; text-transform: uppercase; color: #46625b; }
+      .status, .muted { color: #596a64; }
+      .status { font-size: .875rem; }
       .review-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(260px, .8fr); gap: 1.25rem; margin-top: 1.25rem; }
       .review-section { border-top: 2px solid #3b665a; padding-top: .75rem; margin-bottom: 1.25rem; }
       .review-section ul { padding-left: 1.15rem; }
-      .muted { color: #596a64; }
+      .lesson-field { border-bottom: 1px solid #d8dfdc; margin-bottom: .9rem; padding-bottom: .9rem; }
       .asset { border: 1px solid #b9c6c0; min-height: 6rem; padding: .75rem; margin-bottom: .75rem; background: #fff; }
       .asset img, .asset audio { display: block; max-width: 100%; width: 100%; }
       button:disabled { cursor: not-allowed; opacity: .45; }
@@ -45,8 +58,23 @@ const { runId } = Astro.params;
       <p id="error" role="alert" hidden></p>
       <div class="review-grid" id="review" hidden>
         <section>
-          <section class="review-section"><h2>Learner preview</h2><h3 id="preview-title">Missing learner preview</h3><p id="preview-copy" class="muted">The package does not include preview copy.</p></section>
-          <section class="review-section"><h2>Evidence</h2><ul id="evidence"><li>Loading source and citation details...</li></ul></section>
+          <section class="review-section" id="learner-preview">
+            <h2>Learner preview</h2>
+            <h3 data-content-path="title">Missing learner preview</h3>
+            <div class="lesson-field"><h4>Takeaway</h4><p data-content-path="takeaway"></p></div>
+            <div class="lesson-field"><h4>Action</h4><p data-content-path="action"></p></div>
+            <div class="lesson-field"><h4>Quick</h4><p data-content-path="depths.quick"></p></div>
+            <div class="lesson-field"><h4>Core</h4><p data-content-path="depths.core"></p></div>
+            <div class="lesson-field"><h4>Deep</h4><p data-content-path="depths.deep"></p></div>
+            <h4>Claim coverage</h4><ul id="claim-coverage"></ul>
+          </section>
+          <section class="review-section">
+            <h2>Evidence</h2>
+            <h4>Accepted sources</h4><ul id="accepted-sources"></ul>
+            <h4>Rejected sources</h4><ul id="rejected-sources"></ul>
+            <h4>Coverage gaps</h4><ul id="coverage-gaps"></ul>
+            <h4>Claims and citations</h4><ul id="claims"></ul>
+          </section>
           <section class="review-section"><h2>QA</h2><p id="qa" class="muted">Loading QA status...</p><ul id="qa-findings"></ul></section>
         </section>
         <aside aria-label="Generated assets">
@@ -69,176 +97,8 @@ const { runId } = Astro.params;
       </div>
     </footer>
     <script>
-      type Asset = { state: 'missing' | 'available'; artifactId: string | null; mediaType: string | null; previewPath: string | null };
-      type ReviewPackage = {
-        packageChecksum: string;
-        content: { target: { payload: Record<string, unknown> } };
-        evidence: {
-          sources: Array<{ sourceId: string; title: string; url: string }>;
-          claims: Array<{ statement: string; citations: Array<{ sourceId: string; excerpt: string }> }>;
-        };
-        qa: {
-          deterministic: { passed: boolean; findings: Array<{ code: string; message: string }> };
-          editorial: { summary: string; findings: Array<{ code: string; severity: string; message: string }> };
-        };
-      };
-      type ReviewPayload = {
-        error?: string;
-        runId: string;
-        title: string;
-        currentStage: string;
-        reviewStatus: string;
-        currentPackageChecksum: string | null;
-        decisionAllowed: boolean;
-        issues: string[];
-        package: ReviewPackage | null;
-        assets: { hero: Asset; infographic: Asset; audio: Asset };
-      };
-      type DecisionPayload = { reviewStatus?: string; error?: string };
-
-      function required<T extends Element>(selector: string): T {
-        const element = document.querySelector<T>(selector);
-        if (!element) throw new Error(`Review page is missing ${selector}`);
-        return element;
-      }
-
-      const root = required<HTMLElement>('main[data-run-id]');
-      const runId = root.dataset.runId;
-      const status = required<HTMLElement>('#status');
-      const error = required<HTMLElement>('#error');
-      const changeForm = required<HTMLFormElement>('#change-form');
-      const commentField = required<HTMLTextAreaElement>('#comment');
-      const decisionStatus = required<HTMLElement>('#decision-status');
-      const decisionButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-decision], #change-form button')];
-      let model: ReviewPayload | undefined;
-
-      const showError = (message: string) => {
-        error.textContent = message;
-        error.hidden = false;
-      };
-
-      const setDecisionAllowed = (allowed: boolean) => {
-        decisionButtons.forEach((button) => { button.disabled = !allowed; });
-      };
-
-      const renderEvidence = (reviewPackage: ReviewPackage) => {
-        const list = required<HTMLUListElement>('#evidence');
-        list.replaceChildren();
-        for (const source of reviewPackage.evidence.sources) {
-          const item = document.createElement('li');
-          const link = document.createElement('a');
-          link.href = source.url;
-          link.target = '_blank';
-          link.rel = 'noreferrer';
-          link.textContent = source.title;
-          item.append(link);
-          list.append(item);
-        }
-        for (const claim of reviewPackage.evidence.claims) {
-          const item = document.createElement('li');
-          const citations = claim.citations.map(({ sourceId, excerpt }) => `${sourceId}: ${excerpt}`).join(' | ');
-          item.textContent = `${claim.statement} (${citations})`;
-          list.append(item);
-        }
-      };
-
-      const renderQa = (reviewPackage: ReviewPackage) => {
-        required<HTMLElement>('#qa').textContent = `${reviewPackage.qa.deterministic.passed ? 'Passed' : 'Failed'}: ${reviewPackage.qa.editorial.summary}`;
-        const findings = required<HTMLUListElement>('#qa-findings');
-        findings.replaceChildren();
-        const allFindings = [...reviewPackage.qa.deterministic.findings, ...reviewPackage.qa.editorial.findings];
-        if (!allFindings.length) {
-          const item = document.createElement('li');
-          item.textContent = 'No QA findings.';
-          findings.append(item);
-        } else {
-          for (const finding of allFindings) {
-            const item = document.createElement('li');
-            item.textContent = `${finding.code}: ${finding.message}`;
-            findings.append(item);
-          }
-        }
-      };
-
-      const renderAsset = (kind: 'hero' | 'infographic' | 'audio', asset: Asset) => {
-        const container = required<HTMLElement>(`#${kind}`);
-        container.replaceChildren();
-        const { previewPath } = asset;
-        if (asset.state === 'missing' || !asset.artifactId || !asset.mediaType || !previewPath || !runId) {
-          container.textContent = `Missing ${kind} preview.`;
-          return;
-        }
-        const source = `/api/artifact?runId=${encodeURIComponent(runId)}&artifactId=${encodeURIComponent(asset.artifactId)}`;
-        if (asset.mediaType.startsWith('audio/')) {
-          const audio = document.createElement('audio');
-          audio.controls = true;
-          audio.src = source;
-          container.append(audio);
-        } else {
-          const image = document.createElement('img');
-          image.src = source;
-          image.alt = `${kind} preview`;
-          container.append(image);
-        }
-      };
-
-      const load = async () => {
-        try {
-          if (!runId) throw new Error('A run id is required.');
-          const response = await fetch(`/api/review?runId=${encodeURIComponent(runId)}`);
-          const payload = await response.json() as ReviewPayload;
-          if (!response.ok) throw new Error(payload.error || 'Could not load the review.');
-          model = payload;
-          required<HTMLElement>('#title').textContent = payload.title;
-          required<HTMLElement>('#status').textContent = `${payload.currentStage.replace('_', ' ')}: ${payload.reviewStatus}`;
-          required<HTMLElement>('#checksum').textContent = payload.currentPackageChecksum || 'Package checksum missing';
-          if (payload.package) {
-            const content = payload.package.content.target.payload;
-            required<HTMLElement>('#preview-title').textContent = typeof content.title === 'string' ? content.title : payload.title;
-            required<HTMLElement>('#preview-copy').textContent = [content.takeaway, content.action].filter((value) => typeof value === 'string').join(' ') || 'Learner copy is unavailable.';
-            renderEvidence(payload.package);
-            renderQa(payload.package);
-          }
-          renderAsset('hero', payload.assets.hero);
-          renderAsset('infographic', payload.assets.infographic);
-          renderAsset('audio', payload.assets.audio);
-          setDecisionAllowed(payload.decisionAllowed);
-          decisionStatus.textContent = payload.decisionAllowed ? 'One overall package decision' : (payload.issues[0] || 'This package is not open for review.');
-          required<HTMLElement>('#review').hidden = false;
-        } catch (loadError) {
-          status.textContent = 'Review data unavailable';
-          setDecisionAllowed(false);
-          showError(loadError instanceof Error ? loadError.message : 'Could not load the review.');
-        }
-      };
-
-      const submit = async (decision: 'approve' | 'request_changes', comment?: string) => {
-        if (!model?.decisionAllowed || !model.currentPackageChecksum) return showError('A complete current package is required.');
-        if (!runId) return showError('A run id is required.');
-        const response = await fetch('/api/review', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runId, decision, packageChecksum: model.currentPackageChecksum, ...(comment ? { comment } : {}) }),
-        });
-        const payload = await response.json() as DecisionPayload;
-        if (!response.ok) return showError(payload.error || 'Could not record the review decision.');
-        decisionStatus.textContent = `Recorded: ${payload.reviewStatus}`;
-        changeForm.dataset.open = 'false';
-        await load();
-      };
-
-      required<HTMLButtonElement>('[data-decision="approve"]').addEventListener('click', () => void submit('approve'));
-      required<HTMLButtonElement>('[data-decision="request_changes"]').addEventListener('click', () => {
-        changeForm.dataset.open = 'true';
-        commentField.focus();
-      });
-      changeForm.addEventListener('submit', (event) => {
-        event.preventDefault();
-        const comment = new FormData(changeForm).get('comment');
-        if (typeof comment !== 'string' || !comment.trim()) return showError('A comment is required to request changes.');
-        void submit('request_changes', comment.trim());
-      });
-      void load();
+      import { mountReviewPage } from '../../review-client.mjs';
+      mountReviewPage();
     </script>
   </body>
 </html>

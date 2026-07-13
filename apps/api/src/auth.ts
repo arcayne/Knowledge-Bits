@@ -7,7 +7,6 @@ export type EngineScope = 'api' | 'worker' | 'review';
 export interface EngineAuthEnv {
   ENGINE_API_TOKEN?: string;
   ENGINE_REVIEW_TOKEN?: string;
-  ENGINE_REVIEWER_ID?: string;
   ENGINE_WORKER_CREDENTIALS?: string;
 }
 
@@ -19,7 +18,6 @@ export interface WorkerPrincipal {
 export interface EngineAuthConfig {
   apiToken?: string;
   reviewToken?: string;
-  reviewerId?: string;
   workersByToken: Map<string, WorkerPrincipal>;
 }
 
@@ -39,7 +37,6 @@ export function createEngineAuthConfig(env: EngineAuthEnv): EngineAuthConfig {
   return {
     apiToken: env.ENGINE_API_TOKEN?.trim(),
     reviewToken: env.ENGINE_REVIEW_TOKEN?.trim(),
-    reviewerId: env.ENGINE_REVIEWER_ID?.trim(),
     workersByToken: new Map(credentials.map(({ token, workerId, capabilities }) => [token, {
       workerId,
       capabilities,
@@ -50,8 +47,11 @@ export function createEngineAuthConfig(env: EngineAuthEnv): EngineAuthConfig {
 export function requireReviewPrincipal(context: Context, config: EngineAuthConfig): string | Response {
   const authFailure = requireEngineScope(context, config, 'review');
   if (authFailure) return authFailure;
-  if (!config.reviewerId) return context.json({ error: 'The review identity is not configured' }, 503);
-  return config.reviewerId;
+  const reviewerId = context.req.header('X-Knowledge-Bits-Reviewer')?.trim();
+  if (!reviewerId || reviewerId.length > 512) {
+    return context.json({ error: 'An authenticated review principal is required' }, 401);
+  }
+  return reviewerId;
 }
 
 export function requireEngineScope(

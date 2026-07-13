@@ -17,7 +17,11 @@ import {
 } from './executor.js';
 import type { WorkerEngineClient } from './engine-client.js';
 import { FixtureProvider } from './providers/fixture.js';
-import type { ProviderExecution, WorkerProvider } from './providers/types.js';
+import {
+  ProviderNeedsHumanError,
+  type ProviderExecution,
+  type WorkerProvider,
+} from './providers/types.js';
 
 const now = '2026-07-12T18:00:00.000Z';
 const retryAt = '2026-07-12T18:05:00.000Z';
@@ -70,22 +74,58 @@ test('heartbeats while the API delivery service is running', async () => {
   await execution;
 });
 
-test('reports a provider error as a typed retry for a non-review stage', async () => {
+test('reports an operator-fixable provider configuration error as needs human', async () => {
   const client = new FakeEngineClient();
   const provider: WorkerProvider = {
     name: 'failing-provider',
     capabilities: ['collect_sources'],
     async execute() {
-      throw new Error('provider temporarily unavailable');
+      throw new ProviderNeedsHumanError('provider_runtime_unconfigured:notebooklm');
     },
   };
   const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
 
   await executor.execute(job('research'));
 
-  assert.equal(client.results[0]?.result.state, 'waiting');
-  assert.equal(client.results[0]?.result.error, 'provider temporarily unavailable');
+  assert.equal(client.results[0]?.result.state, 'needs_human');
+  assert.equal(client.results[0]?.result.needsHumanKind, 'configuration');
+  assert.equal(client.results[0]?.result.error, 'provider_runtime_unconfigured:notebooklm');
   assert.equal(client.completedArtifacts.length, 0);
+});
+
+test('execution deadline stops heartbeats, reports a wait, and preserves the provider idempotency key on reclaim', async () => {
+  const client = new FakeEngineClient();
+  const scheduler = new FakeScheduler();
+  const observedKeys: string[] = [];
+  let attempt = 0;
+  const provider: WorkerProvider = {
+    name: 'deadline-provider',
+    capabilities: ['collect_sources'],
+    async execute(input) {
+      observedKeys.push(input.idempotencyKey);
+      attempt += 1;
+      if (attempt === 1) {
+        return new Promise((resolve) => {
+          input.signal.addEventListener('abort', () => resolve(successOutput()), { once: true });
+        });
+      }
+      return successOutput();
+    },
+  };
+  const executor = new WorkerExecutor({ client, providers: [provider], scheduler, now: () => new Date(now) });
+  const firstJob = job('research', { executionSeconds: 1 });
+  const first = executor.execute(firstJob);
+  await scheduler.triggerTimeout();
+  await first;
+  await scheduler.tick();
+
+  assert.equal(client.heartbeats, 0);
+  assert.equal(client.results[0]?.result.state, 'waiting');
+  assert.equal(client.results[0]?.result.error, 'execution_deadline_exceeded');
+
+  await executor.execute({ ...firstJob, attempt: 2 });
+  assert.equal(observedKeys[0], observedKeys[1]);
+  assert.equal(client.events.filter((event) => event === 'report:done').length, 1);
 });
 
 test('uploads raw response, parsed output, and execution report before a successful result', async () => {
@@ -297,7 +337,7 @@ test('reads deterministic committed fixtures for every worker action', async () 
 
 function job(
   stage: JobClaim['stage'],
-  options: { leaseSeconds?: number; revision?: number } = {},
+  options: { leaseSeconds?: number; revision?: number; executionSeconds?: number } = {},
 ): JobClaim {
   const leaseSeconds = options.leaseSeconds ?? 60;
   return {
@@ -307,8 +347,10 @@ function job(
     claimedBy: 'fixture-worker',
     claimedAt: now,
     leaseExpiresAt: new Date(new Date(now).getTime() + leaseSeconds * 1_000).toISOString(),
+    executionDeadlineAt: new Date(new Date(now).getTime() + (options.executionSeconds ?? 300) * 1_000).toISOString(),
     attempt: 1,
     revision: options.revision ?? 1,
+    input: { brief: {}, dependencies: [] },
   };
 }
 
@@ -360,6 +402,10 @@ class FakeEngineClient implements WorkerEngineClient {
     return this.options.heartbeat ?? { kind: 'continue' };
   }
 
+  async readArtifact(): Promise<{ body: Uint8Array; mediaType: string }> {
+    throw new Error('not used');
+  }
+
   async prepareArtifact(input: ArtifactPrepareRequest): Promise<ArtifactPrepareResponse> {
     this.preparedArtifacts.push(input);
     this.artifactSequence += 1;
@@ -398,18 +444,32 @@ class FakeEngineClient implements WorkerEngineClient {
 
 class FakeScheduler implements IntervalScheduler {
   readonly delays: number[] = [];
-  private callback: (() => void | Promise<void>) | undefined;
+  private intervalCallback: (() => void | Promise<void>) | undefined;
+  private timeoutCallback: (() => void | Promise<void>) | undefined;
 
   setInterval(callback: () => void | Promise<void>, delay: number): object {
-    this.callback = callback;
+    this.intervalCallback = callback;
     this.delays.push(delay);
     return {};
   }
 
-  clearInterval(): void {}
+  clearInterval(): void { this.intervalCallback = undefined; }
+
+  setTimeout(callback: () => void | Promise<void>, _delay: number): object {
+    this.timeoutCallback = callback;
+    return {};
+  }
+
+  clearTimeout(): void { this.timeoutCallback = undefined; }
 
   async tick(): Promise<void> {
-    await this.callback?.();
+    await this.intervalCallback?.();
+  }
+
+  async triggerTimeout(): Promise<void> {
+    const callback = this.timeoutCallback;
+    this.timeoutCallback = undefined;
+    await callback?.();
   }
 }
 

@@ -38,16 +38,9 @@ export const artifactCompleteRequestSchema = z.object({
   provenance: z.record(z.unknown()),
 }).strict();
 
-const sourceSchema = z.object({
-  sourceId: z.string().uuid(),
-  url: z.string().url(),
-  title: z.string().min(1),
-  retrievedAt: z.string().datetime(),
-  checksum: checksumSchema,
-}).strict();
-
 const citationSchema = z.object({
   sourceId: z.string().uuid(),
+  snapshotArtifactId: z.string().uuid(),
   excerpt: z.string().min(1),
 }).strict();
 
@@ -57,20 +50,139 @@ const claimSchema = z.object({
   citations: z.array(citationSchema).min(1),
 }).strict();
 
+const sourceReadabilitySchema = z.object({
+  passed: z.boolean(),
+  reason: z.string().min(1).nullable(),
+}).strict();
+
+const sourceCredibilitySchema = z.object({
+  passed: z.boolean(),
+  policy: z.string().min(1),
+  reason: z.string().min(1).nullable(),
+}).strict();
+
+const sourceIdentitySchema = {
+  sourceId: z.string().uuid(),
+  url: z.string().url(),
+  title: z.string().min(1),
+};
+
+const acceptedSourceSchema = z.object({
+  ...sourceIdentitySchema,
+  retrievedAt: z.string().datetime(),
+  snapshot: artifactReferenceSchema,
+  readability: sourceReadabilitySchema,
+  credibility: sourceCredibilitySchema,
+}).strict();
+
+const rejectedSourceSchema = z.object({
+  ...sourceIdentitySchema,
+  readability: sourceReadabilitySchema,
+  credibility: sourceCredibilitySchema,
+}).strict();
+
 export const knowledgeBitsEvidenceSchema = z.object({
   schemaVersion: z.literal('knowledge-bits.evidence.v1'),
-  sources: z.array(sourceSchema).min(1),
+  acceptedSources: z.array(acceptedSourceSchema).min(1),
+  rejectedSources: z.array(rejectedSourceSchema),
+  coverageGaps: z.array(z.object({
+    topic: z.string().min(1),
+    reason: z.string().min(1),
+  }).strict()),
   claims: z.array(claimSchema).min(1),
-}).strict().superRefine(({ claims, sources }, context) => {
-  const sourceIds = new Set(sources.map(({ sourceId }) => sourceId));
+}).strict().superRefine(({ acceptedSources, claims, rejectedSources }, context) => {
+  const acceptedById = new Map(acceptedSources.map((source) => [source.sourceId, source]));
+
+  acceptedSources.forEach((source, sourceIndex) => {
+    if (!source.readability.passed || !source.credibility.passed) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Accepted source requires passing readability and credibility decisions',
+        path: ['acceptedSources', sourceIndex],
+      });
+    }
+    if (source.snapshot.kind !== 'source_snapshot') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Accepted source requires an immutable source snapshot artifact',
+        path: ['acceptedSources', sourceIndex, 'snapshot', 'kind'],
+      });
+    }
+  });
+
+  rejectedSources.forEach((source, sourceIndex) => {
+    if (source.readability.passed && source.credibility.passed) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Rejected source requires a failed readability or credibility decision',
+        path: ['rejectedSources', sourceIndex],
+      });
+    }
+  });
 
   claims.forEach((claim, claimIndex) => {
     claim.citations.forEach((citation, citationIndex) => {
-      if (!sourceIds.has(citation.sourceId)) {
+      const source = acceptedById.get(citation.sourceId);
+      if (!source || source.snapshot.artifactId !== citation.snapshotArtifactId) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Citation source must exist in sources',
-          path: ['claims', claimIndex, 'citations', citationIndex, 'sourceId'],
+          message: 'Citation must resolve to an accepted snapshot',
+          path: ['claims', claimIndex, 'citations', citationIndex, 'snapshotArtifactId'],
+        });
+      }
+    });
+  });
+});
+
+export const learnerContentPathSchema = z.enum([
+  'title',
+  'takeaway',
+  'action',
+  'depths.quick',
+  'depths.core',
+  'depths.deep',
+]);
+
+export const nugletLessonV1PayloadSchema = z.object({
+  title: z.string().trim().min(1),
+  takeaway: z.string().trim().min(1),
+  action: z.string().trim().min(1),
+  depths: z.object({
+    quick: z.string().trim().min(1),
+    core: z.string().trim().min(1),
+    deep: z.string().trim().min(1),
+  }).strict(),
+  claims: z.array(claimSchema).min(1),
+  claimCoverage: z.array(z.object({
+    path: learnerContentPathSchema,
+    claimIds: z.array(z.string().uuid()).min(1),
+  }).strict()),
+}).strict().superRefine(({ claims, claimCoverage }, context) => {
+  const claimIds = new Set(claims.map((claim) => claim.claimId));
+  const coveredPaths = new Set(claimCoverage.map((entry) => entry.path));
+  for (const path of learnerContentPathSchema.options) {
+    if (!coveredPaths.has(path)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Claim coverage is required for ${path}`,
+        path: ['claimCoverage'],
+      });
+    }
+  }
+  if (coveredPaths.size !== claimCoverage.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Claim coverage paths must be unique',
+      path: ['claimCoverage'],
+    });
+  }
+  claimCoverage.forEach((entry, coverageIndex) => {
+    entry.claimIds.forEach((claimId, claimIndex) => {
+      if (!claimIds.has(claimId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Claim coverage must reference a supplied claim',
+          path: ['claimCoverage', coverageIndex, 'claimIds', claimIndex],
         });
       }
     });
@@ -81,14 +193,14 @@ export const knowledgeBitsContentSchema = z.object({
   schemaVersion: z.literal('knowledge-bits.content.v1'),
   target: z.object({
     kind: z.literal('nuglet.lesson.v1'),
-    payload: z.record(z.unknown()),
+    payload: nugletLessonV1PayloadSchema,
   }).strict(),
 }).strict();
 
 export const knowledgeBitsQaSchema = z.object({
   deterministic: z.object({
     passed: z.boolean(),
-    contentChecksum: checksumSchema.optional(),
+    contentChecksum: checksumSchema,
     findings: z.array(z.object({
       code: z.string().min(1),
       message: z.string().min(1),
@@ -99,6 +211,7 @@ export const knowledgeBitsQaSchema = z.object({
     findings: z.array(z.object({
       code: z.string().min(1),
       severity: z.enum(['critical', 'major', 'minor']),
+      blocking: z.boolean(),
       message: z.string().min(1),
     }).strict()),
   }).strict(),
@@ -135,7 +248,7 @@ export const knowledgeBitsSchema = z.object({
   riskClass: z.enum(['low', 'medium', 'high']),
   target: z.object({
     kind: z.literal('nuglet.lesson.v1'),
-    payload: z.record(z.unknown()),
+    payload: nugletLessonV1PayloadSchema,
   }).strict(),
   surfaces: z.object({
     manifest: artifactReferenceSchema,
@@ -167,6 +280,7 @@ export const knowledgeBitsSchema = z.object({
 
 export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
 export type KnowledgeBitsContent = z.infer<typeof knowledgeBitsContentSchema>;
+export type NugletLessonV1Payload = z.infer<typeof nugletLessonV1PayloadSchema>;
 export type KnowledgeBitsManifest = z.infer<typeof knowledgeBitsManifestSchema>;
 export type KnowledgeBits = z.infer<typeof knowledgeBitsSchema>;
 export type KnowledgeBitsQa = z.infer<typeof knowledgeBitsQaSchema>;
