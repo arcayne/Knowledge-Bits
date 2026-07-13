@@ -63,7 +63,10 @@ export class HttpDeliveryAdapter implements DeliveryAdapter {
     const responseText = await response.text();
     if (!response.ok) {
       const message = `delivery_adapter_${response.status}${responseText ? `:${responseText}` : ''}`;
-      if (response.status === 400 || response.status === 409 || response.status === 422) {
+      if (response.status >= 400
+        && response.status < 500
+        && response.status !== 408
+        && response.status !== 429) {
         throw new DeliveryPermanentSchemaError(message);
       }
       throw new DeliveryTransientError(message);

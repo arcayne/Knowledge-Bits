@@ -287,12 +287,18 @@ export interface RecordDeliveryInput {
   nextAttemptAt?: Date | null;
 }
 
-export interface UpdateDeliveryInput {
+export interface TransitionDeliveryInput {
   id: string;
+  jobId: string;
+  workerId: string;
+  packageVersionId: string;
+  packageChecksum: string;
+  expectedState: string;
   state: string;
   response?: JsonObject | null;
   nextAttemptAt?: Date | null;
   incrementAttempts?: boolean;
+  now?: Date;
 }
 
 export interface RetryDeliveryResult {
@@ -325,7 +331,7 @@ export interface WorkflowStore {
   recordArtifactForActiveLease(input: RecordArtifactForActiveLeaseInput): Promise<WorkflowArtifact>;
   recordReview(input: RecordReviewInput): Promise<WorkflowReview>;
   recordDelivery(input: RecordDeliveryInput): Promise<WorkflowDelivery>;
-  updateDelivery(input: UpdateDeliveryInput): Promise<WorkflowDelivery>;
+  transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery>;
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
@@ -435,8 +441,8 @@ export class WorkflowRepository implements WorkflowStore {
     return this.store.recordDelivery(input);
   }
 
-  updateDelivery(input: UpdateDeliveryInput): Promise<WorkflowDelivery> {
-    return this.store.updateDelivery(input);
+  transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery> {
+    return this.store.transitionDeliveryForActiveLease(input);
   }
 
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult> {
@@ -1134,17 +1140,73 @@ export class PrismaWorkflowStore implements WorkflowStore {
     return toWorkflowDelivery(delivery);
   }
 
-  async updateDelivery(input: UpdateDeliveryInput): Promise<WorkflowDelivery> {
-    const delivery = await this.prisma.delivery.update({
-      where: { id: input.id },
-      data: {
-        state: input.state,
-        ...(input.response !== undefined ? { response: input.response === null ? Prisma.JsonNull : toPrismaJson(input.response) } : {}),
-        ...(input.nextAttemptAt !== undefined ? { nextAttemptAt: input.nextAttemptAt } : {}),
-        ...(input.incrementAttempts ? { attempts: { increment: 1 } } : {}),
-      },
+  async transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery> {
+    const result = await this.prisma.$transaction(async (transaction) => {
+      const identity = await transaction.delivery.findUnique({
+        where: { id: input.id },
+        select: { runId: true },
+      });
+      if (!identity) throw new WorkflowNotFoundError('Delivery not found');
+      await lockRun(transaction, identity.runId);
+      await transaction.$queryRaw(Prisma.sql`
+        SELECT "id" FROM "Delivery" WHERE "id" = ${input.id} FOR UPDATE
+      `);
+      const now = input.now ?? new Date();
+      const [delivery, run, job, review, packageVersion] = await Promise.all([
+        transaction.delivery.findUniqueOrThrow({ where: { id: input.id } }),
+        transaction.run.findUniqueOrThrow({ where: { id: identity.runId } }),
+        transaction.job.findUnique({ where: { id: input.jobId } }),
+        transaction.review.findUnique({
+          where: { runId_packageChecksum: { runId: identity.runId, packageChecksum: input.packageChecksum } },
+        }),
+        transaction.packageVersion.findUnique({ where: { id: input.packageVersionId } }),
+      ]);
+      const jobInput = job?.input as JsonObject | undefined;
+      const fenceMatches = delivery.state === input.expectedState
+        && delivery.packageVersionId === input.packageVersionId
+        && delivery.packageChecksum === input.packageChecksum
+        && run.currentStage === 'deliver'
+        && run.packageChecksum === input.packageChecksum
+        && run.approvedChecksum === input.packageChecksum
+        && review?.decision === 'approve'
+        && packageVersion?.runId === delivery.runId
+        && packageVersion.revision === run.currentRevision
+        && packageVersion.packageChecksum === input.packageChecksum
+        && job?.runId === delivery.runId
+        && job.stage === 'deliver'
+        && job.action === ACTION_BY_STAGE.deliver
+        && job.state === 'running'
+        && job.leaseOwner === input.workerId
+        && Boolean(job.leaseExpiresAt && job.leaseExpiresAt > now)
+        && jobInput?.deliveryId === delivery.id
+        && jobInput.packageVersionId === input.packageVersionId
+        && jobInput.packageChecksum === input.packageChecksum;
+
+      if (!fenceMatches) {
+        const audited = input.response === undefined
+          ? delivery
+          : await transaction.delivery.update({
+            where: { id: delivery.id },
+            data: { response: toPrismaJson(mergeLateDeliveryEvidence(delivery.response, input.response)) },
+          });
+        return { delivery: toWorkflowDelivery(audited), transitioned: false };
+      }
+
+      const updated = await transaction.delivery.update({
+        where: { id: delivery.id },
+        data: {
+          state: input.state,
+          ...(input.response !== undefined
+            ? { response: toPrismaJson(mergeDeliveryResponse(delivery.response, input.response)) }
+            : {}),
+          ...(input.nextAttemptAt !== undefined ? { nextAttemptAt: input.nextAttemptAt } : {}),
+          ...(input.incrementAttempts ? { attempts: { increment: 1 } } : {}),
+        },
+      });
+      return { delivery: toWorkflowDelivery(updated), transitioned: true };
     });
-    return toWorkflowDelivery(delivery);
+    if (!result.transitioned) throw new WorkflowConflictError('Delivery transition fence no longer matches');
+    return result.delivery;
   }
 
   async retryDelivery(deliveryId: string): Promise<RetryDeliveryResult> {
@@ -2012,11 +2074,45 @@ class InMemoryWorkflowStore implements WorkflowStore {
     return delivery;
   }
 
-  async updateDelivery(input: UpdateDeliveryInput): Promise<WorkflowDelivery> {
+  async transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery> {
     const delivery = await this.getDelivery(input.id);
     if (!delivery) throw new WorkflowNotFoundError('Delivery not found');
+    const run = this.runs.get(delivery.runId);
+    const job = this.jobs.get(input.jobId);
+    const review = this.reviewsByIdentity.get(`${delivery.runId}:${input.packageChecksum}`);
+    const packageVersion = [...this.packageVersionsByIdentity.values()]
+      .find((version) => version.id === input.packageVersionId);
+    const now = input.now ?? this.clock();
+    const fenceMatches = delivery.state === input.expectedState
+      && delivery.packageVersionId === input.packageVersionId
+      && delivery.packageChecksum === input.packageChecksum
+      && run?.currentStage === 'deliver'
+      && run.packageChecksum === input.packageChecksum
+      && run.approvedChecksum === input.packageChecksum
+      && review?.decision === 'approve'
+      && packageVersion?.runId === delivery.runId
+      && packageVersion.revision === run.currentRevision
+      && packageVersion.packageChecksum === input.packageChecksum
+      && job?.runId === delivery.runId
+      && job.stage === 'deliver'
+      && job.action === ACTION_BY_STAGE.deliver
+      && job.state === 'running'
+      && job.leaseOwner === input.workerId
+      && Boolean(job.leaseExpiresAt && job.leaseExpiresAt > now)
+      && job.input.deliveryId === delivery.id
+      && job.input.packageVersionId === input.packageVersionId
+      && job.input.packageChecksum === input.packageChecksum;
+
+    if (!fenceMatches) {
+      if (input.response !== undefined) {
+        delivery.response = mergeLateDeliveryEvidence(delivery.response, input.response);
+        delivery.updatedAt = this.clock();
+      }
+      throw new WorkflowConflictError('Delivery transition fence no longer matches');
+    }
+
     delivery.state = input.state;
-    if (input.response !== undefined) delivery.response = input.response;
+    if (input.response !== undefined) delivery.response = mergeDeliveryResponse(delivery.response, input.response);
     if (input.nextAttemptAt !== undefined) delivery.nextAttemptAt = input.nextAttemptAt;
     if (input.incrementAttempts) delivery.attempts += 1;
     delivery.updatedAt = this.clock();
@@ -2445,6 +2541,30 @@ function isJsonObject(value: unknown): value is JsonObject {
 
 function toPrismaJson(value: JsonObject): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function mergeDeliveryResponse(
+  current: Prisma.JsonValue | JsonObject | null,
+  incoming: JsonObject | null,
+): JsonObject {
+  return {
+    ...(isJsonObject(current) ? current : {}),
+    ...(incoming ?? {}),
+  };
+}
+
+function mergeLateDeliveryEvidence(
+  current: Prisma.JsonValue | JsonObject | null,
+  incoming: JsonObject | null,
+): JsonObject {
+  const existing = isJsonObject(current) ? current : {};
+  const evidence = incoming ?? {};
+  const existingLateEvidence = Array.isArray(existing.lateEvidence) ? existing.lateEvidence : [];
+  return {
+    ...evidence,
+    ...existing,
+    lateEvidence: [...existingLateEvidence, evidence],
+  };
 }
 
 function toWorkflowRun(run: {

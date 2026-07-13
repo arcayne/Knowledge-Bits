@@ -375,7 +375,28 @@ test(
     assert.equal(approvedClaim?.deliveryId, approvedDelivery.id);
     assert.equal(approvedClaim?.packageVersionId, approvedPackage.id);
     assert.equal(approvedClaim?.packageChecksum, checksum);
-    await repository.updateDelivery({ id: approvedDelivery.id, state: 'failed', nextAttemptAt: new Date(Date.now() + 60_000) });
+    await repository.transitionDeliveryForActiveLease({
+      id: approvedDelivery.id,
+      jobId: approvedClaim!.jobId,
+      workerId: 'database-delivery-worker',
+      packageVersionId: approvedPackage.id,
+      packageChecksum: checksum,
+      expectedState: 'queued',
+      state: 'running',
+      incrementAttempts: true,
+      nextAttemptAt: null,
+    });
+    await repository.transitionDeliveryForActiveLease({
+      id: approvedDelivery.id,
+      jobId: approvedClaim!.jobId,
+      workerId: 'database-delivery-worker',
+      packageVersionId: approvedPackage.id,
+      packageChecksum: checksum,
+      expectedState: 'running',
+      state: 'failed',
+      response: { externalId: 'database-external-a' },
+      nextAttemptAt: new Date(Date.now() + 60_000),
+    });
     await repository.applyJobResult({
       workerId: 'database-delivery-worker',
       result: {
@@ -396,8 +417,26 @@ test(
       }, { type: 'job_waiting', reason: 'verification_failed' }),
       retryAt: new Date(Date.now() + 60_000),
     });
-    assert.equal((await repository.retryDelivery(approvedDelivery.id)).nextAttempt, 1);
+    assert.equal((await repository.retryDelivery(approvedDelivery.id)).nextAttempt, 2);
     await assert.rejects(repository.retryDelivery(approvedDelivery.id), /failed or waiting/i);
+
+    const staleClaim = await repository.claimJob({
+      workerId: 'database-stale-delivery-worker',
+      capabilities: ['deliver_package'],
+      leaseSeconds: 120,
+    });
+    assert.ok(staleClaim);
+    await repository.transitionDeliveryForActiveLease({
+      id: approvedDelivery.id,
+      jobId: staleClaim.jobId,
+      workerId: 'database-stale-delivery-worker',
+      packageVersionId: approvedPackage.id,
+      packageChecksum: checksum,
+      expectedState: 'queued',
+      state: 'running',
+      incrementAttempts: true,
+      nextAttemptAt: null,
+    });
 
     await repository.recordPackageVersion(packageVersionInput(runId, changedChecksum));
     const invalidated = await repository.getRun(runId);
@@ -406,6 +445,21 @@ test(
     assert.equal(invalidated.reviewStatus, 'pending');
     assert.equal(invalidated.approvedChecksum, null);
     assert.equal((await repository.getDelivery(approvedDelivery.id))?.state, 'superseded');
+    await assert.rejects(repository.transitionDeliveryForActiveLease({
+      id: approvedDelivery.id,
+      jobId: staleClaim.jobId,
+      workerId: 'database-stale-delivery-worker',
+      packageVersionId: approvedPackage.id,
+      packageChecksum: checksum,
+      expectedState: 'running',
+      state: 'succeeded',
+      response: { externalId: 'database-external-a', verification: { matches: true } },
+      nextAttemptAt: null,
+    }), /transition fence/i);
+    const staleDelivery = await repository.getDelivery(approvedDelivery.id);
+    assert.equal(staleDelivery?.state, 'superseded');
+    assert.equal((staleDelivery?.response?.verification as { matches?: boolean } | undefined)?.matches, true);
+    assert.equal((staleDelivery?.response?.lateEvidence as unknown[] | undefined)?.length, 1);
 
     const retryRunId = 'c0a8012e-7b5d-4e73-95e3-4873b519b38c';
     await repository.createRun({
@@ -681,6 +735,45 @@ test(
   },
 );
 
+test(
+  'delivery migration consolidates equivalent duplicates and rejects conflicts and ambiguous package matches',
+  { skip: dockerUnavailable ? 'Docker is unavailable' : false, timeout: 120_000 },
+  async (t) => {
+    const containerName = `knowledge-bits-delivery-migration-test-${randomUUID()}`;
+    await startPostgres(containerName, 'equivalent_deliveries');
+    t.after(() => removeContainer(containerName));
+    await createDatabase(containerName, 'conflicting_deliveries');
+    await createDatabase(containerName, 'ambiguous_deliveries');
+    const baseline = [
+      '20260712183522_init',
+      '20260712200000_harden_workflow_leases',
+      '20260712213000_harden_result_idempotency',
+      '20260713100000_add_review_state',
+      '20260713130000_bind_reviews_to_packages',
+    ].map(readMigration).join('\n');
+    const deliveryMigration = readMigration('20260713160000_add_delivery_control');
+
+    applySql(containerName, 'equivalent_deliveries', baseline);
+    applySql(containerName, 'equivalent_deliveries', historicalDeliverySql({ duplicateState: 'waiting' }));
+    applySql(containerName, 'equivalent_deliveries', deliveryMigration);
+    assert.equal(querySql(containerName, 'equivalent_deliveries', 'SELECT count(*) FROM "Delivery";'), '1');
+    assert.equal(querySql(containerName, 'equivalent_deliveries', 'SELECT "id" FROM "Delivery";'), 'delivery-1');
+    assert.equal(querySql(containerName, 'equivalent_deliveries', 'SELECT "packageVersionId" FROM "Delivery";'), 'package-version-1');
+
+    applySql(containerName, 'conflicting_deliveries', baseline);
+    applySql(containerName, 'conflicting_deliveries', historicalDeliverySql({ duplicateState: 'failed' }));
+    const conflict = applySql(containerName, 'conflicting_deliveries', deliveryMigration, false);
+    assert.notEqual(conflict.status, 0);
+    assert.match(`${conflict.stdout}\n${conflict.stderr}`, /Conflicting historical deliveries for the same immutable package/);
+
+    applySql(containerName, 'ambiguous_deliveries', baseline);
+    applySql(containerName, 'ambiguous_deliveries', historicalDeliverySql({ duplicateState: null, ambiguousPackage: true }));
+    const ambiguous = applySql(containerName, 'ambiguous_deliveries', deliveryMigration, false);
+    assert.notEqual(ambiguous.status, 0);
+    assert.match(`${ambiguous.stdout}\n${ambiguous.stderr}`, /Ambiguous historical delivery package version match/);
+  },
+);
+
 const checksum = canonicalChecksum('A');
 const changedChecksum = canonicalChecksum('B');
 
@@ -729,6 +822,37 @@ function historicalReviewSql(firstDecision: string, secondDecision: string): str
     ) VALUES
       ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1, '${checksum}', '${firstDecision}', 'reviewer-1', NULL, CURRENT_TIMESTAMP),
       ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 2, '${checksum}', '${secondDecision}', 'reviewer-1', NULL, CURRENT_TIMESTAMP + INTERVAL '1 second');
+  `;
+}
+
+function historicalDeliverySql(options: { duplicateState: string | null; ambiguousPackage?: boolean }): string {
+  return `
+    INSERT INTO "Run" (
+      "id", "title", "locale", "brief", "currentStage", "currentRevision", "reviewStatus", "createdAt", "updatedAt"
+    ) VALUES (
+      'delivery-run', 'Historical delivery', 'en', '{}'::jsonb,
+      'deliver', 2, 'approved', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    );
+    INSERT INTO "PackageVersion" (
+      "id", "runId", "revision", "packageChecksum", "adapterVersion", "locale", "owner",
+      "usageRights", "content", "evidence", "qa", "artifactInventory", "createdAt"
+    ) VALUES
+      ('package-version-1', 'delivery-run', 1, '${checksum}', 'review-package@1', 'en', 'engine',
+       '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, CURRENT_TIMESTAMP)
+      ${options.ambiguousPackage ? `,
+      ('package-version-2', 'delivery-run', 2, '${checksum}', 'review-package@1', 'en', 'engine',
+       '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, CURRENT_TIMESTAMP + INTERVAL '1 second')` : ''};
+    INSERT INTO "Delivery" (
+      "id", "runId", "target", "packageChecksum", "idempotencyKey", "state", "attempts",
+      "response", "nextAttemptAt", "createdAt", "updatedAt"
+    ) VALUES
+      ('delivery-1', 'delivery-run', 'nuglet.lesson.v1', '${checksum}', 'external-key-1', 'waiting', 1,
+       '{"externalId":"existing"}'::jsonb, TIMESTAMP '2026-07-13 12:00:00',
+       TIMESTAMP '2026-07-13 10:00:00', TIMESTAMP '2026-07-13 11:00:00')
+      ${options.duplicateState ? `,
+      ('delivery-2', 'delivery-run', 'nuglet.lesson.v1', '${checksum}', 'external-key-2', '${options.duplicateState}', 1,
+       '{"externalId":"existing"}'::jsonb, TIMESTAMP '2026-07-13 12:00:00',
+       TIMESTAMP '2026-07-13 10:05:00', TIMESTAMP '2026-07-13 11:05:00')` : ''};
   `;
 }
 

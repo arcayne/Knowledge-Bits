@@ -31,6 +31,10 @@ test('workflow migrations define immutable package identity, review identity, an
   assert.match(hardening, /length\(btrim\("leaseOwner"\)\) > 0/);
   assert.match(delivery, /ADD COLUMN "packageVersionId" TEXT/);
   assert.match(delivery, /Historical delivery does not match an immutable package version/);
+  assert.match(delivery, /Conflicting historical deliveries for the same immutable package/);
+  assert.match(delivery, /Ambiguous historical delivery package version match/);
+  assert.match(delivery, /ROW_NUMBER\(\) OVER[\s\S]*PARTITION BY "runId", "packageChecksum"/);
+  assert.match(delivery, /DELETE FROM "public"\."Delivery"/);
   assert.match(delivery, /Delivery_runId_packageChecksum_key/);
   assert.match(delivery, /Delivery_packageVersionId_fkey/);
 });

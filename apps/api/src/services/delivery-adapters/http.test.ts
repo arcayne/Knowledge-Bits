@@ -8,7 +8,7 @@ import {
 import { HttpDeliveryAdapter } from './http.js';
 import type { DeliveryAdapterInput } from './types.js';
 
-test('HTTP delivery sends the immutable package identity and classifies destination failures', async () => {
+test('HTTP delivery sends the immutable package identity', async () => {
   let requestBody: unknown;
   const adapter = new HttpDeliveryAdapter({
     baseUrl: 'https://destination.example.test',
@@ -24,18 +24,52 @@ test('HTTP delivery sends the immutable package identity and classifies destinat
   assert.equal((requestBody as DeliveryAdapterInput).packageChecksum, input().packageChecksum);
 });
 
-test('HTTP delivery treats permanent and malformed destination schemas as needs-human errors', async () => {
-  const rejected = new HttpDeliveryAdapter({
-    baseUrl: 'https://destination.example.test',
-    fetch: async () => new Response(JSON.stringify({ error: 'invalid package' }), { status: 422 }),
-  });
-  await assert.rejects(rejected.deliver(input()), DeliveryPermanentSchemaError);
+for (const status of [400, 401, 403, 404, 409, 422]) {
+  test(`HTTP delivery treats ${status} as a human-required destination failure`, async () => {
+    const adapter = new HttpDeliveryAdapter({
+      baseUrl: 'https://destination.example.test',
+      fetch: async () => new Response(JSON.stringify({ error: 'operator action required' }), { status }),
+    });
 
-  const malformed = new HttpDeliveryAdapter({
+    await assert.rejects(adapter.deliver(input()), DeliveryPermanentSchemaError);
+  });
+}
+
+for (const status of [408, 429, 500, 503]) {
+  test(`HTTP delivery treats ${status} as a transient destination failure`, async () => {
+    const adapter = new HttpDeliveryAdapter({
+      baseUrl: 'https://destination.example.test',
+      fetch: async () => new Response(JSON.stringify({ error: 'retry later' }), { status }),
+    });
+
+    await assert.rejects(adapter.deliver(input()), DeliveryTransientError);
+  });
+}
+
+test('HTTP delivery treats malformed success and error payloads deliberately', async () => {
+  const malformedSuccess = new HttpDeliveryAdapter({
     baseUrl: 'https://destination.example.test',
     fetch: async () => Response.json({ externalId: 'missing-fields' }),
   });
-  await assert.rejects(malformed.deliver(input()), DeliveryPermanentSchemaError);
+  await assert.rejects(malformedSuccess.deliver(input()), DeliveryPermanentSchemaError);
+
+  const malformedSuccessJson = new HttpDeliveryAdapter({
+    baseUrl: 'https://destination.example.test',
+    fetch: async () => new Response('{not-json', { status: 200 }),
+  });
+  await assert.rejects(malformedSuccessJson.deliver(input()), DeliveryPermanentSchemaError);
+
+  const malformedPermanentError = new HttpDeliveryAdapter({
+    baseUrl: 'https://destination.example.test',
+    fetch: async () => new Response('{not-json', { status: 401 }),
+  });
+  await assert.rejects(malformedPermanentError.deliver(input()), DeliveryPermanentSchemaError);
+
+  const malformedTransientError = new HttpDeliveryAdapter({
+    baseUrl: 'https://destination.example.test',
+    fetch: async () => new Response('{not-json', { status: 503 }),
+  });
+  await assert.rejects(malformedTransientError.deliver(input()), DeliveryTransientError);
 });
 
 function input(): DeliveryAdapterInput {

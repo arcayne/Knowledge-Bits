@@ -1,4 +1,7 @@
-import type { WorkflowRepository } from '../repositories/workflow-repository.js';
+import {
+  WorkflowConflictError,
+  type WorkflowRepository,
+} from '../repositories/workflow-repository.js';
 import type {
   DeliveryAdapter,
   ImmutableApprovedKnowledgeBits,
@@ -8,6 +11,11 @@ export type DeliveryRunResult =
   | { state: 'succeeded'; packageChecksum: string }
   | { state: 'waiting' | 'failed'; packageChecksum: string; error: string; retryAt: Date }
   | { state: 'needs_human'; packageChecksum: string; error: string };
+
+export interface DeliveryExecutionContext {
+  jobId: string;
+  workerId: string;
+}
 
 export class DeliveryService {
   private readonly clock: () => Date;
@@ -21,9 +29,12 @@ export class DeliveryService {
     this.clock = dependencies.clock ?? (() => new Date());
   }
 
-  async run(deliveryId: string): Promise<DeliveryRunResult> {
+  async run(deliveryId: string, execution: DeliveryExecutionContext): Promise<DeliveryRunResult> {
     const delivery = await this.dependencies.repository.getDelivery(deliveryId);
     if (!delivery) throw new DeliveryNotFoundError('Delivery not found');
+    if (delivery.state !== 'queued') {
+      throw new DeliveryConflictError(`Delivery cannot be run from state ${delivery.state}`);
+    }
     const packageVersion = await this.dependencies.repository.getPackageVersionById(delivery.packageVersionId);
     if (!packageVersion
       || packageVersion.runId !== delivery.runId
@@ -41,12 +52,26 @@ export class DeliveryService {
       throw new DeliveryConflictError('Delivery requires a matching current approved checksum');
     }
 
-    await this.dependencies.repository.updateDelivery({
+    const transition = (
+      expectedState: string,
+      state: string,
+      options: {
+        response?: Record<string, unknown>;
+        nextAttemptAt?: Date | null;
+        incrementAttempts?: boolean;
+      } = {},
+    ) => this.dependencies.repository.transitionDeliveryForActiveLease({
       id: delivery.id,
-      state: 'running',
-      incrementAttempts: true,
-      nextAttemptAt: null,
+      jobId: execution.jobId,
+      workerId: execution.workerId,
+      packageVersionId: delivery.packageVersionId,
+      packageChecksum: delivery.packageChecksum,
+      expectedState,
+      state,
+      now: this.clock(),
+      ...options,
     });
+    await transition('queued', 'running', { incrementAttempts: true, nextAttemptAt: null });
     const knowledgeBits: ImmutableApprovedKnowledgeBits = {
       id: packageVersion.id,
       schemaVersion: 'knowledge-bits.review-package.v1',
@@ -70,6 +95,7 @@ export class DeliveryService {
       },
     };
 
+    let expectedState = 'running';
     try {
       const response = await this.dependencies.adapter.deliver({
         knowledgeBits,
@@ -77,40 +103,34 @@ export class DeliveryService {
         packageChecksum: packageVersion.packageChecksum,
         idempotencyKey: delivery.idempotencyKey,
       });
-      await this.dependencies.repository.updateDelivery({
-        id: delivery.id,
-        state: 'verifying',
+      await transition('running', 'verifying', {
         response: response as unknown as Record<string, unknown>,
         nextAttemptAt: null,
       });
+      expectedState = 'verifying';
       const verification = await this.dependencies.adapter.verify({
         externalId: response.externalId,
         packageChecksum: packageVersion.packageChecksum,
       });
       if (!verification.matches) {
         const retryAt = this.retryAt();
-        await this.dependencies.repository.updateDelivery({
-          id: delivery.id,
-          state: 'failed',
+        await transition('verifying', 'failed', {
           response: { ...response, verification },
           nextAttemptAt: retryAt,
         });
         return { state: 'failed', packageChecksum: delivery.packageChecksum, error: 'delivery_verification_mismatch', retryAt };
       }
-      await this.dependencies.repository.updateDelivery({
-        id: delivery.id,
-        state: 'succeeded',
+      await transition('verifying', 'succeeded', {
         response: { ...response, verification },
         nextAttemptAt: null,
       });
       return { state: 'succeeded', packageChecksum: delivery.packageChecksum };
     } catch (error) {
+      if (error instanceof WorkflowConflictError) throw error;
       const persisted = await this.dependencies.repository.getDelivery(delivery.id);
       const response = { ...(persisted?.response ?? {}), error: errorMessage(error) };
       if (error instanceof DeliveryPermanentSchemaError) {
-        await this.dependencies.repository.updateDelivery({
-          id: delivery.id,
-          state: 'needs_human',
+        await transition(expectedState, 'needs_human', {
           response: { ...response, kind: 'permanent_schema' },
           nextAttemptAt: null,
         });
@@ -118,9 +138,7 @@ export class DeliveryService {
       }
       const retryAt = this.retryAt();
       const message = errorMessage(error);
-      await this.dependencies.repository.updateDelivery({
-        id: delivery.id,
-        state: 'waiting',
+      await transition(expectedState, 'waiting', {
         response: { ...response, kind: error instanceof DeliveryTransientError ? 'transient' : 'adapter_error' },
         nextAttemptAt: retryAt,
       });
