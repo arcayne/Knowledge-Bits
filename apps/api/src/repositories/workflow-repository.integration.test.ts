@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
@@ -96,14 +97,23 @@ test(
       checksum,
       storageKey: 'integration/artifacts/authorized.json',
       byteSize: 256,
-      provenance: { provider: 'integration' },
+      provenance: {
+        provider: 'integration',
+        action: 'collect_sources',
+        stage: 'research',
+        jobId: '99999999-9999-4999-8999-999999999999',
+      },
       inputChecksum: null,
     };
-    assert.equal((await repository.recordArtifactForActiveLease({
+    const persistedAuthorizedArtifact = await repository.recordArtifactForActiveLease({
       workerId: 'asset-worker',
       jobId: artifactJob.id,
       ...authorizedArtifact,
-    })).id, authorizedArtifact.id);
+    });
+    assert.equal(persistedAuthorizedArtifact.id, authorizedArtifact.id);
+    assert.equal(persistedAuthorizedArtifact.provenance.action, 'produce_assets');
+    assert.equal(persistedAuthorizedArtifact.provenance.stage, 'produce_assets');
+    assert.equal(persistedAuthorizedArtifact.provenance.jobId, artifactJob.id);
     await assert.rejects(repository.recordArtifactForActiveLease({
       workerId: 'asset-worker',
       jobId: artifactJob.id,
@@ -129,6 +139,10 @@ test(
       SET "state" = 'done', "leaseOwner" = NULL, "leaseExpiresAt" = NULL
       WHERE "id" = ${artifactJob.id}
     `;
+    const successfulArtifacts = await repository.listArtifactsForSuccessfulStageJobs(artifactRunId, 2);
+    assert.deepEqual(successfulArtifacts.map((artifact) => artifact.id), [authorizedArtifact.id]);
+    assert.equal(successfulArtifacts[0]?.action, 'produce_assets');
+    assert.equal(successfulArtifacts[0]?.jobId, artifactJob.id);
 
     const auditRunId = '62c83c04-2c87-45fc-b3ef-95ed47c80aa5';
     await repository.createRun({
@@ -594,6 +608,36 @@ test(
   },
 );
 
+test(
+  'review package migration consolidates exact duplicates and rejects conflicting historical decisions',
+  { skip: dockerUnavailable ? 'Docker is unavailable' : false, timeout: 120_000 },
+  async (t) => {
+    const containerName = `knowledge-bits-migration-test-${randomUUID()}`;
+    await startPostgres(containerName, 'duplicate_reviews');
+    t.after(() => removeContainer(containerName));
+
+    await createDatabase(containerName, 'conflicting_reviews');
+    const baseline = [
+      '20260712183522_init',
+      '20260712200000_harden_workflow_leases',
+      '20260712213000_harden_result_idempotency',
+      '20260713100000_add_review_state',
+    ].map(readMigration).join('\n');
+    const finalMigration = readMigration('20260713130000_bind_reviews_to_packages');
+
+    applySql(containerName, 'duplicate_reviews', baseline);
+    applySql(containerName, 'duplicate_reviews', historicalReviewSql('approve', 'approve'));
+    applySql(containerName, 'duplicate_reviews', finalMigration);
+    assert.equal(querySql(containerName, 'duplicate_reviews', 'SELECT count(*) FROM "Review";'), '1');
+
+    applySql(containerName, 'conflicting_reviews', baseline);
+    applySql(containerName, 'conflicting_reviews', historicalReviewSql('approve', 'request_changes'));
+    const conflict = applySql(containerName, 'conflicting_reviews', finalMigration, false);
+    assert.notEqual(conflict.status, 0);
+    assert.match(`${conflict.stdout}\n${conflict.stderr}`, /Conflicting historical reviews for the same immutable package/);
+  },
+);
+
 const checksum = canonicalChecksum('A');
 const changedChecksum = canonicalChecksum('B');
 
@@ -623,6 +667,54 @@ function canonicalMaterial(variant: string) {
     qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Ready', findings: [] } },
     artifactInventory: [],
   };
+}
+
+function readMigration(name: string): string {
+  return readFileSync(fileURLToPath(new URL(`../../prisma/migrations/${name}/migration.sql`, import.meta.url)), 'utf8');
+}
+
+function historicalReviewSql(firstDecision: string, secondDecision: string): string {
+  return `
+    INSERT INTO "Run" (
+      "id", "title", "locale", "brief", "currentStage", "currentRevision", "reviewStatus", "createdAt", "updatedAt"
+    ) VALUES (
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Historical review', 'en', '{}'::jsonb,
+      'human_review', 2, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    );
+    INSERT INTO "Review" (
+      "id", "runId", "revision", "packageChecksum", "decision", "reviewerId", "comment", "createdAt"
+    ) VALUES
+      ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1, '${checksum}', '${firstDecision}', 'reviewer-1', NULL, CURRENT_TIMESTAMP),
+      ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 2, '${checksum}', '${secondDecision}', 'reviewer-1', NULL, CURRENT_TIMESTAMP + INTERVAL '1 second');
+  `;
+}
+
+async function createDatabase(containerName: string, databaseName: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      run('docker', ['exec', containerName, 'createdb', '-U', 'postgres', databaseName]);
+      return;
+    } catch (error) {
+      lastError = error;
+      await delay(250);
+    }
+  }
+  throw lastError;
+}
+
+function applySql(containerName: string, databaseName: string, sql: string, requireSuccess = true) {
+  const result = spawnSync('docker', [
+    'exec', '-i', containerName, 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', databaseName,
+  ], { input: sql, encoding: 'utf8' });
+  if (requireSuccess && result.status !== 0) {
+    throw new Error(`Could not apply PostgreSQL test SQL: ${result.stderr || result.stdout}`);
+  }
+  return result;
+}
+
+function querySql(containerName: string, databaseName: string, sql: string): string {
+  return run('docker', ['exec', containerName, 'psql', '-tA', '-U', 'postgres', '-d', databaseName, '-c', sql]);
 }
 
 async function startPostgres(containerName: string, databaseName: string): Promise<string> {

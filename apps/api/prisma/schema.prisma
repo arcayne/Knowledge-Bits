@@ -60,6 +60,7 @@ model Job {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   run            Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  artifacts      Artifact[]
 
   @@index([state, availableAt])
 }
@@ -88,10 +89,15 @@ model Artifact {
   byteSize      Int
   provenance    Json
   inputChecksum String?
+  jobId         String?
+  stage         String?
+  action        String?
   createdAt     DateTime @default(now())
   run           Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
+  job           Job?     @relation(fields: [jobId], references: [id], onDelete: Restrict)
 
   @@index([runId, revision, kind])
+  @@index([runId, revision, stage, jobId])
 }
 
 model Review {

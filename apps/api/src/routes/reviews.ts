@@ -14,6 +14,7 @@ import {
   type WorkflowRepository,
 } from '../repositories/workflow-repository.js';
 import {
+  ArtifactStorageObjectNotFoundError,
   ArtifactStorageOperationError,
   type ArtifactStorageAdapter,
 } from '../services/artifacts.js';
@@ -52,6 +53,7 @@ export function registerReviewRoutes(
       });
     } catch (error) {
       if (error instanceof ReviewPackageNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof ArtifactStorageObjectNotFoundError) return context.json({ error: error.message }, 404);
       if (error instanceof ArtifactStorageOperationError) return context.json({ error: error.message }, 503);
       throw error;
     }
@@ -64,6 +66,14 @@ export function registerReviewRoutes(
     if (!input.success) return context.json({ error: 'Invalid review input' }, 400);
 
     try {
+      const current = await dependencies.repository.getRun(context.req.param('id'));
+      if (!current) throw new WorkflowNotFoundError('Run not found');
+      if (current.currentStage === 'human_review' && current.reviewStatus === 'pending') {
+        const reviewModel = await packages.load(current.id);
+        if (!reviewModel.decisionAllowed || reviewModel.package?.packageChecksum !== input.data.packageChecksum) {
+          throw new WorkflowConflictError('Review requires a complete, readable current package');
+        }
+      }
       const run = await dependencies.repository.reviewRun({
         runId: context.req.param('id'),
         reviewerId: principal,

@@ -22,6 +22,10 @@ test('workflow migrations define immutable package identity, review identity, an
   assert.match(packages, /CREATE UNIQUE INDEX "PackageVersion_runId_revision_packageChecksum_key"/);
   assert.match(packages, /CREATE UNIQUE INDEX "Review_runId_packageChecksum_key"/);
   assert.match(packages, /DROP INDEX "public"\."Review_runId_revision_packageChecksum_key"/);
+  assert.match(packages, /Conflicting historical reviews for the same immutable package/);
+  assert.match(packages, /IS DISTINCT FROM/);
+  assert.match(packages, /ROW_NUMBER\(\) OVER[\s\S]*PARTITION BY "runId", "packageChecksum"/);
+  assert.match(packages, /DELETE FROM "public"\."Review"/);
   assert.match(hardening, /CONSTRAINT "Job_leaseOwner_nonempty"/);
   assert.match(hardening, /length\(btrim\("leaseOwner"\)\) > 0/);
 });

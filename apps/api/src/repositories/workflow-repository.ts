@@ -91,6 +91,9 @@ export interface WorkflowArtifact {
   byteSize: number;
   provenance: JsonObject;
   inputChecksum: string | null;
+  jobId: string | null;
+  stage: WorkflowStage | null;
+  action: string | null;
   createdAt: Date;
 }
 
@@ -223,6 +226,9 @@ export interface RecordArtifactInput {
   byteSize: number;
   provenance: JsonObject;
   inputChecksum: string | null;
+  jobId?: string | null;
+  stage?: WorkflowStage | null;
+  action?: string | null;
 }
 
 export interface RecordArtifactForActiveLeaseInput extends RecordArtifactInput {
@@ -284,6 +290,7 @@ export interface WorkflowStore {
   bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun>;
   getRun(id: string): Promise<WorkflowRun | null>;
   listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]>;
+  listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]>;
   getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null>;
   getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null>;
   getJobContext(jobId: string): Promise<WorkflowJobContext | null>;
@@ -325,6 +332,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
     return this.store.listArtifacts(runId, revision);
+  }
+
+  listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]> {
+    return this.store.listArtifactsForSuccessfulStageJobs(runId, revision);
   }
 
   getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
@@ -490,6 +501,28 @@ export class PrismaWorkflowStore implements WorkflowStore {
   async listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
     const artifacts = await this.prisma.artifact.findMany({
       where: { runId, revision },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return artifacts.map(toWorkflowArtifact);
+  }
+
+  async listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]> {
+    const jobs = await this.prisma.job.findMany({
+      where: {
+        runId,
+        state: 'done',
+        artifacts: { some: { revision } },
+      },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      select: { id: true, stage: true },
+    });
+    const selectedJobIds = new Map<string, string>();
+    for (const job of jobs) {
+      if (!selectedJobIds.has(job.stage)) selectedJobIds.set(job.stage, job.id);
+    }
+    if (!selectedJobIds.size) return [];
+    const artifacts = await this.prisma.artifact.findMany({
+      where: { runId, revision, jobId: { in: [...selectedJobIds.values()] } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     return artifacts.map(toWorkflowArtifact);
@@ -909,6 +942,9 @@ export class PrismaWorkflowStore implements WorkflowStore {
           byteSize: input.byteSize,
           provenance: toPrismaJson(input.provenance),
           inputChecksum: input.inputChecksum,
+          jobId: input.jobId,
+          stage: input.stage,
+          action: input.action,
         },
       });
 
@@ -923,11 +959,18 @@ export class PrismaWorkflowStore implements WorkflowStore {
     try {
       const artifacts = await this.prisma.$queryRaw<WorkflowArtifact[]>(Prisma.sql`
         INSERT INTO "Artifact" (
-          "id", "runId", "revision", "kind", "mediaType", "checksum", "storageKey", "byteSize", "provenance", "inputChecksum"
+          "id", "runId", "revision", "kind", "mediaType", "checksum", "storageKey", "byteSize", "provenance", "inputChecksum",
+          "jobId", "stage", "action"
         )
         SELECT
           ${artifactId}, ${input.runId}, ${input.revision}, ${input.kind}, ${input.mediaType}, ${input.checksum},
-          ${input.storageKey}, ${input.byteSize}, CAST(${JSON.stringify(input.provenance)} AS jsonb), ${input.inputChecksum}
+          ${input.storageKey}, ${input.byteSize},
+          CAST(${JSON.stringify(input.provenance)} AS jsonb) || jsonb_build_object(
+            'jobId', "Job"."id",
+            'stage', "Job"."stage",
+            'action', "Job"."action"
+          ),
+          ${input.inputChecksum}, "Job"."id", "Job"."stage", "Job"."action"
         FROM "Job"
         INNER JOIN "Run" ON "Run"."id" = "Job"."runId"
         WHERE "Job"."id" = ${input.jobId}
@@ -950,7 +993,8 @@ export class PrismaWorkflowStore implements WorkflowStore {
           AND "Job"."leaseExpiresAt" > CURRENT_TIMESTAMP
           AND "Run"."currentRevision" = ${input.revision}
         RETURNING
-          "id", "runId", "revision", "kind", "mediaType", "checksum", "storageKey", "byteSize", "provenance", "inputChecksum", "createdAt"
+          "id", "runId", "revision", "kind", "mediaType", "checksum", "storageKey", "byteSize", "provenance", "inputChecksum",
+          "jobId", "stage", "action", "createdAt"
       `);
       const artifact = artifacts[0];
       if (!artifact) throw new WorkflowConflictError('Artifact-producing job lease is no longer valid');
@@ -1346,6 +1390,26 @@ class InMemoryWorkflowStore implements WorkflowStore {
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
   }
 
+  async listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]> {
+    const selectedJobIds = new Map<WorkflowStage, string>();
+    const jobs = [...this.jobs.values()]
+      .filter((job) => job.runId === runId
+        && job.state === 'done'
+        && [...this.artifactsById.values()].some((artifact) => (
+          artifact.jobId === job.id && artifact.revision === revision
+        )))
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id));
+    for (const job of jobs) {
+      if (!selectedJobIds.has(job.stage)) selectedJobIds.set(job.stage, job.id);
+    }
+    return [...this.artifactsById.values()]
+      .filter((artifact) => artifact.runId === runId
+        && artifact.revision === revision
+        && artifact.jobId !== null
+        && selectedJobIds.get(artifact.stage as WorkflowStage) === artifact.jobId)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+  }
+
   async getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
     const artifact = this.artifactsById.get(artifactId);
     return artifact?.runId === runId ? artifact : null;
@@ -1685,6 +1749,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const artifact: WorkflowArtifact = {
       ...input,
       id: artifactId,
+      jobId: input.jobId ?? null,
+      stage: input.stage ?? null,
+      action: input.action ?? null,
       createdAt: this.clock(),
     };
     this.artifactsById.set(artifact.id, artifact);
@@ -1696,8 +1763,20 @@ class InMemoryWorkflowStore implements WorkflowStore {
     if (!this.isActiveArtifactLease(input)) {
       throw new WorkflowConflictError('Artifact-producing job lease is no longer valid');
     }
+    const job = this.jobs.get(input.jobId)!;
     const { jobId: _jobId, workerId: _workerId, ...artifact } = input;
-    return this.recordArtifact(artifact);
+    return this.recordArtifact({
+      ...artifact,
+      jobId: job.id,
+      stage: job.stage,
+      action: job.action,
+      provenance: {
+        ...artifact.provenance,
+        jobId: job.id,
+        stage: job.stage,
+        action: job.action,
+      },
+    });
   }
 
   async recordReview(input: RecordReviewInput): Promise<WorkflowReview> {
@@ -2201,9 +2280,16 @@ function toWorkflowArtifact(artifact: {
   byteSize: number;
   provenance: Prisma.JsonValue;
   inputChecksum: string | null;
+  jobId: string | null;
+  stage: string | null;
+  action: string | null;
   createdAt: Date;
 }): WorkflowArtifact {
-  return { ...artifact, provenance: artifact.provenance as JsonObject };
+  return {
+    ...artifact,
+    stage: artifact.stage as WorkflowStage | null,
+    provenance: artifact.provenance as JsonObject,
+  };
 }
 
 function toWorkflowDelivery(delivery: {

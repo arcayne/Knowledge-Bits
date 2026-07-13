@@ -68,6 +68,7 @@ function createFixture() {
 
   return {
     app,
+    repository,
     storage,
     setNow(value: Date) {
       now = new Date(value);
@@ -336,6 +337,58 @@ test('records inspected metadata once and maps repository conflicts to immutable
 
   const duplicate = await fixture.app.request('/artifacts/complete', request);
   assert.equal(duplicate.status, 409);
+});
+
+test('derives artifact action and job identity from the authenticated lease', async () => {
+  const fixture = createFixture();
+  const job = await fixture.queueArtifactJob({ stage: 'research', action: 'collect_sources' });
+  const claim = await claimArtifactJob(fixture.app, 'research-worker-token');
+  const preparedResponse = await prepareArtifact(
+    fixture.app,
+    claim.jobId,
+    { kind: 'parsed_output' },
+    'research-worker-token',
+  );
+  assert.equal(preparedResponse.status, 201);
+  const prepared = await preparedResponse.json() as { artifactId: string; storageKey: string };
+  fixture.storage.objects.set(prepared.storageKey, { checksum, byteSize: 42, mediaType: 'application/json' });
+
+  const completed = await fixture.app.request('/artifacts/complete', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer research-worker-token' },
+    body: JSON.stringify({
+      ...completionBody(job.id, prepared),
+      kind: 'parsed_output',
+      provenance: {
+        action: 'create_content',
+        jobId: '99999999-9999-4999-8999-999999999999',
+        stage: 'create',
+      },
+    }),
+  });
+  assert.equal(completed.status, 201, await completed.clone().text());
+
+  const [artifact] = await fixture.repository.listArtifacts(runId, 1);
+  assert.equal(artifact?.provenance.action, 'collect_sources');
+  assert.equal(artifact?.provenance.stage, 'research');
+  assert.equal(artifact?.provenance.jobId, job.id);
+
+  await fixture.repository.completeJob({
+    workerId: 'research-worker',
+    result: {
+      jobId: job.id,
+      packageId: runId,
+      stage: 'research',
+      state: 'done',
+      completedAt: '2026-07-12T12:00:30.000Z',
+      outputChecksum: checksum,
+      error: null,
+    },
+  });
+  const successful = await fixture.repository.listArtifactsForSuccessfulStageJobs(runId, 1);
+  assert.deepEqual(successful.map((candidate) => candidate.id), [prepared.artifactId]);
+  assert.equal(successful[0]?.action, 'collect_sources');
+  assert.equal(successful[0]?.jobId, job.id);
 });
 
 test('rechecks the producer lease after storage inspection before recording an artifact', async () => {

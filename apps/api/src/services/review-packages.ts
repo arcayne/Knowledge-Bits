@@ -17,7 +17,10 @@ import type {
   WorkflowArtifact,
   WorkflowRepository,
 } from '../repositories/workflow-repository.js';
-import type { ArtifactStorageAdapter } from './artifacts.js';
+import {
+  readArtifactStorageObject,
+  type ArtifactStorageAdapter,
+} from './artifacts.js';
 
 const ADAPTER_VERSION = 'knowledge-bits.review-package.v1';
 const OWNER = 'knowledge-bits-engine';
@@ -33,13 +36,16 @@ export class ReviewPackageService {
   async load(runId: string): Promise<ReviewReadModel> {
     const run = await this.dependencies.repository.getRun(runId);
     if (!run) throw new ReviewPackageNotFoundError('Run not found');
-    const artifacts = await this.dependencies.repository.listArtifacts(run.id, run.currentRevision);
+    const artifacts = await this.dependencies.repository.listArtifactsForSuccessfulStageJobs(run.id, run.currentRevision);
     const assets = assetStates(run.id, artifacts);
+    const mediaIssues = REVIEW_ASSET_KINDS
+      .filter((kind) => assets[kind].state === 'missing')
+      .map((kind) => `Required review media is missing: ${kind}`);
 
     try {
       for (const kind of REVIEW_ASSET_KINDS) {
         const artifact = latestArtifact(artifacts, kind);
-        if (artifact) await this.dependencies.storage.read(artifact.storageKey);
+        if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
       }
       const evidenceArtifact = requiredParsedArtifact(artifacts, 'collect_sources', 'evidence');
       const contentArtifact = requiredParsedArtifact(artifacts, 'create_content', 'content');
@@ -103,8 +109,9 @@ export class ReviewPackageService {
         currentPackageChecksum: current.packageChecksum,
         decisionAllowed: current.currentStage === 'human_review'
           && current.reviewStatus === 'pending'
-          && current.packageChecksum === packageVersion.packageChecksum,
-        issues: [],
+          && current.packageChecksum === packageVersion.packageChecksum
+          && mediaIssues.length === 0,
+        issues: mediaIssues,
         package: packageVersion,
         assets,
       });
@@ -134,12 +141,16 @@ export class ReviewPackageService {
     }
     const artifact = await this.dependencies.repository.getArtifact(run.id, artifactId);
     if (!artifact) throw new ReviewPackageNotFoundError('Artifact is not in the current package');
-    return { body: await this.dependencies.storage.read(artifact.storageKey), mediaType: artifact.mediaType };
+    return {
+      body: await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey),
+      mediaType: artifact.mediaType,
+    };
   }
 
   private async readJson(artifact: WorkflowArtifact, label: string): Promise<Record<string, unknown>> {
     try {
-      const parsed: unknown = JSON.parse(Buffer.from(await this.dependencies.storage.read(artifact.storageKey)).toString('utf8'));
+      const body = await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
+      const parsed: unknown = JSON.parse(Buffer.from(body).toString('utf8'));
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TypeError('expected an object');
       return parsed as Record<string, unknown>;
     } catch (error) {
@@ -157,7 +168,7 @@ function requiredParsedArtifact(
   label: string,
 ): WorkflowArtifact {
   const artifact = [...artifacts].reverse().find((candidate) => (
-    candidate.kind === 'parsed_output' && candidate.provenance.action === action
+    candidate.kind === 'parsed_output' && candidate.action === action
   ));
   if (!artifact) throw new ReviewPackageAssemblyError(`${label} artifact is missing`);
   return artifact;

@@ -28,6 +28,20 @@ export class ArtifactStorageObjectNotFoundError extends Error {}
 export class ArtifactStorageOperationError extends Error {}
 export class ArtifactStorageUnavailableError extends ArtifactStorageOperationError {}
 
+export async function readArtifactStorageObject(
+  storage: ArtifactStorageAdapter,
+  storageKey: string,
+): Promise<Uint8Array> {
+  try {
+    return await storage.read(storageKey);
+  } catch (error) {
+    if (error instanceof ArtifactStorageObjectNotFoundError || error instanceof ArtifactStorageOperationError) {
+      throw error;
+    }
+    throw new ArtifactStorageOperationError('Artifact storage read failed', { cause: error });
+  }
+}
+
 export class UnavailableArtifactStorageAdapter implements ArtifactStorageAdapter {
   async preparePut(): Promise<never> {
     throw new ArtifactStorageUnavailableError('Artifact storage is not configured for the standalone engine');
@@ -74,6 +88,7 @@ export class ArtifactService {
     ) {
       throw new ArtifactMetadataMismatchError('Artifact metadata does not match storage inspection');
     }
+    const { action: _action, job: _job, jobId: _jobId, stage: _stage, ...workerProvenance } = input.provenance;
     const artifact = await this.dependencies.repository.recordArtifactForActiveLease({
       workerId,
       jobId: input.jobId,
@@ -85,7 +100,7 @@ export class ArtifactService {
       checksum: inspected.checksum,
       storageKey,
       byteSize: inspected.byteSize,
-      provenance: { ...input.provenance, provider: input.provider },
+      provenance: { ...workerProvenance, provider: input.provider },
       inputChecksum: input.inputChecksum,
     });
     return toArtifactReference(artifact, input.provider);
