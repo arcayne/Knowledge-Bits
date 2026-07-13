@@ -20,6 +20,10 @@ const forbidden = [
     pattern: /https:\/\/[a-z0-9]{8,}\.supabase\.co\b/i,
   },
   {
+    label: 'Supabase PostgreSQL host',
+    pattern: /\b(?:db\.[a-z0-9-]+\.supabase\.co|(?:[a-z0-9-]+\.)*pooler\.supabase\.com)\b/i,
+  },
+  {
     label: 'JWT-shaped credential',
     pattern: /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/,
   },
@@ -30,7 +34,9 @@ for (const file of trackedFiles) {
   let contents;
   try {
     contents = readFileSync(file, 'utf8');
-  } catch {
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? ` (${error.code})` : '';
+    findings.push(`${file} could not be read${code}`);
     continue;
   }
   for (const { label, pattern } of forbidden) {

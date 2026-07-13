@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
 import test from 'node:test';
@@ -18,6 +21,8 @@ const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 const apiRoot = fileURLToPath(new URL('../../apps/api/', import.meta.url));
 const fixtureRoot = fileURLToPath(new URL('../fixtures/attention-recovery/', import.meta.url));
 const providerRoot = fileURLToPath(new URL('../fixtures/attention-recovery/providers/', import.meta.url));
+const requireFromApi = createRequire(new URL('../../apps/api/package.json', import.meta.url));
+const { serve } = requireFromApi('@hono/node-server');
 const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0;
 
 test(
@@ -47,6 +52,12 @@ test(
           workerCredential('fixture-worker-after-restart', 'fixture-worker-token-b'),
         ]),
       },
+    });
+    const apiRuntime = await startApiServer(app);
+    const reviewRuntime = await startReviewServer(apiRuntime.url, 'fixture-review-token');
+    t.after(async () => {
+      await stopProcess(reviewRuntime.process);
+      await closeServer(apiRuntime.server);
     });
     const routedFetch = createRoutedFetch(app, storage);
     const providers = composeWorkerProviders({
@@ -89,7 +100,15 @@ test(
     assert.equal(reclaimed.state, 'done');
     assert.equal(reclaimed.attempt, 2);
 
-    const review = await requestJson(app, `/runs/${created.id}/review`, 'fixture-review-token');
+    const pageResponse = await fetch(`${reviewRuntime.url}/runs/${created.id}`);
+    const pageHtml = await pageResponse.text();
+    assert.equal(pageResponse.status, 200, pageHtml);
+    assert.match(pageHtml, new RegExp(`data-run-id="${created.id}"`));
+
+    const reviewResponse = await fetch(`${reviewRuntime.url}/api/review?runId=${created.id}`);
+    const reviewText = await reviewResponse.text();
+    assert.equal(reviewResponse.status, 200, reviewText);
+    const review = JSON.parse(reviewText);
     assert.equal(review.currentStage, 'human_review');
     assert.equal(review.decisionAllowed, true);
     assert.deepEqual(review.issues, []);
@@ -112,11 +131,17 @@ test(
       ['available', 'available', 'available'],
     );
 
-    const approval = await requestJson(app, `/runs/${created.id}/review`, 'fixture-review-token', {
+    const surfaceChecksum = review.currentPackageChecksum;
+    assert.equal(surfaceChecksum, review.package.packageChecksum);
+    const approvalResponse = await fetch(`${reviewRuntime.url}/api/review`, {
       method: 'POST',
-      body: { decision: 'approve', packageChecksum: review.package.packageChecksum },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId: created.id, decision: 'approve', packageChecksum: surfaceChecksum }),
     });
-    assert.equal(approval.approvedChecksum, review.package.packageChecksum);
+    const approvalText = await approvalResponse.text();
+    assert.equal(approvalResponse.status, 200, approvalText);
+    const approval = JSON.parse(approvalText);
+    assert.equal(approval.approvedChecksum, surfaceChecksum);
     assert.equal(await prisma.review.count({ where: { runId: created.id } }), 1);
     assert.equal(await prisma.job.count({ where: { runId: created.id, stage: 'deliver' } }), 1);
 
@@ -197,6 +222,67 @@ function createRoutedFetch(app, storage) {
     if (new URL(url).hostname === 'fixture-storage.example.test') return storage.put(url, init);
     return app.request(url, init);
   };
+}
+
+async function startApiServer(app) {
+  return new Promise((resolve, reject) => {
+    const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port: 0 }, (address) => {
+      resolve({ server, url: `http://127.0.0.1:${address.port}` });
+    });
+    server.once('error', reject);
+  });
+}
+
+async function startReviewServer(apiUrl, token) {
+  const port = await availablePort();
+  const process = spawn('pnpm', [
+    '--filter', '@knowledge-bits/review', 'exec', 'astro', 'dev',
+    '--host', '127.0.0.1', '--port', String(port),
+  ], {
+    cwd: repositoryRoot,
+    env: { ...globalThis.process.env, ENGINE_API_URL: apiUrl, ENGINE_REVIEW_TOKEN: token },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  process.stdout.on('data', (chunk) => { output += chunk; });
+  process.stderr.on('data', (chunk) => { output += chunk; });
+  const url = `http://127.0.0.1:${port}`;
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    if (process.exitCode !== null) throw new Error(`Astro review server exited early:\n${output}`);
+    try {
+      const response = await fetch(url);
+      if (response.ok) return { process, url };
+    } catch {
+      // The server has not opened its socket yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  await stopProcess(process);
+  throw new Error(`Astro review server did not become ready:\n${output}`);
+}
+
+async function availablePort() {
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  await closeServer(server);
+  return address.port;
+}
+
+async function stopProcess(child) {
+  if (child.exitCode !== null) return;
+  child.kill('SIGTERM');
+  await Promise.race([
+    once(child, 'exit'),
+    new Promise((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+  if (child.exitCode === null) child.kill('SIGKILL');
+}
+
+function closeServer(server) {
+  return new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 }
 
 async function drainFixtureWorker(client, providers, stopAfterJobs = Number.POSITIVE_INFINITY) {

@@ -1,6 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "cd ../.. && pnpm --filter @knowledge-bits/api build",
+  "buildCommand": "pnpm build",
   "framework": null,
-  "installCommand": "cd ../.. && pnpm install --frozen-lockfile"
+  "installCommand": "pnpm install --frozen-lockfile",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api" }
+  ]
 }

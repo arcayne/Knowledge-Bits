@@ -9,7 +9,7 @@
     "test": "node --test src/**/*.test.mjs"
   },
   "dependencies": {
-    "@astrojs/node": "9.4.1",
+    "@astrojs/vercel": "9.0.5",
     "astro": "5.14.4"
   },
   "devDependencies": {

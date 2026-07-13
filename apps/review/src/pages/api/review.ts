@@ -1,3 +1,5 @@
+import { forwardReviewRequest } from '../../review-proxy.mjs';
+
 export async function GET({ url }: { url: URL }): Promise<Response> {
   const runId = url.searchParams.get('runId');
   if (!runId) return Response.json({ error: 'A run id is required' }, { status: 400 });
@@ -26,27 +28,12 @@ export async function POST({ request }: { request: Request }): Promise<Response>
 }
 
 async function forward(path: string, init: RequestInit = {}): Promise<Response> {
-  const apiUrl = import.meta.env.ENGINE_API_URL?.trim();
-  const token = import.meta.env.ENGINE_REVIEW_TOKEN?.trim();
-  if (!apiUrl || !token) {
-    return Response.json({ error: 'The review service is not configured' }, { status: 503 });
-  }
-
-  try {
-    const response = await fetch(new URL(path, apiUrl), {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...init.headers,
-      },
-    });
-    return new Response(await response.text(), {
-      status: response.status,
-      headers: { 'Content-Type': response.headers.get('Content-Type') ?? 'application/json' },
-    });
-  } catch {
-    return Response.json({ error: 'The review service is unavailable' }, { status: 503 });
-  }
+  return forwardReviewRequest({
+    apiUrl: import.meta.env.ENGINE_API_URL,
+    token: import.meta.env.ENGINE_REVIEW_TOKEN,
+    path,
+    init,
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

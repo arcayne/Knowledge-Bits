@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.vercel.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.vercel.json",
     "test": "pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/pipeline build && pnpm prisma:generate && tsx --test src/**/*.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "tsx scripts/migrate-local.ts"

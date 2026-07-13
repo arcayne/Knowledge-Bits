@@ -213,12 +213,12 @@ const { runId } = Astro.params;
       };
 
       const submit = async (decision: 'approve' | 'request_changes', comment?: string) => {
-        if (!model?.decisionAllowed || !model.package?.packageChecksum) return showError('A complete current package is required.');
+        if (!model?.decisionAllowed || !model.currentPackageChecksum) return showError('A complete current package is required.');
         if (!runId) return showError('A run id is required.');
         const response = await fetch('/api/review', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runId, decision, packageChecksum: model.package.packageChecksum, ...(comment ? { comment } : {}) }),
+          body: JSON.stringify({ runId, decision, packageChecksum: model.currentPackageChecksum, ...(comment ? { comment } : {}) }),
         });
         const payload = await response.json() as DecisionPayload;
         if (!response.ok) return showError(payload.error || 'Could not record the review decision.');

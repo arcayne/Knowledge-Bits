@@ -70,7 +70,7 @@ does not contact object storage.
 Start the review app on port 4321:
 
 ```bash
-ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
+ENGINE_API_URL="http://127.0.0.1:3000" \
 ENGINE_REVIEW_TOKEN="local-review-token" \
 pnpm --filter @knowledge-bits/review exec astro dev --port 4321
 ```
@@ -127,9 +127,11 @@ one to be enabled.
 
 ## Vercel Boundary
 
-Use separate Vercel projects rooted at `apps/api` and `apps/review`. Their `vercel.json` files install
-the frozen workspace and build only the selected application. Do not create a Vercel project for
-`apps/worker`, and do not run provider CLIs, worker loops, or migrations during a Vercel build.
+Use separate Vercel projects rooted at `apps/api` and `apps/review`, with source files outside each
+Root Directory included so Vercel can resolve the pnpm workspace. Each app runs its commands directly
+from that root: `pnpm install --frozen-lockfile` and `pnpm build`. The API catch-all routes to its Hono
+Vercel Function, and the review build emits Astro Vercel SSR output. Do not create a Vercel project
+for `apps/worker`, and do not run provider CLIs, worker loops, or migrations during a Vercel build.
 
 The API and review projects receive only their own runtime secrets. Provider credentials stay with the
 external worker runtime. Database owner or migration credentials stay outside Vercel. Delivery secrets
