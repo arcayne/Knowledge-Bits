@@ -68,7 +68,8 @@ export function registerReviewRoutes(
     try {
       const current = await dependencies.repository.getRun(context.req.param('id'));
       if (!current) throw new WorkflowNotFoundError('Run not found');
-      if (current.currentStage === 'human_review' && current.reviewStatus === 'pending') {
+      const existingReview = await dependencies.repository.getReview(current.id, input.data.packageChecksum);
+      if (!existingReview && current.currentStage === 'human_review' && current.reviewStatus === 'pending') {
         const reviewModel = await packages.load(current.id);
         if (!reviewModel.decisionAllowed || reviewModel.package?.packageChecksum !== input.data.packageChecksum) {
           throw new WorkflowConflictError('Review requires a complete, readable current package');

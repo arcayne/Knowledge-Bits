@@ -292,6 +292,7 @@ export interface WorkflowStore {
   listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]>;
   listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]>;
   getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null>;
+  getReview(runId: string, packageChecksum: string): Promise<WorkflowReview | null>;
   getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null>;
   getJobContext(jobId: string): Promise<WorkflowJobContext | null>;
   queueJob(input: QueueJobInput): Promise<WorkflowJob>;
@@ -340,6 +341,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
     return this.store.getArtifact(runId, artifactId);
+  }
+
+  getReview(runId: string, packageChecksum: string): Promise<WorkflowReview | null> {
+    return this.store.getReview(runId, packageChecksum);
   }
 
   getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null> {
@@ -531,6 +536,12 @@ export class PrismaWorkflowStore implements WorkflowStore {
   async getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
     const artifact = await this.prisma.artifact.findFirst({ where: { id: artifactId, runId } });
     return artifact ? toWorkflowArtifact(artifact) : null;
+  }
+
+  async getReview(runId: string, packageChecksum: string): Promise<WorkflowReview | null> {
+    return this.prisma.review.findUnique({
+      where: { runId_packageChecksum: { runId, packageChecksum } },
+    });
   }
 
   async getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null> {
@@ -1413,6 +1424,10 @@ class InMemoryWorkflowStore implements WorkflowStore {
   async getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
     const artifact = this.artifactsById.get(artifactId);
     return artifact?.runId === runId ? artifact : null;
+  }
+
+  async getReview(runId: string, packageChecksum: string): Promise<WorkflowReview | null> {
+    return this.reviewsByIdentity.get(`${runId}:${packageChecksum}`) ?? null;
   }
 
   async getPackageVersion(runId: string, packageChecksum: string): Promise<WorkflowPackageVersion | null> {

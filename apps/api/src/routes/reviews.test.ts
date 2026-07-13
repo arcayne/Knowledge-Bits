@@ -96,6 +96,51 @@ test('approval freezes the checksum and queues one delivery action', async () =>
   }), null);
 });
 
+test('replays an earlier immutable approval after a newer package is pending review', async () => {
+  const { app, repository, storage } = createTestApp();
+  const packageA = await reviewReadyRun(repository, storage, checksumA);
+
+  const approved = await app.request(`/runs/${packageA.runId}/review`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-review-test' },
+    body: JSON.stringify({ decision: 'approve', packageChecksum: packageA.packageChecksum }),
+  });
+  assert.equal(approved.status, 200, await approved.clone().text());
+
+  await repository.recordPackageVersion(packageVersionInput(packageA.runId, checksumB));
+  const beforeReplay = await repository.getRun(packageA.runId);
+  assert.ok(beforeReplay);
+  assert.equal(beforeReplay.currentStage, 'human_review');
+  assert.equal(beforeReplay.reviewStatus, 'pending');
+  assert.equal(beforeReplay.packageChecksum, checksumB);
+  assert.equal(beforeReplay.approvedChecksum, null);
+
+  repository.listArtifactsForSuccessfulStageJobs = async () => [];
+
+  const replay = await app.request(`/runs/${packageA.runId}/review`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-review-test' },
+    body: JSON.stringify({ decision: 'approve', packageChecksum: packageA.packageChecksum }),
+  });
+
+  assert.equal(replay.status, 200, await replay.clone().text());
+  assert.deepEqual(await replay.json(), {
+    runId: packageA.runId,
+    currentStage: 'human_review',
+    state: 'needs_human',
+    currentRevision: 1,
+    reviewStatus: 'pending',
+    packageChecksum: checksumB,
+    approvedChecksum: null,
+  });
+  assert.deepEqual(await repository.getRun(packageA.runId), beforeReplay);
+  assert.equal(await repository.claimJob({
+    workerId: 'delivery-worker',
+    capabilities: ['deliver_package'],
+    leaseSeconds: 60,
+  }), null);
+});
+
 test('changes require a comment, bind it to create, and content changes invalidate approval', async () => {
   const { app, repository, storage } = createTestApp();
   const { runId, packageChecksum } = await reviewReadyRun(repository, storage, checksumA);
