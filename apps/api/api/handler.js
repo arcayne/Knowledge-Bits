@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { handle } from 'hono/vercel';
+import { getRequestListener } from '@hono/node-server';
 
 import { createRuntimeApp } from '../dist/runtime.js';
 
@@ -24,4 +24,4 @@ app.all('*', async (context) => {
   }
 });
 
-export default handle(app);
+export default getRequestListener(app.fetch);

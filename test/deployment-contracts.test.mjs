@@ -19,10 +19,10 @@ test('API app exposes a catch-all Hono Vercel function from its documented root'
   assert.doesNotMatch(packageJson.scripts.build, /tsconfig\.vercel\.json/);
   assert.match(entrypoint, /from ['"]\.\/handler\.js['"]/);
   assert.match(catchAllEntrypoint, /from ['"]\.\/handler\.js['"]/);
-  assert.match(handler, /from ['"]hono\/vercel['"]/);
+  assert.match(handler, /from ['"]@hono\/node-server['"]/);
   assert.match(handler, /from ['"]\.\.\/dist\/runtime\.js['"]/);
   assert.match(handler, /['"]\/health['"]/);
-  assert.match(handler, /export default handle\(/);
+  assert.match(handler, /export default getRequestListener\(/);
 });
 
 test('review app builds Astro SSR with the Vercel adapter from its documented root', async () => {
