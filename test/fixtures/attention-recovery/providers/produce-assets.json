@@ -1,0 +1,43 @@
+{
+  "assets": [
+    {
+      "bodyBase64": "UklGRhIAAABXRUJQVlA4TAYAAAAvAAAAAA==",
+      "inputChecksum": "$contentChecksum",
+      "kind": "hero",
+      "mediaType": "image/webp"
+    },
+    {
+      "bodyBase64": "UklGRhIAAABXRUJQVlA4TAYAAAAvAAAAAQ==",
+      "inputChecksum": "$contentChecksum",
+      "kind": "infographic",
+      "mediaType": "image/webp"
+    },
+    {
+      "bodyBase64": "UklGRgQAAABXQVZF",
+      "inputChecksum": "$contentChecksum",
+      "kind": "audio",
+      "mediaType": "audio/wav"
+    }
+  ],
+  "fixtureSchemaVersion": "knowledge-bits.fixture-provider.v1",
+  "parsedOutput": {
+    "assets": [
+      {
+        "alt": "A clear desk with one written next action",
+        "kind": "hero",
+        "mediaType": "image/webp"
+      },
+      {
+        "alt": "Three step attention reset: close, breathe, write",
+        "kind": "infographic",
+        "mediaType": "image/webp"
+      },
+      {
+        "durationSeconds": 18,
+        "kind": "audio",
+        "mediaType": "audio/wav"
+      }
+    ],
+    "schemaVersion": "fixture.assets.v1"
+  }
+}

@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("ENGINE_DATABASE_URL")
+  directUrl = env("ENGINE_MIGRATION_DATABASE_URL")
+}
+
+model Run {
+  id              String     @id @default(uuid())
+  title           String
+  locale          String
+  brief           Json
+  currentStage    String
+  currentRevision Int        @default(1)
+  packageChecksum String?
+  approvedChecksum String?
+  reviewStatus    String     @default("pending")
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  stages          Stage[]
+  jobs            Job[]
+  artifacts       Artifact[]
+  reviews         Review[]
+  packageVersions PackageVersion[]
+  deliveries      Delivery[]
+  workflowEffects WorkflowEffect[]
+}
+
+model Stage {
+  id        String   @id @default(uuid())
+  runId     String
+  name      String
+  state     String
+  reason    String?
+  attempt   Int      @default(0)
+  revisionAttempt Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, name])
+}
+
+model Job {
+  id             String   @id @default(uuid())
+  runId          String
+  stage          String
+  action         String
+  state          String
+  idempotencyKey String   @unique
+  availableAt    DateTime @default(now())
+  leaseOwner     String?
+  leaseExpiresAt DateTime?
+  executionDeadlineAt DateTime?
+  attempt        Int      @default(0)
+  input          Json
+  result         Json?
+  completionReceipt Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  run            Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  artifacts      Artifact[]
+
+  @@index([state, availableAt])
+}
+
+model WorkflowEffect {
+  id        String   @id @default(uuid())
+  runId     String
+  jobId     String
+  effectKey String   @unique
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+  run       Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+}
+
+model Artifact {
+  id            String   @id @default(uuid())
+  runId         String
+  revision      Int
+  kind          String
+  mediaType     String
+  checksum      String
+  storageKey    String   @unique
+  byteSize      Int
+  provenance    Json
+  inputChecksum String?
+  jobId         String?
+  stage         String?
+  action        String?
+  createdAt     DateTime @default(now())
+  run           Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
+  job           Job?     @relation(fields: [jobId], references: [id], onDelete: Restrict)
+
+  @@index([runId, revision, kind])
+  @@index([runId, revision, stage, jobId])
+}
+
+model Review {
+  id              String   @id @default(uuid())
+  runId           String
+  revision        Int
+  packageChecksum String
+  decision        String
+  reviewerId      String
+  comment         String?
+  createdAt       DateTime @default(now())
+  run             Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, packageChecksum])
+}
+
+model PackageVersion {
+  id                String   @id @default(uuid())
+  runId             String
+  revision          Int
+  packageChecksum   String
+  adapterVersion    String
+  locale            String
+  owner             String
+  usageRights       Json
+  content           Json
+  evidence          Json
+  qa                 Json
+  artifactInventory Json
+  createdAt         DateTime @default(now())
+  run               Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
+  deliveries        Delivery[]
+
+  @@unique([runId, revision, packageChecksum])
+  @@index([runId, packageChecksum])
+}
+
+model Delivery {
+  id              String   @id @default(uuid())
+  runId           String
+  packageVersionId String
+  target          String
+  packageChecksum String
+  idempotencyKey  String   @unique
+  state           String
+  attempts        Int      @default(0)
+  response        Json?
+  nextAttemptAt   DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  run             Run      @relation(fields: [runId], references: [id], onDelete: Restrict)
+  packageVersion  PackageVersion @relation(fields: [packageVersionId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, packageChecksum])
+  @@index([packageVersionId])
+}

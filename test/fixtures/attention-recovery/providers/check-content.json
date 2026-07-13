@@ -1,0 +1,18 @@
+{
+  "deterministic": {
+    "contentChecksum": "$contentChecksum",
+    "findings": [],
+    "passed": true
+  },
+  "editorial": {
+    "findings": [
+      {
+        "blocking": false,
+        "code": "specific-action",
+        "message": "The reset and five minute action are concrete and observable.",
+        "severity": "minor"
+      }
+    ],
+    "summary": "The lesson is clear, cited, practical, and ready for asset production."
+  }
+}

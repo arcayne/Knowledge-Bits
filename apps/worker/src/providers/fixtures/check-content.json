@@ -1,0 +1,18 @@
+{
+  "deterministic": {
+    "contentChecksum": "$contentChecksum",
+    "findings": [],
+    "passed": true
+  },
+  "editorial": {
+    "findings": [
+      {
+        "blocking": false,
+        "code": "specific-action",
+        "message": "The action is concrete and observable.",
+        "severity": "minor"
+      }
+    ],
+    "summary": "The lesson is ready for asset production."
+  }
+}

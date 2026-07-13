@@ -1,0 +1,10 @@
+{
+  "findings": [
+    {
+      "code": "clarity",
+      "message": "The practical action is specific and observable.",
+      "severity": "minor"
+    }
+  ],
+  "summary": "The candidate is ready for the structural gate."
+}

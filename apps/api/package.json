@@ -1,0 +1,27 @@
+{
+  "name": "@knowledge-bits/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.vercel.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.vercel.json",
+    "test": "pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/pipeline build && pnpm prisma:generate && tsx --test src/**/*.test.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "tsx scripts/migrate-local.ts",
+    "prisma:migrate:production": "tsx scripts/migrate-production.ts"
+  },
+  "dependencies": {
+    "@knowledge-bits/contracts": "workspace:*",
+    "@knowledge-bits/pipeline": "workspace:*",
+    "@hono/node-server": "2.0.8",
+    "@prisma/client": "6.15.0",
+    "hono": "4.12.29",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.1.0",
+    "prisma": "6.15.0",
+    "tsx": "4.20.3"
+  }
+}

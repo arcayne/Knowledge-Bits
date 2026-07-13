@@ -1,0 +1,20 @@
+{
+  "name": "@knowledge-bits/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && rm -rf dist/providers/fixtures && mkdir -p dist/providers/fixtures && cp -R src/providers/fixtures/. dist/providers/fixtures",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/*.test.ts src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.80.2",
+    "@knowledge-bits/contracts": "workspace:*",
+    "@knowledge-bits/pipeline": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.1.0",
+    "tsx": "4.20.3"
+  }
+}

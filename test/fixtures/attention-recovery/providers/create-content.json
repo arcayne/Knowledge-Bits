@@ -1,0 +1,42 @@
+{
+  "action": "Close extra tabs, take three slow breaths, and write the next visible action before working for five minutes.",
+  "claimCoverage": [
+    { "claimIds": ["33333333-3333-4333-8333-333333333333"], "path": "title" },
+    { "claimIds": ["33333333-3333-4333-8333-333333333333"], "path": "takeaway" },
+    { "claimIds": ["44444444-4444-4444-8444-444444444444"], "path": "action" },
+    { "claimIds": ["33333333-3333-4333-8333-333333333333"], "path": "depths.quick" },
+    { "claimIds": ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"], "path": "depths.core" },
+    { "claimIds": ["33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444"], "path": "depths.deep" }
+  ],
+  "claims": [
+    {
+      "citations": [
+        {
+          "excerpt": "A brief pause followed by a defined next action can reduce restart friction.",
+          "snapshotArtifactId": "$snapshotArtifactId:11111111-1111-4111-8111-111111111111",
+          "sourceId": "11111111-1111-4111-8111-111111111111"
+        }
+      ],
+      "claimId": "33333333-3333-4333-8333-333333333333",
+      "statement": "A short reset can support a focused return."
+    },
+    {
+      "citations": [
+        {
+          "excerpt": "Writing the next visible action removes a decision from the return to work.",
+          "snapshotArtifactId": "$snapshotArtifactId:22222222-2222-4222-8222-222222222222",
+          "sourceId": "22222222-2222-4222-8222-222222222222"
+        }
+      ],
+      "claimId": "44444444-4444-4444-8444-444444444444",
+      "statement": "A written next action reduces restart decisions."
+    }
+  ],
+  "depths": {
+    "core": "Attention recovery starts by reducing choice. Close what you do not need, pause, and define one visible action. Work on only that action for five minutes.",
+    "deep": "When attention feels scattered, trying to force a long focus session adds pressure. A short reset creates a clean boundary. Writing the next visible action removes the need to decide again when you return. Five minutes is enough to practice the return without asking for perfect concentration.",
+    "quick": "Reset, write one next action, and work on it for five minutes."
+  },
+  "takeaway": "Recover attention by making the return small and specific.",
+  "title": "Return to one task"
+}
