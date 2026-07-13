@@ -386,6 +386,7 @@ test(
       incrementAttempts: true,
       nextAttemptAt: null,
     });
+    const deliveryRetryAt = new Date(Date.now() + 60_000);
     await repository.transitionDeliveryForActiveLease({
       id: approvedDelivery.id,
       jobId: approvedClaim!.jobId,
@@ -393,9 +394,9 @@ test(
       packageVersionId: approvedPackage.id,
       packageChecksum: checksum,
       expectedState: 'running',
-      state: 'failed',
+      state: 'waiting',
       response: { externalId: 'database-external-a' },
-      nextAttemptAt: new Date(Date.now() + 60_000),
+      nextAttemptAt: deliveryRetryAt,
     });
     await repository.applyJobResult({
       workerId: 'database-delivery-worker',
@@ -415,15 +416,14 @@ test(
         packageChecksum: checksum,
         approvedChecksum: checksum,
       }, { type: 'job_waiting', reason: 'verification_failed' }),
-      retryAt: new Date(Date.now() + 60_000),
+      retryAt: deliveryRetryAt,
     });
-    assert.equal((await repository.retryDelivery(approvedDelivery.id)).nextAttempt, 2);
-    await assert.rejects(repository.retryDelivery(approvedDelivery.id), /failed or waiting/i);
 
     const staleClaim = await repository.claimJob({
       workerId: 'database-stale-delivery-worker',
       capabilities: ['deliver_package'],
       leaseSeconds: 120,
+      now: deliveryRetryAt,
     });
     assert.ok(staleClaim);
     await repository.transitionDeliveryForActiveLease({
@@ -432,10 +432,11 @@ test(
       workerId: 'database-stale-delivery-worker',
       packageVersionId: approvedPackage.id,
       packageChecksum: checksum,
-      expectedState: 'queued',
+      expectedState: 'waiting',
       state: 'running',
       incrementAttempts: true,
       nextAttemptAt: null,
+      now: deliveryRetryAt,
     });
 
     await repository.recordPackageVersion(packageVersionInput(runId, changedChecksum));

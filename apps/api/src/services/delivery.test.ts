@@ -37,19 +37,20 @@ test('approve A delivers the exact immutable package and persists the adapter re
   assert.equal((await fixture.repository.getDelivery(fixture.deliveryId))?.state, 'succeeded');
 });
 
-test('retry A preserves immutable package identity and external idempotency after an already imported response', async () => {
+test('scheduled transient retry preserves immutable package identity and external idempotency', async () => {
   const fixture = await approvedFixture('A');
   fixture.adapter.failures.push(new DeliveryTransientError('destination_timeout'));
 
   const first = await fixture.service.run(fixture.deliveryId, fixture.execution);
   await fixture.finishAttempt(first);
-  await fixture.repository.retryDelivery(fixture.deliveryId);
+  assert.equal(first.state, 'waiting');
+  assert.ok(first.retryAt > new Date('2026-07-13T10:00:00.000Z'));
+
+  fixture.advanceClock(60_000);
   const retryExecution = await fixture.claim();
   fixture.adapter.nextStatus = 'already_imported';
   const second = await fixture.service.run(fixture.deliveryId, retryExecution);
 
-  assert.equal(first.state, 'waiting');
-  assert.ok(first.retryAt > new Date('2026-07-13T10:00:00.000Z'));
   assert.equal(second.state, 'succeeded');
   assert.equal(fixture.adapter.requests[0]?.knowledgeBits.id, fixture.adapter.requests[1]?.knowledgeBits.id);
   assert.equal(fixture.adapter.requests[0]?.packageChecksum, fixture.adapter.requests[1]?.packageChecksum);

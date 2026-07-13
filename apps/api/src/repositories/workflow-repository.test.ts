@@ -636,6 +636,100 @@ test('reapproval supersedes stale delivery and claims the newly approved package
   assert.equal(await repository.claimJob({ workerId: 'other-worker', capabilities: ['deliver_package'], leaseSeconds: 60 }), null);
 });
 
+test('scheduled delivery retry requires its retry time before fencing waiting to running', async () => {
+  const { repository, now } = createRepository();
+  const packageVersionInputA = packageVersionInput('scheduled-retry');
+  await repository.createRun({
+    id: runId,
+    title: 'Scheduled delivery retry',
+    locale: 'en',
+    brief: {},
+    currentStage: 'human_review',
+    packageChecksum: packageVersionInputA.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  const packageVersion = await repository.recordPackageVersion(packageVersionInputA);
+  await repository.reviewRun({
+    runId,
+    packageChecksum: packageVersion.packageChecksum,
+    decision: 'approve',
+    reviewerId: 'review-principal',
+  });
+  const delivery = await repository.getDeliveryForPackage(runId, packageVersion.packageChecksum);
+  assert.ok(delivery);
+  const initialClaim = await repository.claimJob({
+    workerId: 'delivery-worker',
+    capabilities: ['deliver_package'],
+    leaseSeconds: 60,
+  });
+  assert.ok(initialClaim);
+  const retryAt = new Date(now.getTime() + 60_000);
+  const transition = (
+    expectedState: string,
+    state: string,
+    transitionNow: Date,
+    nextAttemptAt?: Date | null,
+  ) => (
+    repository.transitionDeliveryForActiveLease({
+      id: delivery.id,
+      jobId: initialClaim.jobId,
+      workerId: 'delivery-worker',
+      packageVersionId: packageVersion.id,
+      packageChecksum: packageVersion.packageChecksum,
+      expectedState,
+      state,
+      ...(nextAttemptAt !== undefined ? { nextAttemptAt } : {}),
+      now: transitionNow,
+    })
+  );
+  await transition('queued', 'running', now);
+  await transition('running', 'waiting', now, retryAt);
+  await repository.applyJobResult({
+    workerId: 'delivery-worker',
+    result: {
+      jobId: initialClaim.jobId,
+      packageId: runId,
+      stage: 'deliver',
+      state: 'waiting',
+      completedAt: now.toISOString(),
+      outputChecksum: null,
+      error: 'destination_timeout',
+    },
+    retryAt,
+    transition: nextTransition({
+      stage: 'deliver',
+      state: 'running',
+      revisionAttempts: 0,
+      packageChecksum: packageVersion.packageChecksum,
+      approvedChecksum: packageVersion.packageChecksum,
+    }, { type: 'job_waiting', reason: 'destination_timeout' }),
+  });
+
+  const retryClaim = await repository.claimJob({
+    workerId: 'delivery-worker',
+    capabilities: ['deliver_package'],
+    leaseSeconds: 60,
+    now: retryAt,
+  });
+  assert.ok(retryClaim);
+  const retryTransition = (transitionNow: Date) => repository.transitionDeliveryForActiveLease({
+    id: delivery.id,
+    jobId: retryClaim.jobId,
+    workerId: 'delivery-worker',
+    packageVersionId: packageVersion.id,
+    packageChecksum: packageVersion.packageChecksum,
+    expectedState: 'waiting',
+    state: 'running',
+    incrementAttempts: true,
+    nextAttemptAt: null,
+    now: transitionNow,
+  });
+
+  await assert.rejects(retryTransition(new Date(retryAt.getTime() - 1)), /transition fence/i);
+  assert.equal((await repository.getDelivery(delivery.id))?.state, 'waiting');
+  assert.equal((await retryTransition(retryAt)).state, 'running');
+});
+
 test('recordDelivery returns the existing row for its idempotency key', async () => {
   const { repository } = createRepository();
   await createRun(repository);

@@ -1163,6 +1163,8 @@ export class PrismaWorkflowStore implements WorkflowStore {
       ]);
       const jobInput = job?.input as JsonObject | undefined;
       const fenceMatches = delivery.state === input.expectedState
+        && (input.expectedState !== 'waiting'
+          || Boolean(delivery.nextAttemptAt && delivery.nextAttemptAt <= now))
         && delivery.packageVersionId === input.packageVersionId
         && delivery.packageChecksum === input.packageChecksum
         && run.currentStage === 'deliver'
@@ -2084,6 +2086,8 @@ class InMemoryWorkflowStore implements WorkflowStore {
       .find((version) => version.id === input.packageVersionId);
     const now = input.now ?? this.clock();
     const fenceMatches = delivery.state === input.expectedState
+      && (input.expectedState !== 'waiting'
+        || Boolean(delivery.nextAttemptAt && delivery.nextAttemptAt <= now))
       && delivery.packageVersionId === input.packageVersionId
       && delivery.packageChecksum === input.packageChecksum
       && run?.currentStage === 'deliver'

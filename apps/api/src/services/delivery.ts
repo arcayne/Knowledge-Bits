@@ -32,7 +32,7 @@ export class DeliveryService {
   async run(deliveryId: string, execution: DeliveryExecutionContext): Promise<DeliveryRunResult> {
     const delivery = await this.dependencies.repository.getDelivery(deliveryId);
     if (!delivery) throw new DeliveryNotFoundError('Delivery not found');
-    if (delivery.state !== 'queued') {
+    if (delivery.state !== 'queued' && delivery.state !== 'waiting') {
       throw new DeliveryConflictError(`Delivery cannot be run from state ${delivery.state}`);
     }
     const packageVersion = await this.dependencies.repository.getPackageVersionById(delivery.packageVersionId);
@@ -71,7 +71,7 @@ export class DeliveryService {
       now: this.clock(),
       ...options,
     });
-    await transition('queued', 'running', { incrementAttempts: true, nextAttemptAt: null });
+    await transition(delivery.state, 'running', { incrementAttempts: true, nextAttemptAt: null });
     const knowledgeBits: ImmutableApprovedKnowledgeBits = {
       id: packageVersion.id,
       schemaVersion: 'knowledge-bits.review-package.v1',
