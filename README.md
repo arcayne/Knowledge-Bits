@@ -91,10 +91,16 @@ DELIVERY_ADAPTER_TOKEN="local-delivery-token" \
 pnpm --filter @knowledge-bits/api exec tsx src/main.ts
 ```
 
-Artifact storage is an injected `ArtifactStorageAdapter` passed to `createApp`. A real host must inject
-an adapter that prepares uploads, inspects stored checksums and media types, and reads review bytes.
-The default API entrypoint deliberately uses the unavailable adapter, so it cannot accept artifacts
-until the host provides storage. The end-to-end test uses isolated fixture storage.
+Artifact storage is an injected `ArtifactStorageAdapter` passed to `createApp`. The production runtime
+supports Cloudflare R2 when `ARTIFACT_STORAGE_MODE=r2` and the `ARTIFACT_STORAGE_R2_*` credentials are
+present. The adapter issues short-lived signed PUT URLs, verifies the uploaded bytes and content type
+server-side, and serves review reads only after the current package authorizes the artifact. Object keys
+are server-owned and scoped as `knowledge-bits/nuglet/{runId}/{revision}/{artifactId}`.
+
+The default API entrypoint remains unavailable until storage is explicitly configured. The R2 bucket and
+credentials belong to this standalone engine. They are not Nuglet production database credentials. Set
+`ARTIFACT_STORAGE_PUBLIC_BASE_URL=https://media.nuglet.app` for the future delivery/import adapter; review
+reads currently go through the authenticated engine API.
 
 Place the review deployment behind an identity proxy that injects a signed OIDC JWT on every request.
 The app verifies the token against the configured issuer, audience, and JWKS before serving a page or
@@ -127,7 +133,6 @@ receives only its own token:
 ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
 ENGINE_WORKER_TOKEN="local-worker-token" \
 WORKER_PROVIDER_MODE="production" \
-NOTEBOOKLM_NOTEBOOK_ID="local-notebook-id" \
 NOTEBOOKLM_TRUSTED_SOURCE_HOSTS="example.org,research.example.edu" \
 PI_PROVIDER="configured-pi-provider" \
 PI_MODEL="configured-pi-model" \
@@ -138,6 +143,9 @@ pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 
 Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker. The
 control API supplies lease-scoped job inputs and permits reads only for declared artifact dependencies.
+Each run must carry its own `notebookLmNotebookId`; the engine rejects assigning one NotebookLM notebook
+to multiple runs. Do not configure a global NotebookLM notebook ID. Existing local manifests should be
+reconciled into the run records before they are processed.
 The worker captures exact trusted source bytes before accepting evidence, binds citations to those
 snapshots, and passes content to the local Pi and media adapters. Provider calls and subprocesses use
 bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration

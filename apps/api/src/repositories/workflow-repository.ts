@@ -43,6 +43,7 @@ export interface WorkflowRun {
   title: string;
   locale: string;
   brief: JsonObject;
+  notebookLmNotebookId?: string;
   currentStage: WorkflowStage;
   currentRevision: number;
   packageChecksum: string | null;
@@ -145,6 +146,7 @@ export interface CreateRunInput {
   title: string;
   locale: string;
   brief: JsonObject;
+  notebookLmNotebookId?: string;
   currentStage?: WorkflowStage;
   currentRevision?: number;
   packageChecksum?: string | null;
@@ -203,6 +205,7 @@ export interface BootstrapRunInput {
   title: string;
   locale: string;
   brief: JsonObject;
+  notebookLmNotebookId?: string;
 }
 
 export interface WorkflowJobContext {
@@ -308,6 +311,11 @@ export interface RetryDeliveryResult {
   nextAttempt: number;
 }
 
+export interface RetryStageInput {
+  runId: string;
+  stage: Exclude<WorkflowStage, 'human_review' | 'deliver'>;
+}
+
 export interface WorkflowStore {
   createRun(input: CreateRunInput): Promise<WorkflowRun>;
   bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun>;
@@ -335,6 +343,7 @@ export interface WorkflowStore {
   recordDelivery(input: RecordDeliveryInput): Promise<WorkflowDelivery>;
   transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery>;
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
+  retryStage(input: RetryStageInput): Promise<WorkflowRun>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
   recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion>;
@@ -451,6 +460,10 @@ export class WorkflowRepository implements WorkflowStore {
     return this.store.retryDelivery(deliveryId);
   }
 
+  retryStage(input: RetryStageInput): Promise<WorkflowRun> {
+    return this.store.retryStage(input);
+  }
+
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
     return this.store.reviewRun(input);
   }
@@ -491,6 +504,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         title: input.title,
         locale: input.locale,
         brief: toPrismaJson(input.brief),
+        notebookLmNotebookId: input.notebookLmNotebookId,
           currentStage,
           currentRevision: input.currentRevision ?? 1,
           packageChecksum: input.packageChecksum,
@@ -514,12 +528,22 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
   async bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun> {
     return this.prisma.$transaction(async (transaction) => {
+      if (input.notebookLmNotebookId) {
+        const existing = await transaction.run.findUnique({
+          where: { notebookLmNotebookId: input.notebookLmNotebookId },
+          select: { id: true },
+        });
+        if (existing && existing.id !== input.id) {
+          throw new WorkflowConflictError(`NotebookLM notebook ${input.notebookLmNotebookId} is already assigned to run ${existing.id}`);
+        }
+      }
       const run = await transaction.run.create({
         data: {
           id: input.id,
           title: input.title,
           locale: input.locale,
           brief: toPrismaJson(input.brief),
+          notebookLmNotebookId: input.notebookLmNotebookId,
           currentStage: 'research',
           reviewStatus: 'pending',
           stages: {
@@ -535,7 +559,10 @@ export class PrismaWorkflowStore implements WorkflowStore {
           action: ACTION_BY_STAGE.research,
           state: 'queued',
           idempotencyKey: initialJobIdempotencyKey(run.id),
-          input: toPrismaJson({ brief: input.brief }),
+          input: toPrismaJson({
+            brief: input.brief,
+            ...(input.notebookLmNotebookId ? { notebookLmNotebookId: input.notebookLmNotebookId } : {}),
+          }),
         },
       });
       return toWorkflowRun(run);
@@ -664,6 +691,48 @@ export class PrismaWorkflowStore implements WorkflowStore {
     return toWorkflowJob(job);
   }
 
+  async retryStage(input: RetryStageInput): Promise<WorkflowRun> {
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
+      const run = await transaction.run.findUnique({ where: { id: input.runId }, include: { stages: true } });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      if (run.currentStage !== input.stage) throw new WorkflowConflictError('Only the current stage can be retried');
+      const stage = run.stages.find((candidate) => candidate.name === input.stage);
+      if (!stage || stage.state !== 'needs_human') {
+        throw new WorkflowConflictError('Only a stage needing human intervention can be retried');
+      }
+      const previousJob = await transaction.job.findFirst({
+        where: { runId: input.runId, stage: input.stage, state: 'needs_human' },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (!previousJob) throw new WorkflowConflictError('No completed worker action is available to retry');
+      const now = new Date();
+      await transaction.job.create({
+        data: {
+          id: randomUUID(),
+          runId: input.runId,
+          stage: input.stage,
+          action: previousJob.action,
+          state: 'queued',
+          idempotencyKey: `workflow:${input.runId}:${input.stage}:manual-retry:${randomUUID()}`,
+          availableAt: now,
+          input: toPrismaJson({
+            ...(previousJob.input as unknown as JsonObject),
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+          }),
+        },
+      });
+      await transaction.stage.update({
+        where: { runId_name: { runId: input.runId, name: input.stage } },
+        data: { state: 'queued', reason: null },
+      });
+      return toWorkflowRun(await transaction.run.findUniqueOrThrow({
+        where: { id: input.runId },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      }));
+    });
+  }
+
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
     assertWorkerId(input.workerId);
     assertLeaseSeconds(input.leaseSeconds);
@@ -676,6 +745,33 @@ export class PrismaWorkflowStore implements WorkflowStore {
       ? Prisma.sql`AND "action" IN (${Prisma.join(input.capabilities)})`
       : Prisma.empty;
     return this.prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw(Prisma.sql`
+        WITH released AS (
+          UPDATE "Job"
+          SET "state" = 'queued',
+              "leaseOwner" = NULL,
+              "leaseExpiresAt" = NULL,
+              "executionDeadlineAt" = NULL,
+              "availableAt" = ${claimedAt},
+              "updatedAt" = ${claimedAt}
+          WHERE "state" = 'running' AND "leaseExpiresAt" <= ${claimedAt}
+          RETURNING "id", "runId", "stage"
+        )
+        UPDATE "Stage"
+        SET "state" = 'queued',
+            "reason" = NULL,
+            "updatedAt" = ${claimedAt}
+        FROM (SELECT DISTINCT "runId", "stage" FROM released) AS "released"
+        WHERE "Stage"."runId" = "released"."runId"
+          AND "Stage"."name" = "released"."stage"
+          AND "Stage"."state" = 'running'
+          AND NOT EXISTS (
+            SELECT 1 FROM "Job"
+            WHERE "Job"."runId" = "Stage"."runId"
+              AND "Job"."stage" = "Stage"."name"
+              AND "Job"."state" = 'running'
+          )
+      `);
       const rows = await transaction.$queryRaw<ClaimedJobRow[]>(Prisma.sql`
       UPDATE "Job"
       SET "state" = 'running',
@@ -917,6 +1013,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               revision: nextRevision,
               input: {
                 brief: job.run.brief as JsonObject,
+                ...(job.run.notebookLmNotebookId ? { notebookLmNotebookId: job.run.notebookLmNotebookId } : {}),
                 dependencies: nextJobDependencies(job.input as JsonObject, completedArtifacts, effect.stage),
               },
             });
@@ -939,6 +1036,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               revision: nextRevision,
               input: {
                 brief: job.run.brief as JsonObject,
+                ...(job.run.notebookLmNotebookId ? { notebookLmNotebookId: job.run.notebookLmNotebookId } : {}),
                 deliveryId,
                 packageChecksum: effect.packageChecksum,
                 packageVersionId: packageVersion.id,
@@ -1408,6 +1506,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               revision: nextRevision,
               input: {
                 brief: run.brief as JsonObject,
+                ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
                 deliveryId,
                 packageChecksum: effect.packageChecksum,
                 packageVersionId: packageVersion.id,
@@ -1442,6 +1541,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               revision: nextRevision,
               input: {
                 brief: run.brief as JsonObject,
+                ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
                 dependencies: packageArtifacts.map(toWorkflowArtifact).map(toJobArtifactDependency),
                 review: { comment: input.comment!, packageChecksum: input.packageChecksum },
               },
@@ -1583,6 +1683,7 @@ export function createInMemoryWorkflowStore(
 
 class InMemoryWorkflowStore implements WorkflowStore {
   private readonly runs = new Map<string, WorkflowRun>();
+  private readonly runsByNotebookLmNotebookId = new Map<string, string>();
   private readonly jobs = new Map<string, WorkflowJob>();
   private readonly jobsByIdempotencyKey = new Map<string, string>();
   private readonly artifactsById = new Map<string, WorkflowArtifact>();
@@ -1607,6 +1708,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       title: input.title,
       locale: input.locale,
       brief: input.brief,
+      ...(input.notebookLmNotebookId ? { notebookLmNotebookId: input.notebookLmNotebookId } : {}),
       currentStage: input.currentStage ?? 'research',
       currentRevision: input.currentRevision ?? 1,
       packageChecksum: input.packageChecksum ?? null,
@@ -1618,7 +1720,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
       updatedAt: now,
     };
     if (this.runs.has(run.id)) throw new WorkflowConflictError('Run already exists');
+    this.assertNotebookLmNotebookIdAvailable(run.notebookLmNotebookId, run.id);
     this.runs.set(run.id, run);
+    if (run.notebookLmNotebookId) this.runsByNotebookLmNotebookId.set(run.notebookLmNotebookId, run.id);
     return run;
   }
 
@@ -1634,6 +1738,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       title: input.title,
       locale: input.locale,
       brief: input.brief,
+      ...(input.notebookLmNotebookId ? { notebookLmNotebookId: input.notebookLmNotebookId } : {}),
       currentStage: 'research',
       currentRevision: 1,
       packageChecksum: null,
@@ -1644,6 +1749,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       createdAt: now,
       updatedAt: now,
     };
+    this.assertNotebookLmNotebookIdAvailable(run.notebookLmNotebookId, run.id);
     const job: WorkflowJob = {
       id: this.idGenerator(),
       runId,
@@ -1656,13 +1762,17 @@ class InMemoryWorkflowStore implements WorkflowStore {
       leaseExpiresAt: null,
       executionDeadlineAt: null,
       attempt: 0,
-      input: { brief: input.brief },
+      input: {
+        brief: input.brief,
+        ...(input.notebookLmNotebookId ? { notebookLmNotebookId: input.notebookLmNotebookId } : {}),
+      },
       result: null,
       completionReceipt: null,
       createdAt: now,
       updatedAt: now,
     };
     this.runs.set(run.id, run);
+    if (run.notebookLmNotebookId) this.runsByNotebookLmNotebookId.set(run.notebookLmNotebookId, run.id);
     this.jobs.set(job.id, job);
     this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
     return run;
@@ -1672,6 +1782,14 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const run = this.runs.get(id);
     if (!run) return null;
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
+  private assertNotebookLmNotebookIdAvailable(notebookId: string | undefined, runId: string): void {
+    if (!notebookId) return;
+    const existingRunId = this.runsByNotebookLmNotebookId.get(notebookId);
+    if (existingRunId && existingRunId !== runId) {
+      throw new WorkflowConflictError(`NotebookLM notebook ${notebookId} is already assigned to run ${existingRunId}`);
+    }
   }
 
   async listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
@@ -1771,6 +1889,47 @@ class InMemoryWorkflowStore implements WorkflowStore {
     this.jobs.set(job.id, job);
     this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
     return job;
+  }
+
+  async retryStage(input: RetryStageInput): Promise<WorkflowRun> {
+    const run = this.requireRun(input.runId);
+    if (run.currentStage !== input.stage) throw new WorkflowConflictError('Only the current stage can be retried');
+    const stage = run.stages[input.stage];
+    if (!stage || stage.state !== 'needs_human') {
+      throw new WorkflowConflictError('Only a stage needing human intervention can be retried');
+    }
+    const previousJob = [...this.jobs.values()]
+      .filter((job) => job.runId === input.runId && job.stage === input.stage && job.state === 'needs_human')
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+    if (!previousJob) throw new WorkflowConflictError('No completed worker action is available to retry');
+    const now = this.clock();
+    stage.state = 'queued';
+    stage.reason = null;
+    run.updatedAt = now;
+    const job: WorkflowJob = {
+      id: this.idGenerator(),
+      runId: input.runId,
+      stage: input.stage,
+      action: previousJob.action,
+      state: 'queued',
+      idempotencyKey: `workflow:${input.runId}:${input.stage}:manual-retry:${this.idGenerator()}`,
+      availableAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      executionDeadlineAt: null,
+      attempt: 0,
+      input: {
+        ...previousJob.input,
+        ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+      },
+      result: null,
+      completionReceipt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.jobs.set(job.id, job);
+    this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
+    return { ...run, nextRetryAt: this.nextRetryAt(run) };
   }
 
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
@@ -1978,6 +2137,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
           idempotencyKey: transitionJobIdempotencyKey(run.id, effect.stage, nextRevision),
           input: {
             brief: run.brief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
             dependencies: nextJobDependencies(job.input, completedArtifacts, effect.stage),
           },
         });
@@ -1995,7 +2155,13 @@ class InMemoryWorkflowStore implements WorkflowStore {
           stage: 'deliver',
           action: ACTION_BY_STAGE.deliver,
           idempotencyKey: deliveryJobIdempotencyKey(run.id, nextRevision, effect.packageChecksum),
-          input: { brief: run.brief, deliveryId, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
+          input: {
+            brief: run.brief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            deliveryId,
+            packageChecksum: effect.packageChecksum,
+            packageVersionId: packageVersion.id,
+          },
         });
         await this.recordDelivery({
           id: deliveryId,
@@ -2330,7 +2496,13 @@ class InMemoryWorkflowStore implements WorkflowStore {
           stage: 'deliver',
           action: ACTION_BY_STAGE.deliver,
           idempotencyKey: deliveryJobIdempotencyKey(run.id, run.currentRevision, effect.packageChecksum),
-          input: { brief: run.brief, deliveryId, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
+          input: {
+            brief: run.brief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            deliveryId,
+            packageChecksum: effect.packageChecksum,
+            packageVersionId: packageVersion.id,
+          },
         });
         await this.recordDelivery({
           id: deliveryId,
@@ -2353,6 +2525,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
           idempotencyKey: transitionJobIdempotencyKey(run.id, effect.stage, run.currentRevision),
           input: {
             brief: run.brief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
             dependencies: packageVersion.artifactInventory
               .flatMap((reference) => {
                 const artifact = this.artifactsById.get(reference.artifactId);
@@ -2756,6 +2929,7 @@ function toWorkflowRun(run: {
   title: string;
   locale: string;
   brief: Prisma.JsonValue;
+  notebookLmNotebookId: string | null;
   currentStage: string;
   currentRevision: number;
   packageChecksum: string | null;
@@ -2772,10 +2946,11 @@ function toWorkflowRun(run: {
   createdAt: Date;
   updatedAt: Date;
 }): WorkflowRun {
-  const { stages: stageRows, jobs, ...base } = run;
+  const { stages: stageRows, jobs, notebookLmNotebookId, ...base } = run;
   const stages = stageRows ? toStageMap(stageRows) : {};
   return {
     ...base,
+    ...(notebookLmNotebookId ? { notebookLmNotebookId } : {}),
     brief: base.brief as JsonObject,
     currentStage: base.currentStage as WorkflowStage,
     reviewStatus: base.reviewStatus as ReviewStatus,

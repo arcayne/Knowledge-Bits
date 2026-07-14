@@ -12,9 +12,11 @@
     "prisma:migrate:production": "tsx scripts/migrate-production.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1085.0",
+    "@aws-sdk/s3-request-presigner": "^3.1085.0",
+    "@hono/node-server": "2.0.8",
     "@knowledge-bits/contracts": "workspace:*",
     "@knowledge-bits/pipeline": "workspace:*",
-    "@hono/node-server": "2.0.8",
     "@prisma/client": "6.15.0",
     "hono": "4.12.29",
     "zod": "3.24.1"

@@ -17,7 +17,11 @@ export function registerRunRoutes(
     if (!input.success) return context.json({ error: 'Invalid run input' }, 400);
 
     try {
-      const run = await dependencies.repository.bootstrapRun(input.data);
+      const run = await dependencies.repository.bootstrapRun({
+        ...input.data,
+        notebookLmNotebookId: input.data.notebookLmNotebookId
+          ?? notebookIdFromBrief(input.data.brief),
+      });
       return context.json(workflowRunResponseSchema.parse(toRunResponse(run)), 201);
     } catch (error) {
       if (error instanceof WorkflowConflictError) {
@@ -40,6 +44,7 @@ export function registerRunRoutes(
 function toRunResponse(run: WorkflowRun) {
   return {
     ...run,
+    notebookLmNotebookId: run.notebookLmNotebookId ?? null,
     packageChecksum: run.packageChecksum,
     approvedChecksum: run.approvedChecksum,
     reviewStatus: run.reviewStatus,
@@ -47,6 +52,11 @@ function toRunResponse(run: WorkflowRun) {
     createdAt: run.createdAt.toISOString(),
     updatedAt: run.updatedAt.toISOString(),
   };
+}
+
+function notebookIdFromBrief(brief: Record<string, unknown>): string | undefined {
+  const value = brief.notebookLmNotebookId;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 async function readJson(request: Request): Promise<unknown> {

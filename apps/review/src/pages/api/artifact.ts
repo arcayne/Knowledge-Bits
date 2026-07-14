@@ -1,3 +1,5 @@
+import { runtimeEnvironment } from '../../review-proxy.mjs';
+
 export async function GET({ url, locals }: { url: URL; locals: App.Locals }): Promise<Response> {
   const runId = url.searchParams.get('runId');
   const artifactId = url.searchParams.get('artifactId');
@@ -5,8 +7,8 @@ export async function GET({ url, locals }: { url: URL; locals: App.Locals }): Pr
     return Response.json({ error: 'Valid run and artifact ids are required' }, { status: 400 });
   }
 
-  const apiUrl = import.meta.env.ENGINE_API_URL?.trim();
-  const token = import.meta.env.ENGINE_REVIEW_TOKEN?.trim();
+  const apiUrl = runtimeEnvironment(import.meta.env, 'ENGINE_API_URL');
+  const token = runtimeEnvironment(import.meta.env, 'ENGINE_REVIEW_TOKEN');
   const reviewerId = (locals as { reviewerId?: string }).reviewerId;
   if (!apiUrl || !token || !reviewerId) {
     return Response.json({ error: 'The review service is not configured' }, { status: 503 });

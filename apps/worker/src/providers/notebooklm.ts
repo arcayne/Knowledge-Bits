@@ -17,8 +17,9 @@ import {
   type ProviderExecution,
   type ProviderExecutionInput,
 } from './types.js';
+import { createHash } from 'node:crypto';
 
-const TIMEOUT_MS = 90_000;
+export const DEFAULT_NOTEBOOKLM_TIMEOUT_MS = 180_000;
 
 export interface NotebookLmProcess {
   run(input: {
@@ -68,7 +69,11 @@ export class NotebookLmProvider implements ContentProvider {
     await this.importSources(context, input.signal);
     const prompt = input.action === 'collect_sources'
       ? renderNotebookLmResearchPrompt({ topic: context.topic })
-      : renderNotebookLmCreatePrompt({ topic: context.topic, revision: input.job.revision });
+      : renderNotebookLmCreatePrompt({
+        topic: context.topic,
+        revision: input.job.revision,
+        sources: context.evidence?.sources,
+      });
     const promptVersion = input.action === 'collect_sources'
       ? NOTEBOOKLM_RESEARCH_PROMPT_VERSION
       : NOTEBOOKLM_CREATE_PROMPT_VERSION;
@@ -76,7 +81,7 @@ export class NotebookLmProvider implements ContentProvider {
     const parsed = await this.parseOrRepair(context.notebookId, prompt, response, input.signal);
     validateCitations(parsed.answer, input.action === 'create_content' ? context.evidence : undefined);
     const verified = input.action === 'collect_sources'
-      ? await this.verifyResearch(parsed.answer, input.signal)
+      ? await this.verifyResearch(parsed.answer, context, input.signal)
       : undefined;
     const parsedOutput = verified?.evidence
       ?? parseCreateOutput(parsed.answer, context.evidence);
@@ -97,9 +102,10 @@ export class NotebookLmProvider implements ContentProvider {
     };
   }
 
-  private async verifyResearch(answer: Record<string, unknown>, signal: AbortSignal) {
+  private async verifyResearch(answer: Record<string, unknown>, context: NotebookLmContext, signal: AbortSignal) {
     if (!this.options.sourceVerifier) throw new ProviderNeedsHumanError('source_verifier_unconfigured');
-    const verified = await this.options.sourceVerifier.verify(answer, signal);
+    const candidates = researchCandidates(answer, context.sourceUrls);
+    const verified = await this.options.sourceVerifier.verify({ sources: candidates }, signal);
     if (verified.evidence.acceptedSources.length === 0) {
       throw new ProviderNeedsHumanError('research_no_accepted_sources', 'quality');
     }
@@ -116,12 +122,31 @@ export class NotebookLmProvider implements ContentProvider {
 
   private async importSources(context: NotebookLmContext, signal: AbortSignal): Promise<void> {
     if (context.sourceUrls.length === 0) return;
-    const response = await this.run(['source', 'add', context.notebookId, ...context.sourceUrls.flatMap((url) => ['--url', url]), '--wait'], signal);
+    const existing = await this.listSourceUrls(context.notebookId, signal);
+    const missing = [...new Set(context.sourceUrls)].filter((url) => !existing.has(url));
+    if (missing.length === 0) return;
+    const response = await this.run(['source', 'add', context.notebookId, ...missing.flatMap((url) => ['--url', url]), '--wait'], signal);
     this.assertProcessSuccess(response);
   }
 
+  private async listSourceUrls(notebookId: string, signal: AbortSignal): Promise<Set<string>> {
+    const response = await this.run(['source', 'list', notebookId, '--json'], signal);
+    this.assertProcessSuccess(response);
+    try {
+      const parsed: unknown = JSON.parse(response.stdout);
+      if (!Array.isArray(parsed)) throw new TypeError('source list is not an array');
+      return new Set(parsed.flatMap((source) => (
+        source && typeof source === 'object' && typeof (source as { url?: unknown }).url === 'string'
+          ? [(source as { url: string }).url]
+          : []
+      )));
+    } catch {
+      throw new ProviderNeedsHumanError('notebooklm_source_list_invalid');
+    }
+  }
+
   private async query(notebookId: string, prompt: string, signal: AbortSignal) {
-    const response = await this.run(['notebook', 'query', notebookId, '--json'], signal, prompt);
+    const response = await this.run(['notebook', 'query', notebookId, prompt, '--json'], signal);
     this.assertProcessSuccess(response);
     return response;
   }
@@ -135,7 +160,8 @@ export class NotebookLmProvider implements ContentProvider {
     const parsed = parseStructuredResponse(response.stdout);
     if (parsed) return parsed;
 
-    const repaired = await this.run(['notebook', 'query', notebookId, '--json', '--repair-json'], signal, prompt);
+    const repairedPrompt = `${prompt}\n\nReturn the same answer again as one strict JSON object with no markdown fences.`;
+    const repaired = await this.run(['notebook', 'query', notebookId, repairedPrompt, '--json'], signal);
     this.assertProcessSuccess(repaired);
     const repairedParsed = parseStructuredResponse(repaired.stdout);
     if (!repairedParsed) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
@@ -147,7 +173,7 @@ export class NotebookLmProvider implements ContentProvider {
       command: 'nlm',
       args,
       ...(stdin ? { stdin } : {}),
-      timeoutMs: this.options.timeoutMs ?? TIMEOUT_MS,
+      timeoutMs: this.options.timeoutMs ?? DEFAULT_NOTEBOOKLM_TIMEOUT_MS,
       signal,
     });
     if (response.timedOut) {
@@ -175,12 +201,44 @@ function parseStructuredResponse(raw: string): { raw: string; conversationId: st
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const envelope = parsed as Record<string, unknown>;
-    if (typeof envelope.conversationId !== 'string' || !envelope.conversationId.trim()) return null;
+    const conversationId = typeof envelope.conversationId === 'string'
+      ? envelope.conversationId
+      : envelope.conversation_id;
+    if (typeof conversationId !== 'string' || !conversationId.trim()) return null;
     const answer = typeof envelope.answer === 'string' ? JSON.parse(envelope.answer) : envelope.answer;
     if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
-    return { raw, conversationId: envelope.conversationId, answer: answer as Record<string, unknown> };
+    return { raw, conversationId, answer: answer as Record<string, unknown> };
   } catch {
     return null;
+  }
+}
+
+function researchCandidates(answer: Record<string, unknown>, sourceUrls: readonly string[]) {
+  const directSources = Array.isArray(answer.sources) ? answer.sources : [];
+  const candidates = directSources.flatMap((source) => {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return [];
+    const value = source as Record<string, unknown>;
+    return typeof value.sourceId === 'string' && typeof value.title === 'string' && typeof value.url === 'string'
+      ? [{ sourceId: value.sourceId, title: value.title, url: value.url }]
+      : [];
+  });
+  if (candidates.length > 0) return candidates;
+
+  // NotebookLM may return grounded numeric citation references without URLs.
+  // In that shape, only URLs already attached to the run are eligible for verification.
+  return [...new Set(sourceUrls)].map((url) => ({
+    sourceId: `run-source-${createHash('sha256').update(url).digest('hex').slice(0, 16)}`,
+    title: sourceTitle(url),
+    url,
+  }));
+}
+
+function sourceTitle(value: string): string {
+  try {
+    const url = new URL(value);
+    return url.hostname.replace(/^www\./, '') + url.pathname.replace(/\/$/, '');
+  } catch {
+    return value;
   }
 }
 
@@ -219,9 +277,16 @@ function parseCreateOutput(answer: Record<string, unknown>, evidence: EvidenceMa
     }) : claim.citations;
     return { ...claim, citations };
   }) : answer.claims;
-  const parsed = nugletLessonV1PayloadSchema.safeParse({ ...answer, claims });
+  const claimCoverage = normalizeClaimCoverage(answer.claimCoverage);
+  const parsed = nugletLessonV1PayloadSchema.safeParse({ ...answer, claims, claimCoverage });
   if (!parsed.success) throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
   return parsed.data;
+}
+
+function normalizeClaimCoverage(value: unknown): unknown {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return value;
+  return Object.entries(value).map(([path, claimIds]) => ({ path, claimIds }));
 }
 
 function sourceIds(answer: Record<string, unknown>): string[] {

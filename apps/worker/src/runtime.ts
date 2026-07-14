@@ -67,6 +67,7 @@ export function composeWorkerProviders(options: {
         process: runtime.notebookProcess,
         context: runtime.notebookContext,
         sourceVerifier: runtime.sourceVerifier,
+        timeoutMs: configuredPositiveInteger(env, 'NOTEBOOKLM_TIMEOUT_MS', 180_000),
       })
       : new UnavailableProvider('notebooklm', ['collect_sources', 'create_content']),
     runtime.piClient && runtime.piContext
@@ -85,7 +86,6 @@ function configuredRuntime(
 ): ProviderRuntime {
   if (!engineClient) return {};
   const contexts = new LeaseScopedJobContextResolver(engineClient);
-  const notebookId = configuredValue(env, 'NOTEBOOKLM_NOTEBOOK_ID');
   const trustedHosts = commaSeparated(env.NOTEBOOKLM_TRUSTED_SOURCE_HOSTS);
   const piProvider = configuredValue(env, 'PI_PROVIDER');
   const piModel = configuredValue(env, 'PI_MODEL');
@@ -101,9 +101,9 @@ function configuredRuntime(
 
   return {
     ...(mediaConfigurationIssue ? { configurationIssues: { media: mediaConfigurationIssue } } : {}),
-    ...(notebookId && trustedHosts.length ? {
+    ...(trustedHosts.length ? {
       notebookProcess: new SpawnNotebookLmProcess(),
-      notebookContext: (input: ProviderExecutionInput) => contexts.notebook(input, notebookId),
+      notebookContext: (input: ProviderExecutionInput) => contexts.notebook(input),
       sourceVerifier: new DeterministicSourceVerifier({ trustedHosts, fetch: request }),
     } : {}),
     ...(piProvider && piModel ? {
@@ -124,8 +124,9 @@ function configuredRuntime(
 export class LeaseScopedJobContextResolver {
   constructor(private readonly client: WorkerEngineClient) {}
 
-  async notebook(input: ProviderExecutionInput, notebookId: string): Promise<NotebookLmContext> {
+  async notebook(input: ProviderExecutionInput): Promise<NotebookLmContext> {
     const brief = jobBrief(input);
+    const notebookId = notebookIdFromJob(input);
     const research = input.action === 'create_content' ? await this.verifiedResearch(input) : undefined;
     return {
       notebookId,
@@ -213,6 +214,14 @@ export class LeaseScopedJobContextResolver {
   }
 }
 
+function notebookIdFromJob(input: ProviderExecutionInput): string {
+  const value = input.job.input.notebookLmNotebookId;
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new ProviderNeedsHumanError('notebooklm_notebook_id_missing');
+  }
+  return value.trim();
+}
+
 export interface PiModelsAdapter {
   complete(input: {
     provider: string;
@@ -245,7 +254,7 @@ export class LocalPiSdkClient implements PiSdkClient {
       const response = await (this.options.models ?? new PiSdkModelsAdapter()).complete({
         provider: this.options.provider,
         model: this.options.model,
-        systemPrompt: 'Return one strict JSON object with summary and findings. Do not rewrite content or request tools.',
+        systemPrompt: 'Return one strict JSON object with summary and findings. Each finding must be exactly {code: string, severity: critical|major|minor, message: string}. Use an empty findings array when there is no issue. Do not rewrite content or request tools.',
         userPrompt: JSON.stringify({ candidate: input.candidate, evidence: input.evidence, rubric: input.rubric }),
         sessionId: input.idempotencyKey,
         signal,
@@ -515,6 +524,13 @@ function stringValue(value: unknown): string | undefined {
 
 function configuredValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
   return env[name]?.trim() || undefined;
+}
+
+function configuredPositiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const value = configuredValue(env, name);
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

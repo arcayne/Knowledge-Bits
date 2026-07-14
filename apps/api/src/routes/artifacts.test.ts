@@ -173,7 +173,7 @@ test('prepare derives the storage key on the server', async () => {
   const response = await prepareArtifact(fixture.app, claim.jobId);
   assert.equal(response.status, 201, await response.clone().text());
   const body = await response.json() as { artifactId: string; storageKey: string; requiredHeaders: Record<string, string> };
-  assert.match(body.storageKey, new RegExp(`^knowledge-bits/${runId}/1/${body.artifactId}$`));
+  assert.match(body.storageKey, new RegExp(`^knowledge-bits/nuglet/${runId}/1/${body.artifactId}$`));
   assert.equal(body.storageKey.includes('users/'), false);
   assert.deepEqual(body.requiredHeaders, { 'content-type': 'application/json' });
 });

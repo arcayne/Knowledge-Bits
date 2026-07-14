@@ -90,6 +90,7 @@ export const createRunRequestSchema = z.object({
   title: z.string().trim().min(1),
   locale: z.string().trim().min(1),
   brief: z.record(z.unknown()),
+  notebookLmNotebookId: z.string().trim().min(1).optional(),
 }).strict();
 
 export const claimJobRequestSchema = z.object({
@@ -121,6 +122,7 @@ export const workflowRunResponseSchema = z.object({
   title: z.string().min(1),
   locale: z.string().min(1),
   brief: z.record(z.unknown()),
+  notebookLmNotebookId: z.string().min(1).nullable(),
   currentStage: workflowStageSchema,
   currentRevision: z.number().int().positive(),
   packageChecksum: checksumSchema.nullable(),

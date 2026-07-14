@@ -68,5 +68,5 @@ test('documented review API environment matches the server proxy', async () => {
   assert.match(reviewCommand, /REVIEW_AUTH_AUDIENCE=/);
   assert.match(reviewCommand, /REVIEW_PUBLIC_ORIGIN=/);
   assert.doesNotMatch(reviewCommand, /ENGINE_API_BASE_URL/);
-  assert.match(proxySource, /import\.meta\.env\.ENGINE_API_URL/);
+  assert.match(proxySource, /runtimeEnvironment\(import\.meta\.env, 'ENGINE_API_URL'\)/);
 });

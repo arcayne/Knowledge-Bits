@@ -7,7 +7,9 @@ import {
 
 export const onRequest = defineMiddleware(async (context, next) => {
   try {
-    const principal = await authenticateOperator(context.request, import.meta.env);
+    const principal = await authenticateOperator(context.request, import.meta.env, {
+      allowLocalOperator: process.env.NODE_ENV !== 'production',
+    });
     (context.locals as { reviewerId?: string }).reviewerId = principal.reviewerId;
     return next();
   } catch (error) {

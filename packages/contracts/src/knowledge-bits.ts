@@ -39,7 +39,9 @@ export const artifactCompleteRequestSchema = z.object({
 }).strict();
 
 const citationSchema = z.object({
-  sourceId: z.string().uuid(),
+  // Source IDs are stable pipeline identifiers. They may be derived from a
+  // URL when a provider returns no durable source UUID.
+  sourceId: z.string().trim().min(1),
   snapshotArtifactId: z.string().uuid(),
   excerpt: z.string().min(1),
 }).strict();
@@ -62,7 +64,7 @@ const sourceCredibilitySchema = z.object({
 }).strict();
 
 const sourceIdentitySchema = {
-  sourceId: z.string().uuid(),
+  sourceId: z.string().trim().min(1),
   url: z.string().url(),
   title: z.string().min(1),
 };

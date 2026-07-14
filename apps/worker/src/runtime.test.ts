@@ -159,7 +159,7 @@ test('builds Create context from accepted source URLs instead of brief candidate
   const context = await resolver.notebook(input('create_content', dependencies, {
     title: 'Focus',
     sourceUrls: [rejectedBriefUrl],
-  }), 'notebook-1');
+  }));
 
   assert.deepEqual(context.sourceUrls, [acceptedUrl]);
   assert.deepEqual(context.evidence, evidence);
@@ -286,7 +286,7 @@ function input(
       executionDeadlineAt: '2026-07-13T10:05:00.000Z',
       attempt: 1,
       revision: 1,
-      input: { brief, dependencies },
+      input: { brief, notebookLmNotebookId: 'notebook-1', dependencies },
     },
     signal: new AbortController().signal,
   } as const;

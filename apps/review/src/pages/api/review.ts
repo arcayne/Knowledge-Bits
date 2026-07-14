@@ -1,4 +1,4 @@
-import { forwardReviewRequest } from '../../review-proxy.mjs';
+import { forwardReviewRequest, runtimeEnvironment } from '../../review-proxy.mjs';
 import {
   csrfCookieFromRequest,
   operatorErrorResponse,
@@ -14,7 +14,7 @@ export async function GET({ url, locals }: { url: URL; locals: App.Locals }): Pr
 export async function POST({ request, locals }: { request: Request; locals: App.Locals }): Promise<Response> {
   try {
     validateReviewMutation(request, {
-      expectedOrigin: import.meta.env.REVIEW_PUBLIC_ORIGIN,
+      expectedOrigin: runtimeEnvironment(import.meta.env, 'REVIEW_PUBLIC_ORIGIN'),
       cookieToken: csrfCookieFromRequest(request),
     });
   } catch (error) {
@@ -42,8 +42,8 @@ export async function POST({ request, locals }: { request: Request; locals: App.
 
 async function forward(path: string, reviewerId: string, init: RequestInit = {}): Promise<Response> {
   return forwardReviewRequest({
-    apiUrl: import.meta.env.ENGINE_API_URL,
-    token: import.meta.env.ENGINE_REVIEW_TOKEN,
+    apiUrl: runtimeEnvironment(import.meta.env, 'ENGINE_API_URL'),
+    token: runtimeEnvironment(import.meta.env, 'ENGINE_REVIEW_TOKEN'),
     reviewerId,
     path,
     init,

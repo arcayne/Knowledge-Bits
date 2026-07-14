@@ -51,6 +51,66 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
   assert.equal(result.assets?.[0]?.kind, 'source_snapshot');
 });
 
+test('accepts the NotebookLM CLI snake_case envelope and verifies run sources when citations have no URLs', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const sourceUrl = 'https://example.test/personal-finance';
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: '[]', stderr: '', exitCode: 0 },
+      { stdout: '', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify({
+          answer: JSON.stringify({
+            topic: 'Personal Finance 101',
+            source_candidates: [{ claim: 'A grounded claim', sourceId: [59], excerpts: ['Evidence'] }],
+          }),
+          conversation_id: 'conversation_snake_case',
+        }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [sourceUrl],
+      topic: 'Personal Finance 101',
+    }),
+  });
+
+  const result = await provider.execute(input('collect_sources'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.equal((result.executionReport as { conversationId: string }).conversationId, 'conversation_snake_case');
+  assert.equal(calls.length, 4);
+});
+
+test('does not re-import URLs that already exist in the NotebookLM notebook', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const sourceUrl = 'https://example.test/already-imported';
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: JSON.stringify([{ url: sourceUrl }]), stderr: '', exitCode: 0 },
+      { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [sourceUrl],
+      topic: 'focus',
+    }),
+  });
+
+  const result = await provider.execute(input('collect_sources'));
+
+  assert.equal(result.kind, 'success');
+  assert.equal(calls.length, 3);
+  assert.equal(calls.some(({ args }) => args.includes('add')), false);
+});
+
 test('classifies a provider cooldown without attempting a structured repair', async () => {
   const provider = new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,
@@ -84,7 +144,11 @@ test('uses exactly one repair request for malformed structured output', async ()
   const result = await provider.execute(input('collect_sources'));
 
   assert.equal(result.kind, 'success');
-  assert.equal(calls.filter(({ args }) => args.includes('--repair-json')).length, 1);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1]?.args.at(-1), '--json');
+  assert.equal(calls[2]?.args.at(-1), '--json');
+  assert.equal(calls[1]?.stdin, undefined);
+  assert.match(String(calls[2]?.args[3]), /strict JSON object/);
 });
 
 test('rejects malformed structured output after its one repair attempt', async () => {

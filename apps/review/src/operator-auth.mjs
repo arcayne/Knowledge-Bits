@@ -13,6 +13,11 @@ export class OperatorAuthError extends Error {
 }
 
 export async function authenticateOperator(request, env, dependencies = {}) {
+  const localOperatorId = configured(env.REVIEW_LOCAL_OPERATOR_ID ?? process.env.REVIEW_LOCAL_OPERATOR_ID);
+  if (dependencies.allowLocalOperator && localOperatorId) {
+    return { reviewerId: localOperatorId };
+  }
+
   const jwksUrl = configured(env.REVIEW_AUTH_JWKS_URL);
   const issuer = configured(env.REVIEW_AUTH_ISSUER);
   const audience = configured(env.REVIEW_AUTH_AUDIENCE);
