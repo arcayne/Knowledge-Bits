@@ -14,7 +14,15 @@ import type { ContentCandidate, EvidenceManifest } from './checks/deterministic.
 import { DeterministicSourceVerifier } from './checks/source-verifier.js';
 import type { WorkerEngineClient } from './engine-client.js';
 import { FixtureProvider } from './providers/fixture.js';
-import { MediaProviderAdapter, type MediaClient, type MediaKind } from './providers/media.js';
+import {
+  MediaProviderAdapter,
+  recipeForKind,
+  type GeneratedMedia,
+  type MediaClient,
+  type MediaKind,
+  type MediaRecipes,
+} from './providers/media.js';
+import { generationSupportArtifacts } from './recipes/support-artifacts.js';
 import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess, type ResearchSourceVerifier } from './providers/notebooklm.js';
 import { PiEditorialProvider, type PiSdkClient } from './providers/pi.js';
 import {
@@ -372,16 +380,26 @@ export class LocalMediaCommandClient implements MediaClient {
 
   async generate(input: {
     content: ContentCandidate;
-    inputChecksum: string;
+    generationInputChecksum: string;
     kinds: readonly MediaKind[];
     idempotencyKey: string;
+    heroDirection: NugletGenerationPlan['heroDirection'];
+    resolvedRecipes: MediaRecipes;
+    executionInput: ProviderExecutionInput;
     signal: AbortSignal;
-  }) {
+  }): Promise<readonly GeneratedMedia[]> {
     const result = await this.options.process.run({
       command: this.options.command,
       args: this.options.args ?? [],
-      stdin: JSON.stringify(input),
-      timeoutMs: this.options.timeoutMs ?? 120_000,
+      stdin: JSON.stringify({
+        content: input.content,
+        generationInputChecksum: input.generationInputChecksum,
+        kinds: input.kinds,
+        idempotencyKey: input.idempotencyKey,
+        heroDirection: input.heroDirection,
+        recipeSnapshots: serializeMediaRecipes(input.resolvedRecipes),
+      }),
+      timeoutMs: this.options.timeoutMs ?? 600_000,
       signal: input.signal,
     });
     if (result.timedOut) {
@@ -392,7 +410,7 @@ export class LocalMediaCommandClient implements MediaClient {
     }
     const response = parseJsonObject(result.stdout, 'media_generation_invalid_response');
     if (!Array.isArray(response.assets)) throw new ProviderNeedsHumanError('media_generation_invalid_response');
-    return response.assets.map(parseMediaAsset);
+    return response.assets.map((asset) => parseMediaAsset(asset, input));
   }
 }
 
@@ -585,22 +603,66 @@ function resolvedRecipesMatchPlan(plan: NugletGenerationPlan, recipes: ResolvedN
   });
 }
 
-function parseMediaAsset(value: unknown): {
-  kind: MediaKind;
-  mediaType: string;
-  bytes: Uint8Array;
-  inputChecksum: string;
-} {
+function parseMediaAsset(
+  value: unknown,
+  input: {
+    resolvedRecipes: MediaRecipes;
+    executionInput: ProviderExecutionInput;
+  },
+): GeneratedMedia {
   if (!isRecord(value)
-    || (value.kind !== 'hero' && value.kind !== 'infographic' && value.kind !== 'audio')
+    || (value.kind !== 'hero'
+      && value.kind !== 'infographic'
+      && value.kind !== 'audio_brief'
+      && value.kind !== 'audio_discussion')
     || typeof value.mediaType !== 'string'
     || typeof value.bytesBase64 !== 'string'
-    || typeof value.inputChecksum !== 'string') {
+    || typeof value.generationInputChecksum !== 'string'
+    || !isRecord(value.metadata)
+    || !isRecord(value.support)
+    || typeof value.support.renderedPrompt !== 'string'
+    || !value.support.renderedPrompt.trim()
+    || typeof value.support.model !== 'string'
+    || !value.support.model.trim()
+    || !Array.isArray(value.support.referenceChecksums)
+    || !value.support.referenceChecksums.every((checksum) => (
+      typeof checksum === 'string' && /^sha256:[a-f0-9]{64}$/.test(checksum)
+    ))) {
     throw new ProviderNeedsHumanError('media_generation_invalid_response');
   }
   const bytes = Buffer.from(value.bytesBase64, 'base64');
   if (bytes.byteLength === 0) throw new ProviderNeedsHumanError('media_generation_invalid_response');
-  return { kind: value.kind, mediaType: value.mediaType, bytes, inputChecksum: value.inputChecksum };
+  const support = value.support as Record<string, unknown>;
+  const recipe = recipeForKind(input.resolvedRecipes, value.kind);
+  const supportArtifacts = generationSupportArtifacts({
+    recipe,
+    prompt: Buffer.from(support.renderedPrompt as string),
+    model: support.model as string,
+    executionInput: input.executionInput,
+  }).map((artifact) => ({
+    ...artifact,
+    provenance: {
+      ...artifact.provenance,
+      referenceChecksums: support.referenceChecksums as string[],
+    },
+  }));
+  return {
+    kind: value.kind,
+    mediaType: value.mediaType,
+    bytes,
+    generationInputChecksum: value.generationInputChecksum,
+    metadata: value.metadata,
+    supportArtifacts,
+  };
+}
+
+function serializeMediaRecipes(recipes: MediaRecipes): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(recipes).map(([role, recipe]) => [role, {
+    id: recipe.id,
+    version: recipe.version,
+    checksum: recipe.checksum,
+    canonicalBase64: Buffer.from(recipe.canonicalBytes).toString('base64'),
+  }]));
 }
 
 function parseJsonObject(value: string, reason: string): Record<string, unknown> {

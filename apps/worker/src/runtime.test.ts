@@ -88,7 +88,7 @@ test('composes injected production clients and context resolvers without live cr
     piContext: async () => ({ candidate, evidence, rubric: 'Check it.' }),
     mediaClient: {
       async generate() {
-        return [{ kind: 'hero', mediaType: 'image/webp', bytes: Buffer.from('hero'), inputChecksum }];
+        return [];
       },
     },
     mediaContext: async () => ({ passedCheck: true, content: candidate, contentChecksum: inputChecksum }),
@@ -367,6 +367,7 @@ test('executes editorial inference through the local Pi SDK adapter with an abor
 
 test('executes media generation through one bounded local command adapter', async () => {
   let commandInput: Record<string, unknown> | undefined;
+  const recipes = resolvedRecipesFor(generationPlan);
   const client = new LocalMediaCommandClient({
     command: 'media-provider',
     process: {
@@ -375,7 +376,16 @@ test('executes media generation through one bounded local command adapter', asyn
         return {
           stdout: JSON.stringify({
             assets: [{
-              kind: 'hero', mediaType: 'image/webp', bytesBase64: Buffer.from('hero').toString('base64'), inputChecksum,
+              kind: 'hero',
+              mediaType: 'image/webp',
+              bytesBase64: Buffer.from('hero').toString('base64'),
+              generationInputChecksum: inputChecksum,
+              metadata: { byteSize: 4, height: 768, width: 1024 },
+              support: {
+                model: 'vertex:fixture-image',
+                referenceChecksums: [],
+                renderedPrompt: 'Rendered hero prompt.',
+              },
             }],
           }),
           stderr: '',
@@ -386,15 +396,24 @@ test('executes media generation through one bounded local command adapter', asyn
   });
   const result = await client.generate({
     content: candidate,
-    inputChecksum,
+    generationInputChecksum: inputChecksum,
     kinds: ['hero'],
     idempotencyKey: 'stable-media-key',
+    heroDirection: generationPlan.heroDirection,
+    resolvedRecipes: recipes,
+    executionInput: input('produce_assets', [], { generationPlan }),
     signal: new AbortController().signal,
   });
 
   assert.equal(Buffer.from(result[0]!.bytes).toString(), 'hero');
+  assert.equal(
+    Buffer.from(result[0]!.supportArtifacts[1]!.body).toString(),
+    'Rendered hero prompt.',
+  );
   assert.match(String(commandInput?.stdin), /stable-media-key/);
-  assert.equal(commandInput?.timeoutMs, 120_000);
+  assert.match(String(commandInput?.stdin), /canonicalBase64/);
+  assert.match(String(commandInput?.stdin), /Move from distraction to focus/);
+  assert.equal(commandInput?.timeoutMs, 600_000);
 });
 
 test('force-kills a local provider process that ignores graceful timeout termination', { timeout: 3_000 }, async () => {

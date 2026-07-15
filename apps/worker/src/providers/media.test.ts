@@ -1,0 +1,213 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import test from 'node:test';
+
+import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
+
+import { MediaProviderAdapter, type MediaClient, type MediaKind } from './media.js';
+import type { ProviderExecutionInput, ProviderSupportArtifact } from './types.js';
+import { canonicalJsonBytes } from '../recipes/file-registry.js';
+import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
+
+const checksum = 'a'.repeat(64);
+const otherChecksum = 'b'.repeat(64);
+const requiredKinds = ['hero', 'infographic', 'audio_brief', 'audio_discussion'] as const;
+
+test('media fails closed unless exactly one current-checksum asset exists for every required kind', async () => {
+  const incomplete = providerFor((request) => request.kinds.slice(0, 3).map((kind) => generated(kind)));
+  await assert.rejects(() => incomplete.execute(mediaInput()), /media_assets_incomplete/);
+
+  const duplicate = providerFor(() => [
+    generated('hero'),
+    generated('infographic'),
+    generated('audio_brief'),
+    generated('audio_brief'),
+    generated('audio_discussion'),
+  ]);
+  await assert.rejects(() => duplicate.execute(mediaInput()), /media_assets_incomplete/);
+
+  const mismatch = providerFor(() => requiredKinds.map((kind) => generated(
+    kind,
+    kind === 'audio_discussion' ? otherChecksum : checksum,
+  )));
+  await assert.rejects(() => mismatch.execute(mediaInput()), /media_input_checksum_mismatch/);
+});
+
+test('media passes four resolved recipe snapshots and per-run hero direction in one bounded request', async () => {
+  const requests: Array<Parameters<MediaClient['generate']>[0]> = [];
+  const provider = providerFor((request) => {
+    requests.push(request);
+    return request.kinds.map((kind) => generated(kind));
+  });
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0]?.kinds, requiredKinds);
+  assert.equal(requests[0]?.generationInputChecksum, checksum);
+  assert.deepEqual(requests[0]?.heroDirection, generationPlan.heroDirection);
+  assert.equal(requests[0]?.resolvedRecipes.hero.id, 'nuglet.hero');
+  assert.equal(requests[0]?.resolvedRecipes.infographic.id, 'nuglet.visual.infographic');
+  assert.equal(requests[0]?.resolvedRecipes.audioBrief.id, 'nuglet.audio.brief');
+  assert.equal(requests[0]?.resolvedRecipes.audioDiscussion.id, 'nuglet.audio.discussion');
+});
+
+test('media preserves measured metadata and recipe support evidence on all four outputs', async () => {
+  const provider = providerFor((request) => request.kinds.map((kind) => generated(kind)));
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const parsed = result.parsedOutput as {
+    assets: Array<{ kind: MediaKind; generationInputChecksum: string; metadata: Record<string, unknown> }>;
+  };
+  assert.deepEqual(parsed.assets.map(({ kind }) => kind), requiredKinds);
+  assert.ok(parsed.assets.every((asset) => asset.generationInputChecksum === checksum));
+  assert.ok(parsed.assets.every((asset) => asset.metadata.byteSize === Buffer.from(asset.kind).byteLength));
+  assert.equal(result.supportArtifacts?.length, 8);
+  assert.deepEqual(
+    result.assets?.map((asset) => ({ kind: asset.kind, provenance: asset.provenance })),
+    requiredKinds.map((kind) => ({ kind, provenance: metadataFor(kind) })),
+  );
+});
+
+function providerFor(generate: (request: Parameters<MediaClient['generate']>[0]) => unknown) {
+  const client = {
+    async generate(request: Parameters<MediaClient['generate']>[0]) {
+      return generate(request);
+    },
+  } as unknown as MediaClient;
+  return new MediaProviderAdapter({
+    client,
+    context: async () => ({
+      passedCheck: true,
+      content: candidate,
+      contentChecksum: checksum,
+      generationPlan,
+      resolvedRecipes,
+    }),
+  });
+}
+
+function generated(kind: MediaKind, generationInputChecksum = checksum) {
+  return {
+    kind,
+    mediaType: kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
+    bytes: Buffer.from(kind),
+    generationInputChecksum,
+    metadata: metadataFor(kind),
+    supportArtifacts: supportFor(kind),
+  };
+}
+
+function metadataFor(kind: MediaKind): Record<string, unknown> {
+  const byteSize = Buffer.from(kind).byteLength;
+  return kind.startsWith('audio_')
+    ? {
+      byteSize,
+      durationSeconds: kind === 'audio_brief' ? 91.25 : 287.5,
+      transcript: `${kind} final transcript`,
+      transcriptAudioChecksum: `sha256:${createHash('sha256').update(kind).digest('hex')}`,
+      transcriptSource: kind === 'audio_brief' ? 'notebooklm' : 'vertex_gemini',
+    }
+    : { byteSize, width: kind === 'hero' ? 1024 : 1536, height: kind === 'hero' ? 768 : 2752 };
+}
+
+function supportFor(kind: MediaKind): ProviderSupportArtifact[] {
+  const recipe = recipeFor(kind);
+  const prompt = Buffer.from(`Rendered ${kind} prompt.`);
+  const provenance = {
+    recipeId: recipe.id,
+    recipeVersion: recipe.version,
+    recipeChecksum: recipe.checksum,
+    promptChecksum: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
+    model: kind === 'hero' ? 'vertex:fixture-image' : 'notebooklm-cli:fixture',
+    referenceChecksums: kind === 'hero' ? heroReferenceChecksums : [],
+  };
+  return [{
+    kind: 'generation.recipe.snapshot',
+    mediaType: 'application/json',
+    body: recipe.canonicalBytes,
+    inputChecksum: null,
+    provenance,
+  }, {
+    kind: 'generation.prompt.rendered',
+    mediaType: 'text/plain',
+    body: prompt,
+    inputChecksum: recipe.checksum.replace(/^sha256:/, ''),
+    provenance,
+  }];
+}
+
+function recipeFor(kind: MediaKind): ResolvedRecipe {
+  if (kind === 'hero') return resolvedRecipes.hero;
+  if (kind === 'infographic') return resolvedRecipes.infographic;
+  if (kind === 'audio_brief') return resolvedRecipes.audioBrief;
+  return resolvedRecipes.audioDiscussion;
+}
+
+const heroReferenceChecksums = [`sha256:${'1'.repeat(64)}`, `sha256:${'2'.repeat(64)}`];
+const generationPlan: NugletGenerationPlan = {
+  contentKind: 'nuglet.lesson.v1',
+  schemaVersion: '1.1.0',
+  recipes: {
+    story: binding('nuglet.lesson.story', '3'),
+    playbook: binding('nuglet.lesson.playbook', '4'),
+    challenge: binding('nuglet.challenge', '5'),
+    infographic: binding('nuglet.visual.infographic', '6'),
+    audioBrief: binding('nuglet.audio.brief', '7'),
+    audioDiscussion: binding('nuglet.audio.discussion', '8'),
+    hero: binding('nuglet.hero', '9'),
+    editorialQa: binding('nuglet.qa.editorial', '0'),
+  },
+  heroDirection: {
+    concept: 'Move from distraction to focus',
+    metaphor: 'One stone settling beside a clear path',
+    compositionFamily: 'asymmetrical-story',
+    mustInclude: ['one focal object'],
+    mustAvoid: ['rigid symmetry'],
+  },
+};
+
+const resolvedRecipes = Object.fromEntries(Object.entries(generationPlan.recipes).map(([role, recipeBinding]) => {
+  const value = recipeBinding.id === 'nuglet.hero'
+    ? { ...recipeBinding, referenceAssets: heroReferenceChecksums.map((referenceChecksum) => ({ checksum: referenceChecksum })) }
+    : recipeBinding;
+  const canonicalBytes = canonicalJsonBytes(value);
+  return [role, { ...recipeBinding, canonicalBytes, value }];
+})) as unknown as ResolvedNugletRecipes;
+
+function binding<Id extends NugletGenerationPlan['recipes'][keyof NugletGenerationPlan['recipes']]['id']>(id: Id, digit: string) {
+  return { id, version: '1.0.0', checksum: `sha256:${digit.repeat(64)}` } as const;
+}
+
+const candidate = {
+  title: 'Return to one task',
+  takeaway: 'A written next step makes returning easier.',
+  action: 'Write one next task and work on it for five minutes.',
+  depths: { quick: 'Quick.', core: 'Core.', deep: 'Deep.' },
+  claims: [],
+  claimCoverage: [],
+} as never;
+
+function mediaInput(): ProviderExecutionInput {
+  return {
+    action: 'produce_assets',
+    idempotencyKey: 'operation_fixture',
+    job: {
+      jobId: '33333333-3333-4333-8333-333333333333',
+      packageId: '44444444-4444-4444-8444-444444444444',
+      stage: 'produce_assets',
+      claimedBy: 'test-worker',
+      claimedAt: '2026-07-13T10:00:00.000Z',
+      leaseExpiresAt: '2026-07-13T10:02:00.000Z',
+      executionDeadlineAt: '2026-07-13T10:05:00.000Z',
+      attempt: 1,
+      revision: 1,
+      input: { brief: { generationPlan }, dependencies: [] },
+    },
+    signal: new AbortController().signal,
+  };
+}
