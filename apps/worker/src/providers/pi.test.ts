@@ -23,7 +23,7 @@ test('Pi receives only review context and execution controls and records editori
 
   assert.equal(result.kind, 'success');
   assert.deepEqual(Object.keys(request ?? {}).sort(), [
-    'candidate', 'evidence', 'idempotencyKey', 'renderedPrompt', 'rubric', 'signal',
+    'candidate', 'evidence', 'idempotencyKey', 'rubric', 'signal',
   ]);
   if (result.kind !== 'success') return;
   const report = result.executionReport as { promptVersion: string; provider: string; renderedPrompt: string };
@@ -32,7 +32,7 @@ test('Pi receives only review context and execution controls and records editori
   assert.match(report.renderedPrompt, /Check source faithfulness/);
 });
 
-test('sends the trusted editorial recipe in the exact Pi prompt and emits one immutable artifact pair', async () => {
+test('does not activate the editorial recipe before the Story and Playbook task', async () => {
   let request: Record<string, unknown> | undefined;
   const editorialRecipe = resolvedRecipe('nuglet.qa.editorial', {
     id: 'nuglet.qa.editorial',
@@ -41,7 +41,6 @@ test('sends the trusted editorial recipe in the exact Pi prompt and emits one im
     rubric: ['Reject unsupported claims.'],
   });
   const provider = new PiEditorialProvider({
-    model: 'pi-test-model',
     client: {
       async check(input) {
         request = input as unknown as Record<string, unknown>;
@@ -61,14 +60,8 @@ test('sends the trusted editorial recipe in the exact Pi prompt and emits one im
 
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
-  const renderedPrompt = String(request?.renderedPrompt);
-  assert.match(renderedPrompt, /Reject unsupported claims/);
-  assert.deepEqual(result.supportArtifacts?.map(({ kind }) => kind), [
-    'generation.recipe.snapshot',
-    'generation.prompt.rendered',
-  ]);
-  assert.deepEqual(result.supportArtifacts?.[0]?.body, editorialRecipe.canonicalBytes);
-  assert.equal(Buffer.from(result.supportArtifacts?.[1]?.body ?? []).toString('utf8'), renderedPrompt);
+  assert.doesNotMatch(JSON.stringify(request), /Reject unsupported claims/);
+  assert.equal(result.supportArtifacts, undefined);
 });
 
 test('Pi blocks critical and unsupported-claim findings without a rewrite or scheduling interface', async () => {

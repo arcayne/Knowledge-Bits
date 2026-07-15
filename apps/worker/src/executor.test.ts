@@ -303,7 +303,7 @@ test('uploads immutable recipe and prompt support artifacts during a non-media s
   }
 });
 
-test('rejects omitted or empty generation support artifacts for a Nuglet generation job', async (context) => {
+test('keeps generation support artifacts optional for current Nuglet jobs', async (context) => {
   for (const supportArtifacts of [undefined, []] as const) {
     await context.test(supportArtifacts === undefined ? 'omitted support artifacts' : 'empty support artifacts', async () => {
       const client = new FakeEngineClient();
@@ -315,9 +315,12 @@ test('rejects omitted or empty generation support artifacts for a Nuglet generat
 
       await executor.execute(nugletJob('research'));
 
-      assert.equal(client.completedArtifacts.length, 0);
-      assert.equal(client.results[0]?.result.state, 'needs_human');
-      assert.equal(client.results[0]?.result.error, 'generation_provenance_missing');
+      assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+        'raw_response',
+        'parsed_output',
+        'generation.execution.report',
+      ]);
+      assert.equal(client.results[0]?.result.state, 'done');
     });
   }
 });
@@ -544,6 +547,8 @@ test('removes credentials, path fields, and embedded absolute paths from generat
           `Could not load:/mnt/recipes/manifest.json with token=${credential}`,
           'connect postgresql://worker:supersecret@db.internal/app',
           'open `/srv/recipes/manifest.json` or </opt/worker/config.json>',
+          'open "/Users/name/My Project/private.json" or <C:\\Build Output\\private.json>',
+          "open '/srv/My Project/private.json' or `D:\\Build Output\\private.json`",
         ].join('; '),
         safeSetting: 'kept',
       },
@@ -570,6 +575,8 @@ test('removes credentials, path fields, and embedded absolute paths from generat
     assert.equal(report.includes('postgresql://worker:'), false);
     assert.equal(report.includes('`/srv/recipes/manifest.json`'), false);
     assert.equal(report.includes('</opt/worker/config.json>'), false);
+    assert.equal(report.includes('Project/private.json'), false);
+    assert.equal(report.includes('Output\\\\private.json'), false);
     assert.equal(report.includes(credential), false);
     assert.match(report, /safeSetting/);
     const recipeProvenance = JSON.stringify(client.completedArtifacts.find(

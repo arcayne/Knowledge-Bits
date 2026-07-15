@@ -124,49 +124,7 @@ test('media requires a passed check and records the current content checksum on 
   assert.deepEqual((calls[0] as { kinds: string[] }).kinds, ['hero']);
 });
 
-test('sends trusted recipe bytes in the exact media prompt and emits one immutable artifact pair', async () => {
-  let request: Parameters<MediaClient['generate']>[0] | undefined;
-  const heroRecipe = resolvedRecipe('nuglet.hero', {
-    id: 'nuglet.hero',
-    version: '1.0.0',
-    status: 'approved',
-    direction: 'Use one clear focal object.',
-  });
-  const provider = new MediaProviderAdapter({
-    model: 'media-test-model',
-    client: {
-      async generate(input) {
-        request = input;
-        return [{ kind: 'hero', mediaType: 'image/webp', bytes: Buffer.from('asset'), inputChecksum: input.inputChecksum }];
-      },
-    },
-    context: async () => ({
-      passedCheck: true,
-      content: candidate,
-      contentChecksum: checksum,
-      generationPlan: {} as never,
-      resolvedRecipes: { hero: heroRecipe },
-    }),
-    kinds: ['hero'],
-  });
-
-  const result = await provider.execute(mediaInput());
-
-  assert.equal(result.kind, 'success');
-  if (result.kind !== 'success') return;
-  assert.match(String(request && 'renderedPrompt' in request ? request.renderedPrompt : ''), /Use one clear focal object/);
-  assert.deepEqual(result.supportArtifacts?.map(({ kind }) => kind), [
-    'generation.recipe.snapshot',
-    'generation.prompt.rendered',
-  ]);
-  assert.deepEqual(result.supportArtifacts?.[0]?.body, heroRecipe.canonicalBytes);
-  assert.equal(
-    Buffer.from(result.supportArtifacts?.[1]?.body ?? []).toString('utf8'),
-    request && 'renderedPrompt' in request ? request.renderedPrompt : undefined,
-  );
-});
-
-test('uses one trusted recipe and prompt pair for each media request', async () => {
+test('does not split media into recipe-driven calls before the typed media task', async () => {
   const recipes = {
     hero: resolvedRecipe('nuglet.hero', { id: 'nuglet.hero', version: '1.0.0', direction: 'Hero direction.' }),
     infographic: resolvedRecipe('nuglet.visual.infographic', { id: 'nuglet.visual.infographic', version: '1.0.0', direction: 'Infographic direction.' }),
@@ -174,12 +132,15 @@ test('uses one trusted recipe and prompt pair for each media request', async () 
   };
   const requests: Array<Parameters<MediaClient['generate']>[0]> = [];
   const provider = new MediaProviderAdapter({
-    model: 'media-test-model',
     client: {
       async generate(input) {
         requests.push(input);
-        const kind = input.kinds[0]!;
-        return [{ kind, mediaType: kind === 'audio' ? 'audio/mpeg' : 'image/webp', bytes: Buffer.from(kind), inputChecksum: input.inputChecksum }];
+        return input.kinds.map((kind) => ({
+          kind,
+          mediaType: kind === 'audio' ? 'audio/mpeg' : 'image/webp',
+          bytes: Buffer.from(kind),
+          inputChecksum: input.inputChecksum,
+        }));
       },
     },
     context: async () => ({
@@ -195,15 +156,11 @@ test('uses one trusted recipe and prompt pair for each media request', async () 
 
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
-  assert.deepEqual(requests.map(({ kinds }) => kinds), [['hero'], ['infographic'], ['audio']]);
-  assert.equal(new Set(requests.map(({ idempotencyKey }) => idempotencyKey)).size, 3);
-  assert.equal(result.supportArtifacts?.filter(({ kind }) => kind === 'generation.recipe.snapshot').length, 3);
-  assert.equal(result.supportArtifacts?.filter(({ kind }) => kind === 'generation.prompt.rendered').length, 3);
-  assert.deepEqual(
-    result.supportArtifacts?.filter(({ kind }) => kind === 'generation.prompt.rendered')
-      .map(({ body }) => Buffer.from(body).toString('utf8')),
-    requests.map(({ renderedPrompt }) => renderedPrompt),
-  );
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0]?.kinds, ['hero', 'infographic', 'audio']);
+  assert.equal(requests[0]?.idempotencyKey, 'operation_fixture');
+  assert.equal('renderedPrompt' in requests[0]!, false);
+  assert.equal(result.supportArtifacts, undefined);
 });
 
 test('media rejects a failed check or an asset bound to a different content checksum', async () => {

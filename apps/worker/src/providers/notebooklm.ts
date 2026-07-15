@@ -9,8 +9,6 @@ import {
 import type { EvidenceManifest, GroundedClaim } from '../checks/deterministic.js';
 import type { VerifiedResearchEvidence } from '../checks/source-verifier.js';
 import { nugletLessonV1PayloadSchema, type NugletGenerationPlan } from '@knowledge-bits/contracts';
-import { renderPromptSections } from '../recipes/file-registry.js';
-import { generationSupportArtifacts } from '../recipes/support-artifacts.js';
 import type { ResolvedNugletRecipes } from '../recipes/types.js';
 
 import {
@@ -72,23 +70,13 @@ export class NotebookLmProvider implements ContentProvider {
     const context = await this.options.context(input);
     const cliVersion = await this.version(input.signal);
     await this.importSources(context, input.signal);
-    const basePrompt = input.action === 'collect_sources'
+    const prompt = input.action === 'collect_sources'
       ? renderNotebookLmResearchPrompt({ topic: context.topic })
       : renderNotebookLmCreatePrompt({
         topic: context.topic,
         revision: input.job.revision,
         sources: context.evidence?.sources,
       });
-    const recipe = context.generationPlan ? context.resolvedRecipes?.story : undefined;
-    if (context.generationPlan && !recipe) throw new ProviderNeedsHumanError('generation_recipe_resolution_missing');
-    const promptBytes = recipe
-      ? renderPromptSections([
-        basePrompt,
-        'Resolved generation recipe (canonical JSON):',
-        Buffer.from(recipe.canonicalBytes).toString('utf8'),
-      ])
-      : renderPromptSections([basePrompt]);
-    const prompt = Buffer.from(promptBytes).toString('utf8');
     const promptVersion = input.action === 'collect_sources'
       ? NOTEBOOKLM_RESEARCH_PROMPT_VERSION
       : NOTEBOOKLM_CREATE_PROMPT_VERSION;
@@ -113,14 +101,6 @@ export class NotebookLmProvider implements ContentProvider {
         renderedPrompt: prompt,
         sourceIds: sourceIds(parsed.answer),
       },
-      ...(recipe ? {
-        supportArtifacts: parsed.prompts.flatMap((renderedPrompt) => generationSupportArtifacts({
-          recipe,
-          prompt: Buffer.from(renderedPrompt),
-          model: `notebooklm-cli:${cliVersion}`,
-          executionInput: input,
-        })),
-      } : {}),
       ...(verified ? { assets: verified.snapshots } : {}),
     };
   }
@@ -179,16 +159,16 @@ export class NotebookLmProvider implements ContentProvider {
     prompt: string,
     response: { stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean },
     signal: AbortSignal,
-  ): Promise<{ raw: string; conversationId: string; answer: Record<string, unknown>; prompts: readonly string[] }> {
+  ): Promise<{ raw: string; conversationId: string; answer: Record<string, unknown> }> {
     const parsed = parseStructuredResponse(response.stdout);
-    if (parsed) return { ...parsed, prompts: [prompt] };
+    if (parsed) return parsed;
 
     const repairedPrompt = `${prompt}\n\nReturn the same answer again as one strict JSON object with no markdown fences.`;
     const repaired = await this.run(['notebook', 'query', notebookId, repairedPrompt, '--json'], signal);
     this.assertProcessSuccess(repaired);
     const repairedParsed = parseStructuredResponse(repaired.stdout);
     if (!repairedParsed) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
-    return { ...repairedParsed, prompts: [prompt, repairedPrompt] };
+    return repairedParsed;
   }
 
   private async run(args: readonly string[], signal: AbortSignal, stdin?: string) {

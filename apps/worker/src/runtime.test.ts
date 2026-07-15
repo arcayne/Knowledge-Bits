@@ -339,7 +339,6 @@ test('executes editorial inference through the local Pi SDK adapter with an abor
     candidate,
     evidence,
     rubric: 'Check it.',
-    renderedPrompt: 'Rendered editorial prompt',
     idempotencyKey: 'stable-key',
     signal,
   });
@@ -372,12 +371,6 @@ test('executes media generation through one bounded local command adapter', asyn
     content: candidate,
     inputChecksum,
     kinds: ['hero'],
-    renderedPrompt: JSON.stringify({
-      content: candidate,
-      inputChecksum,
-      kinds: ['hero'],
-      idempotencyKey: 'stable-media-key',
-    }),
     idempotencyKey: 'stable-media-key',
     signal: new AbortController().signal,
   });

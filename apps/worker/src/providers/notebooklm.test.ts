@@ -53,7 +53,7 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
   assert.equal(result.assets?.[0]?.kind, 'source_snapshot');
 });
 
-test('sends trusted recipe bytes in the exact NotebookLM prompt and emits one immutable artifact pair', async () => {
+test('does not activate Story recipe semantics before the Story and Playbook task', async () => {
   const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const storyRecipe = resolvedRecipe('nuglet.lesson.story', {
     id: 'nuglet.lesson.story',
@@ -81,13 +81,8 @@ test('sends trusted recipe bytes in the exact NotebookLM prompt and emits one im
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
   const prompt = String(calls[1]?.args[3]);
-  assert.match(prompt, /Keep the research grounded/);
-  assert.deepEqual(result.supportArtifacts?.map(({ kind }) => kind), [
-    'generation.recipe.snapshot',
-    'generation.prompt.rendered',
-  ]);
-  assert.deepEqual(result.supportArtifacts?.[0]?.body, storyRecipe.canonicalBytes);
-  assert.equal(Buffer.from(result.supportArtifacts?.[1]?.body ?? []).toString('utf8'), prompt);
+  assert.doesNotMatch(prompt, /Keep the research grounded/);
+  assert.equal(result.supportArtifacts, undefined);
 });
 
 test('accepts the NotebookLM CLI snake_case envelope and verifies run sources when citations have no URLs', async () => {

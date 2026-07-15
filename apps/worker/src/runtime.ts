@@ -88,14 +88,12 @@ export function composeWorkerProviders(options: {
       ? new PiEditorialProvider({
         client: runtime.piClient,
         context: trustedContextResolver(runtime.piContext, runtime.recipeBindingVerifier),
-        model: configuredValue(env, 'PI_MODEL'),
       })
       : new UnavailableProvider('pi', ['check_content']),
     runtime.mediaClient && runtime.mediaContext
       ? new MediaProviderAdapter({
         client: runtime.mediaClient,
         context: trustedContextResolver(runtime.mediaContext, runtime.recipeBindingVerifier),
-        model: configuredValue(env, 'MEDIA_GENERATION_MODEL') ?? 'media-command',
       })
       : new UnavailableProvider('media', ['produce_assets'], runtime.configurationIssues?.media),
   ];
@@ -281,7 +279,6 @@ export class LocalPiSdkClient implements PiSdkClient {
     candidate: ContentCandidate;
     evidence: EvidenceManifest;
     rubric: string;
-    renderedPrompt: string;
     idempotencyKey: string;
     signal: AbortSignal;
   }): Promise<unknown> {
@@ -292,7 +289,7 @@ export class LocalPiSdkClient implements PiSdkClient {
         provider: this.options.provider,
         model: this.options.model,
         systemPrompt: 'Return one strict JSON object with summary and findings. Each finding must be exactly {code: string, severity: critical|major|minor, message: string}. Use an empty findings array when there is no issue. Do not rewrite content or request tools.',
-        userPrompt: input.renderedPrompt,
+        userPrompt: JSON.stringify({ candidate: input.candidate, evidence: input.evidence, rubric: input.rubric }),
         sessionId: input.idempotencyKey,
         signal,
       });
@@ -352,14 +349,13 @@ export class LocalMediaCommandClient implements MediaClient {
     content: ContentCandidate;
     inputChecksum: string;
     kinds: readonly MediaKind[];
-    renderedPrompt: string;
     idempotencyKey: string;
     signal: AbortSignal;
   }) {
     const result = await this.options.process.run({
       command: this.options.command,
       args: this.options.args ?? [],
-      stdin: input.renderedPrompt,
+      stdin: JSON.stringify(input),
       timeoutMs: this.options.timeoutMs ?? 120_000,
       signal: input.signal,
     });

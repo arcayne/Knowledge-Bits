@@ -339,13 +339,10 @@ function validateGenerationProvenance(
   job: JobClaim,
   provider: string,
   artifacts: readonly ProviderSupportArtifact[],
-  required: boolean,
+  bindToPlan: boolean,
 ): Readonly<Record<string, unknown>> | undefined {
   const evidenceArtifacts = artifacts.filter(({ kind }) => kind !== 'generation.execution.report');
-  if (evidenceArtifacts.length === 0) {
-    if (!required) return undefined;
-    throw new GenerationProvenanceError('generation_provenance_missing');
-  }
+  if (evidenceArtifacts.length === 0) return undefined;
   const executorProvenance = executorProvenanceFor(job, provider);
   const groups = new Map<string, Array<{ artifact: ProviderSupportArtifact; provenance: GenerationProvenance }>>();
   for (const artifact of evidenceArtifacts) {
@@ -378,7 +375,7 @@ function validateGenerationProvenance(
     if (group.some(({ provenance }) => !sameGenerationProvenance(provenance, expected))) {
       throw new GenerationProvenanceError('generation_provenance_conflict');
     }
-    if (required && !recipeIsBoundToJobPlan(job, expected)) {
+    if (bindToPlan && !recipeIsBoundToJobPlan(job, expected)) {
       throw new GenerationProvenanceError('generation_provenance_recipe_mismatch');
     }
     if (expected.recipeChecksum !== prefixedChecksum(recipeSnapshots[0]!.artifact.body)
@@ -510,6 +507,10 @@ function redactString(value: string, secrets: readonly string[]): string {
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
     .replace(/\b(?:api.?key|credential|password|secret|token)\s*[=:]\s*[^\s,;]+/gi, '[REDACTED]');
   const withoutPaths = withoutCredentialLiterals
+    .replace(/"((?:file:\/\/|~[\\/]|[A-Za-z]:[\\/]|\/(?!\/))[^"\r\n]+)"/gi, '"[REDACTED_PATH]"')
+    .replace(/'((?:file:\/\/|~[\\/]|[A-Za-z]:[\\/]|\/(?!\/))[^'\r\n]+)'/gi, "'[REDACTED_PATH]'")
+    .replace(/`((?:file:\/\/|~[\\/]|[A-Za-z]:[\\/]|\/(?!\/))[^`\r\n]+)`/gi, '`[REDACTED_PATH]`')
+    .replace(/<((?:file:\/\/|~[\\/]|[A-Za-z]:[\\/]|\/(?!\/))[^>\r\n]+)>/gi, '<[REDACTED_PATH]>')
     .replace(/file:\/\/[^\s"'`<>{}\[\]()]+/gi, '[REDACTED_PATH]')
     .replace(/~[\\/][^\s"'`<>{}\[\]()]+|[A-Za-z]:[\\/][^\s"'`<>{}\[\]()]+|(?<![A-Za-z0-9._-])\/(?!\/)[^\s"'`<>{}\[\]()]+/g, '[REDACTED_PATH]');
   return safeUrls.reduce((safe, url, index) => safe.replaceAll(`__SAFE_URL_${index}__`, url), withoutPaths);
