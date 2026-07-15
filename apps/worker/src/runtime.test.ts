@@ -467,8 +467,8 @@ const generationPlan = {
     descriptor: {
       artifacts: {
         infographic: baselineArtifact('nuglet.visual.infographic', 'infographic-artifact', 'notebooklm/infographic.webp'),
-        audioBrief: baselineArtifact('nuglet.audio.brief', 'brief-artifact', 'audio/brief.m4a'),
-        audioDiscussion: baselineArtifact('nuglet.audio.discussion', 'discussion-artifact', 'audio/discussion.m4a'),
+        audioBrief: baselineArtifact('nuglet.audio.brief', 'brief-artifact', 'audio/notebooklm-short-brief.m4a'),
+        audioDiscussion: baselineArtifact('nuglet.audio.discussion', 'discussion-artifact', 'audio/notebooklm-medium-debate.m4a'),
       },
       notebookId: 'notebook-fixture',
       runFolder: 'apps/nuglet-lab/outputs/fixture-run',
@@ -478,10 +478,12 @@ const generationPlan = {
   } as const,
 };
 
-function baselineArtifact(recipeId: string, artifactId: string, path: string) {
+function baselineArtifact<Path extends string>(recipeId: string, artifactId: string, path: Path) {
   const prompt = Buffer.from(`Generate ${artifactId}`);
   return {
-    checksum: `sha256:${'b'.repeat(64)}`,
+    checksum: `sha256:${(
+      artifactId === 'brief-artifact' ? 'b' : artifactId === 'discussion-artifact' ? 'c' : 'd'
+    ).repeat(64)}`,
     generation: {
       artifactId,
       model: 'notebooklm-cli:fixture',

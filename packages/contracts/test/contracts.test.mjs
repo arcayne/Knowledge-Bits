@@ -67,7 +67,9 @@ function validMediaBaseline() {
     recipe: { id: recipeId, version: '1.0.0', checksum: `sha256:${checksum}` },
   });
   const artifact = (recipeId, artifactId, path) => ({
-    checksum: `sha256:${checksum}`,
+    checksum: `sha256:${(
+      artifactId === 'brief-artifact' ? 'b' : artifactId === 'discussion-artifact' ? 'c' : 'a'
+    ).repeat(64)}`,
     generation: evidence(recipeId, artifactId, `Generate ${artifactId}`),
     mediaType: recipeId.includes('audio') ? 'audio/mp4' : 'image/webp',
     path,
@@ -79,8 +81,8 @@ function validMediaBaseline() {
     descriptor: {
       artifacts: {
         infographic: artifact('nuglet.visual.infographic', 'infographic-artifact', 'notebooklm/infographic.webp'),
-        audioBrief: artifact('nuglet.audio.brief', 'brief-artifact', 'audio/brief.m4a'),
-        audioDiscussion: artifact('nuglet.audio.discussion', 'discussion-artifact', 'audio/discussion.m4a'),
+        audioBrief: artifact('nuglet.audio.brief', 'brief-artifact', 'audio/notebooklm-short-brief.m4a'),
+        audioDiscussion: artifact('nuglet.audio.discussion', 'discussion-artifact', 'audio/notebooklm-medium-debate.m4a'),
       },
       notebookId: 'notebook-fixture',
       runFolder: 'apps/nuglet-lab/outputs/fixture-run',
@@ -384,8 +386,18 @@ test('validates the complete Nuglet generation plan while keeping other briefs g
   const generationPlan = validGenerationPlan();
   assert.deepEqual(nugletGenerationPlanSchema.parse(generationPlan), generationPlan);
   assert.deepEqual(
-    knowledgeBitsRunBriefSchema.parse({ generationPlan, productMetadata: { campaign: 'pilot' } }),
-    { generationPlan, productMetadata: { campaign: 'pilot' } },
+    knowledgeBitsRunBriefSchema.parse({
+      baseline: { runId: 'fixture-run' },
+      generationPlan,
+      notebookLmNotebookId: 'notebook-fixture',
+      productMetadata: { campaign: 'pilot' },
+    }),
+    {
+      baseline: { runId: 'fixture-run' },
+      generationPlan,
+      notebookLmNotebookId: 'notebook-fixture',
+      productMetadata: { campaign: 'pilot' },
+    },
   );
   assert.deepEqual(
     knowledgeBitsRunBriefSchema.parse({ contentKind: 'another.product.v1', arbitrary: true }),
@@ -432,6 +444,43 @@ test('requires an inspectable immutable media baseline with complete NotebookLM 
   const escapingPath = validGenerationPlan();
   escapingPath.mediaBaseline.descriptor.artifacts.infographic.path = '../other-run/infographic.webp';
   assert.equal(nugletGenerationPlanSchema.safeParse(escapingPath).success, false);
+});
+
+test('binds the Nuglet media baseline identity to the enclosing run brief', () => {
+  const generationPlan = validGenerationPlan();
+  const brief = {
+    baseline: { runId: 'fixture-run' },
+    generationPlan,
+    notebookLmNotebookId: 'notebook-fixture',
+  };
+  assert.equal(knowledgeBitsRunBriefSchema.safeParse(brief).success, true);
+
+  const wrongRun = structuredClone(brief);
+  wrongRun.baseline.runId = 'another-run';
+  assert.equal(knowledgeBitsRunBriefSchema.safeParse(wrongRun).success, false);
+
+  const wrongNotebook = structuredClone(brief);
+  wrongNotebook.notebookLmNotebookId = 'another-notebook';
+  assert.equal(knowledgeBitsRunBriefSchema.safeParse(wrongNotebook).success, false);
+});
+
+test('requires distinct approved Brief and Discussion baseline artifacts', () => {
+  const wrongBriefPath = validGenerationPlan();
+  wrongBriefPath.mediaBaseline.descriptor.artifacts.audioBrief.path = 'audio/brief.m4a';
+  assert.equal(nugletGenerationPlanSchema.safeParse(wrongBriefPath).success, false);
+
+  const discussionAliasesBrief = validGenerationPlan();
+  discussionAliasesBrief.mediaBaseline.descriptor.artifacts.audioDiscussion = structuredClone(
+    discussionAliasesBrief.mediaBaseline.descriptor.artifacts.audioBrief,
+  );
+  assert.equal(nugletGenerationPlanSchema.safeParse(discussionAliasesBrief).success, false);
+
+  for (const field of ['providerArtifactId', 'checksum']) {
+    const alias = validGenerationPlan();
+    alias.mediaBaseline.descriptor.artifacts.audioDiscussion[field]
+      = alias.mediaBaseline.descriptor.artifacts.audioBrief[field];
+    assert.equal(nugletGenerationPlanSchema.safeParse(alias).success, false, field);
+  }
 });
 
 test('approval must bind the exact package checksum', () => {

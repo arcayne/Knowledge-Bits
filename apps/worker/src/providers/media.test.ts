@@ -83,6 +83,27 @@ test('media rejects baseline bytes that do not match the immutable descriptor', 
   await assert.rejects(() => provider.execute(mediaInput()), /media_baseline_checksum_mismatch/);
 });
 
+test('media rejects Brief and Discussion outputs with identical final bytes', async () => {
+  const aliasedPlan = structuredClone(generationPlan);
+  aliasedPlan.mediaBaseline.descriptor.artifacts.audioDiscussion.checksum
+    = aliasedPlan.mediaBaseline.descriptor.artifacts.audioBrief.checksum;
+  const provider = providerFor((request) => request.kinds.map((kind) => {
+    if (kind !== 'audio_discussion') return generated(kind);
+    const bytes = Buffer.from('audio_brief');
+    return {
+      ...generated(kind),
+      bytes,
+      metadata: {
+        ...metadataFor(kind),
+        byteSize: bytes.byteLength,
+        transcriptAudioChecksum: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+      },
+    };
+  }), aliasedPlan);
+
+  await assert.rejects(() => provider.execute(mediaInput()), /media_audio_roles_aliased/);
+});
+
 test('media accepts every complete provenance pair and rejects an incomplete additional execution', async () => {
   const complete = providerFor((request) => request.kinds.map((kind) => generated(kind)));
   const result = await complete.execute(mediaInput());
@@ -96,7 +117,10 @@ test('media accepts every complete provenance pair and rejects an incomplete add
   await assert.rejects(() => incomplete.execute(mediaInput()), /media_support_evidence_incomplete/);
 });
 
-function providerFor(generate: (request: Parameters<MediaClient['generate']>[0]) => unknown) {
+function providerFor(
+  generate: (request: Parameters<MediaClient['generate']>[0]) => unknown,
+  plan: NugletGenerationPlan = generationPlan,
+) {
   const client = {
     async generate(request: Parameters<MediaClient['generate']>[0]) {
       return generate(request);
@@ -108,7 +132,7 @@ function providerFor(generate: (request: Parameters<MediaClient['generate']>[0])
       passedCheck: true,
       content: candidate,
       contentChecksum: checksum,
-      generationPlan,
+      generationPlan: plan,
       resolvedRecipes,
     }),
   });
@@ -239,7 +263,11 @@ const generationPlan: NugletGenerationPlan = {
   },
 };
 
-function baselineArtifact(kind: Exclude<MediaKind, 'hero'>, recipeId: string, recipeChecksum: string) {
+function baselineArtifact<Kind extends Exclude<MediaKind, 'hero'>>(
+  kind: Kind,
+  recipeId: string,
+  recipeChecksum: string,
+) {
   const prompt = Buffer.from(`Generate ${kind}`);
   return {
     checksum: `sha256:${createHash('sha256').update(kind).digest('hex')}`,
@@ -255,7 +283,15 @@ function baselineArtifact(kind: Exclude<MediaKind, 'hero'>, recipeId: string, re
       recipe: { id: recipeId, version: '1.0.0', checksum: recipeChecksum },
     },
     mediaType: kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
-    path: kind === 'infographic' ? 'notebooklm/infographic.webp' : `audio/${kind}.m4a`,
+    path: (kind === 'infographic'
+      ? 'notebooklm/infographic.webp'
+      : kind === 'audio_brief'
+        ? 'audio/notebooklm-short-brief.m4a'
+        : 'audio/notebooklm-medium-debate.m4a') as Kind extends 'audio_brief'
+          ? 'audio/notebooklm-short-brief.m4a'
+          : Kind extends 'audio_discussion'
+            ? 'audio/notebooklm-medium-debate.m4a'
+            : 'notebooklm/infographic.webp',
     providerArtifactId: `${kind}-artifact`,
   };
 }

@@ -98,6 +98,7 @@ export class MediaProviderAdapter implements MediaProvider {
       throw new ProviderNeedsHumanError('media_input_checksum_mismatch');
     }
     for (const asset of generated) validateGeneratedMedia(asset, generation.recipes, generation.plan.mediaBaseline);
+    assertDistinctAudioBytes(generated);
 
     const assets = generated.map((asset) => ({
       byteSize: asset.bytes.byteLength,
@@ -126,6 +127,14 @@ export class MediaProviderAdapter implements MediaProvider {
         provider: this.name,
       },
     };
+  }
+}
+
+function assertDistinctAudioBytes(generated: readonly GeneratedMedia[]): void {
+  const brief = generated.find((asset) => asset.kind === 'audio_brief');
+  const discussion = generated.find((asset) => asset.kind === 'audio_discussion');
+  if (brief && discussion && prefixedChecksum(brief.bytes) === prefixedChecksum(discussion.bytes)) {
+    throw new ProviderNeedsHumanError('media_audio_roles_aliased');
   }
 }
 

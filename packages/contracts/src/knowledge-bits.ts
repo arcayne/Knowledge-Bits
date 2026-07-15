@@ -63,14 +63,22 @@ const baselineAudioArtifactSchema = baselineArtifactSchema.extend({
   transcript: baselineTranscriptSchema.optional(),
 }).strict();
 
+const baselineBriefAudioArtifactSchema = baselineAudioArtifactSchema.extend({
+  path: z.literal('audio/notebooklm-short-brief.m4a'),
+}).strict();
+
+const baselineDiscussionAudioArtifactSchema = baselineAudioArtifactSchema.extend({
+  path: z.literal('audio/notebooklm-medium-debate.m4a'),
+}).strict();
+
 export const nugletMediaBaselineSchema = z.object({
   descriptorChecksum: generationRecipeChecksumSchema,
   descriptorPath: z.literal('knowledge-bits/media-baseline.v1.json'),
   descriptor: z.object({
     artifacts: z.object({
       infographic: baselineArtifactSchema,
-      audioBrief: baselineAudioArtifactSchema,
-      audioDiscussion: baselineAudioArtifactSchema,
+      audioBrief: baselineBriefAudioArtifactSchema,
+      audioDiscussion: baselineDiscussionAudioArtifactSchema,
     }).strict(),
     notebookId: z.string().trim().min(1),
     runFolder: relativeArtifactPathSchema,
@@ -116,6 +124,17 @@ export const nugletGenerationPlanSchema = z.object({
       validateBaselineEvidenceBinding(artifact.transcript.extraction, artifact.transcript.providerArtifactId, recipe, plan.mediaBaseline.descriptor.notebookId, ['mediaBaseline', 'descriptor', 'artifacts', role, 'transcript', 'extraction'], context);
     }
   }
+  const brief = plan.mediaBaseline.descriptor.artifacts.audioBrief;
+  const discussion = plan.mediaBaseline.descriptor.artifacts.audioDiscussion;
+  for (const field of ['path', 'providerArtifactId', 'checksum'] as const) {
+    if (brief[field] === discussion[field]) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Brief and Discussion ${field} must be distinct`,
+        path: ['mediaBaseline', 'descriptor', 'artifacts', 'audioDiscussion', field],
+      });
+    }
+  }
 });
 
 function validateBaselineEvidenceBinding(
@@ -151,11 +170,34 @@ export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((br
       && generationPlan.contentKind === 'nuglet.lesson.v1');
   if (!targetsNuglet) return;
   const parsed = nugletGenerationPlanSchema.safeParse(generationPlan);
-  if (parsed.success) return;
-  for (const issue of parsed.error.issues) {
-    context.addIssue({ ...issue, path: ['generationPlan', ...issue.path] });
+  if (!parsed.success) {
+    for (const issue of parsed.error.issues) {
+      context.addIssue({ ...issue, path: ['generationPlan', ...issue.path] });
+    }
+    return;
+  }
+  const baseline = isUnknownRecord(brief.baseline) ? brief.baseline : undefined;
+  const baselineRunId = baseline?.runId;
+  if (typeof baselineRunId !== 'string' || baselineRunId !== parsed.data.mediaBaseline.descriptor.runId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'media baseline run ID must match brief baseline run ID',
+      path: ['baseline', 'runId'],
+    });
+  }
+  if (typeof brief.notebookLmNotebookId !== 'string'
+    || brief.notebookLmNotebookId !== parsed.data.mediaBaseline.descriptor.notebookId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'media baseline notebook ID must match brief NotebookLM notebook ID',
+      path: ['notebookLmNotebookId'],
+    });
   }
 });
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 export const artifactPrepareRequestSchema = z.object({
   jobId: z.string().uuid(),

@@ -608,11 +608,17 @@ function generationPlanFor(recipes: { story: ReturnType<typeof resolvedRecipe>; 
 }
 
 function mediaBaselineFor(recipes: Record<string, { id: string; version: string; checksum: string }>) {
-  const artifact = (role: 'infographic' | 'audioBrief' | 'audioDiscussion', artifactId: string, path: string) => {
+  const artifact = <Path extends string>(
+    role: 'infographic' | 'audioBrief' | 'audioDiscussion',
+    artifactId: string,
+    path: Path,
+  ) => {
     const prompt = Buffer.from(`Generate ${artifactId}`);
     const recipe = recipes[role]!;
     return {
-      checksum: `sha256:${'b'.repeat(64)}`,
+      checksum: `sha256:${(
+        role === 'audioBrief' ? 'b' : role === 'audioDiscussion' ? 'c' : 'd'
+      ).repeat(64)}`,
       generation: {
         artifactId,
         model: 'notebooklm-cli:fixture',
@@ -635,8 +641,8 @@ function mediaBaselineFor(recipes: Record<string, { id: string; version: string;
     descriptor: {
       artifacts: {
         infographic: artifact('infographic', 'infographic-artifact', 'notebooklm/infographic.webp'),
-        audioBrief: artifact('audioBrief', 'brief-artifact', 'audio/brief.m4a'),
-        audioDiscussion: artifact('audioDiscussion', 'discussion-artifact', 'audio/discussion.m4a'),
+        audioBrief: artifact('audioBrief', 'brief-artifact', 'audio/notebooklm-short-brief.m4a'),
+        audioDiscussion: artifact('audioDiscussion', 'discussion-artifact', 'audio/notebooklm-medium-debate.m4a'),
       },
       notebookId: 'notebook-fixture',
       runFolder: 'apps/nuglet-lab/outputs/fixture-run',
