@@ -133,6 +133,7 @@ receives only its own token:
 ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
 ENGINE_WORKER_TOKEN="local-worker-token" \
 WORKER_PROVIDER_MODE="production" \
+PRODUCT_RECIPE_ROOTS='{"nuglet.lesson.v1":"/absolute/path/to/nuglet/apps/nuglet-lab/recipes/nuglet.lesson.v1"}' \
 NOTEBOOKLM_TRUSTED_SOURCE_HOSTS="example.org,research.example.edu" \
 PI_PROVIDER="configured-pi-provider" \
 PI_MODEL="configured-pi-model" \
@@ -141,8 +142,10 @@ MEDIA_GENERATION_ARGS='["--json"]' \
 pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 ```
 
-Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker. The
-control API supplies lease-scoped job inputs and permits reads only for declared artifact dependencies.
+Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker.
+The worker will not start unless `PRODUCT_RECIPE_ROOTS` contains a non-empty mapping from each product
+content kind to its absolute local recipe directory. These filesystem paths remain local to the worker.
+The control API supplies lease-scoped job inputs and permits reads only for declared artifact dependencies.
 Each run must carry its own `notebookLmNotebookId`; the engine rejects assigning one NotebookLM notebook
 to multiple runs. Do not configure a global NotebookLM notebook ID. Existing local manifests should be
 reconciled into the run records before they are processed.

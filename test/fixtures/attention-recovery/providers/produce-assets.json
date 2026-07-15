@@ -15,7 +15,13 @@
     {
       "bodyBase64": "UklGRgQAAABXQVZF",
       "inputChecksum": "$contentChecksum",
-      "kind": "audio",
+      "kind": "audio_brief",
+      "mediaType": "audio/wav"
+    },
+    {
+      "bodyBase64": "UklGRgUAAABXQVZFMQ==",
+      "inputChecksum": "$contentChecksum",
+      "kind": "audio_discussion",
       "mediaType": "audio/wav"
     }
   ],
@@ -34,7 +40,12 @@
       },
       {
         "durationSeconds": 18,
-        "kind": "audio",
+        "kind": "audio_brief",
+        "mediaType": "audio/wav"
+      },
+      {
+        "durationSeconds": 42,
+        "kind": "audio_discussion",
         "mediaType": "audio/wav"
       }
     ],

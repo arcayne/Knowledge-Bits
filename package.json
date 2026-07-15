@@ -12,7 +12,7 @@
     "typecheck": "turbo run typecheck",
     "test": "pnpm test:contracts && turbo run test --concurrency=1 && pnpm test:e2e",
     "test:contracts": "node --test test/deployment-contracts.test.mjs test/credential-scanner.test.mjs",
-    "test:e2e": "node --test test/e2e/*.test.mjs",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e/*.test.mjs",
     "scan:forbidden-credentials": "node scripts/scan-forbidden-credentials.mjs",
     "dev": "turbo run dev",
     "prisma:generate": "pnpm --filter @knowledge-bits/api prisma:generate"

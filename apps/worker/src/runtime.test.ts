@@ -18,8 +18,12 @@ import {
 import type { WorkerEngineClient } from './engine-client.js';
 import type { ResolvedNugletRecipes } from './recipes/types.js';
 
+const validProductRecipeRoots = {
+  PRODUCT_RECIPE_ROOTS: '{"nuglet.lesson.v1":"/srv/recipes/nuglet.lesson.v1"}',
+};
+
 test('uses fixtures only when fixture mode is explicitly selected', () => {
-  const production = composeWorkerProviders({ env: {} });
+  const production = composeWorkerProviders({ env: validProductRecipeRoots });
   const fixtures = composeWorkerProviders({ env: { WORKER_PROVIDER_MODE: 'fixture' } });
 
   assert.deepEqual(production.map(({ name }) => name), [
@@ -30,8 +34,30 @@ test('uses fixtures only when fixture mode is explicitly selected', () => {
   assert.deepEqual(fixtures.map(({ name }) => name), ['fixture']);
 });
 
+test('production local-worker composition rejects missing or invalid product recipe roots', () => {
+  for (const PRODUCT_RECIPE_ROOTS of [
+    undefined,
+    '',
+    '[]',
+    '{}',
+    '{"nuglet.lesson.v1":"relative/recipes"}',
+  ]) {
+    assert.throws(
+      () => composeWorkerProviders({ env: { WORKER_PROVIDER_MODE: 'production', PRODUCT_RECIPE_ROOTS } }),
+      /product_recipe_roots_invalid/,
+    );
+  }
+});
+
+test('fixture provider composition does not require product recipe roots', () => {
+  assert.deepEqual(
+    composeWorkerProviders({ env: { WORKER_PROVIDER_MODE: 'fixture' } }).map(({ name }) => name),
+    ['fixture'],
+  );
+});
+
 test('missing production runtime configuration never returns fixture content', async () => {
-  const [notebook] = composeWorkerProviders({ env: {} });
+  const [notebook] = composeWorkerProviders({ env: validProductRecipeRoots });
   assert.ok(notebook);
 
   await assert.rejects(
@@ -43,6 +69,7 @@ test('missing production runtime configuration never returns fixture content', a
 test('legacy provider service URLs do not create production provider dependencies', () => {
   const providers = composeWorkerProviders({
     env: {
+      ...validProductRecipeRoots,
       PROVIDER_CONTEXT_URL: 'https://legacy.example.test',
       PI_EDITORIAL_URL: 'https://legacy.example.test/pi',
       MEDIA_GENERATION_URL: 'https://legacy.example.test/media',

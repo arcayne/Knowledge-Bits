@@ -98,6 +98,7 @@ test('reports malformed media provider configuration after claiming the job', as
   const client = new FakeEngineClient();
   const providers = composeWorkerProviders({
     env: {
+      PRODUCT_RECIPE_ROOTS: JSON.stringify({ 'nuglet.lesson.v1': process.cwd() }),
       MEDIA_GENERATION_COMMAND: 'media-provider',
       MEDIA_GENERATION_ARGS: '{',
     },

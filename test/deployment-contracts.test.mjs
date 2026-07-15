@@ -84,6 +84,19 @@ test('provider credentials and recipe filesystem roots remain local-worker-only'
   assert.match(workerRuntime, /parseProductRecipeRoots/);
 });
 
+test('documented production local-worker startup supplies the absolute product recipe-root mapping', async () => {
+  const readme = await readFile(new URL('README.md', repositoryRoot), 'utf8');
+  const localWorkerSection = readme.match(/## Local worker(?<body>[\s\S]*?)## Delivery/)?.groups?.body;
+
+  assert.ok(localWorkerSection, 'README must document local-worker startup');
+  assert.match(localWorkerSection, /WORKER_PROVIDER_MODE="production"/);
+  assert.match(
+    localWorkerSection,
+    /PRODUCT_RECIPE_ROOTS='\{"nuglet\.lesson\.v1":"\/absolute\/path\/to\/nuglet\/apps\/nuglet-lab\/recipes\/nuglet\.lesson\.v1"\}'/,
+  );
+  assert.match(localWorkerSection, /pnpm --filter @knowledge-bits\/worker exec tsx src\/index\.ts/);
+});
+
 async function readJson(path) {
   return JSON.parse(await readFile(new URL(path, repositoryRoot), 'utf8'));
 }

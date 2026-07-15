@@ -117,11 +117,9 @@ function configuredRuntime(
   engineClient: WorkerEngineClient | undefined,
   request: typeof fetch,
 ): ProviderRuntime {
-  if (!engineClient) return {};
   const recipeRoots = parseProductRecipeRoots(env.PRODUCT_RECIPE_ROOTS);
-  const recipeBindingVerifier = Object.keys(recipeRoots).length
-    ? new FileRecipeRegistry(recipeRoots)
-    : undefined;
+  if (!engineClient) return {};
+  const recipeBindingVerifier = new FileRecipeRegistry(recipeRoots);
   const contexts = new LeaseScopedJobContextResolver(engineClient, recipeBindingVerifier);
   const trustedHosts = commaSeparated(env.NOTEBOOKLM_TRUSTED_SOURCE_HOSTS);
   const piProvider = configuredValue(env, 'PI_PROVIDER');
@@ -137,7 +135,7 @@ function configuredRuntime(
   }
 
   return {
-    ...(recipeBindingVerifier ? { recipeBindingVerifier } : {}),
+    recipeBindingVerifier,
     ...(mediaConfigurationIssue ? { configurationIssues: { media: mediaConfigurationIssue } } : {}),
     ...(trustedHosts.length ? {
       notebookProcess: new SpawnNotebookLmProcess(),
