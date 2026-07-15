@@ -82,6 +82,7 @@ test('does not activate Story recipe semantics before the Story and Playbook tas
 
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
+  assert.equal(calls.length, 2);
   const prompt = String(calls[1]?.args[3]);
   assert.doesNotMatch(prompt, /Keep the research grounded/);
   assert.equal(result.supportArtifacts, undefined);
@@ -120,6 +121,7 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
 
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
+  assert.equal(calls.length, 2);
   const prompt = String(calls[1]?.args[3]);
   assert.match(prompt, /Open with one concrete interruption/);
   assert.match(prompt, /Give the learner three usable steps/);
@@ -228,6 +230,74 @@ test('records every recipe-shaped NotebookLM repair call with its exact prompt',
     (result.executionReport as { renderedPrompts: string[] }).renderedPrompts,
     prompts,
   );
+});
+
+test('repairs a structurally invalid direct Story and Playbook answer once and records both prompts', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const recipes = generationRecipes();
+  const invalidAnswer = await directStoryPlaybookFailure();
+  const provider = storyPlaybookProvider(calls, recipes, [
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.equal(calls.length, 3);
+  const [originalPrompt, repairPrompt] = [String(calls[1]?.args[3]), String(calls[2]?.args[3])];
+  assert.equal(repairPrompt.startsWith(originalPrompt), true);
+  assert.match(repairPrompt, /prior answer was structurally invalid/i);
+  assert.match(repairPrompt, /\$\.kind: Expected "nuglet\.lesson\.v1"/);
+  assert.match(repairPrompt, /\$\.schemaVersion: Expected "1\.1\.0"/);
+  assert.match(repairPrompt, /\$\.payload\.contentModel: Invalid literal value, expected "story-playbook\.v1"\./);
+  assert.match(repairPrompt, /"kind": "nuglet\.lesson\.v1"/);
+  assert.match(repairPrompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2))));
+  assert.match(repairPrompt, /preserve grounded meaning and accepted citations/i);
+  assert.doesNotMatch(repairPrompt, /direct-unwrapped-story-playbook/);
+  assert.doesNotMatch(repairPrompt, /source snapshot text/i);
+  assert.deepEqual((result.executionReport as { renderedPrompts: string[] }).renderedPrompts, [originalPrompt, repairPrompt]);
+  assert.equal(result.supportArtifacts?.length, 12);
+  assert.deepEqual(
+    result.supportArtifacts?.filter(({ kind }) => kind === 'generation.prompt.rendered')
+      .map(({ body }) => Buffer.from(body).toString('utf8')),
+    [originalPrompt, originalPrompt, originalPrompt, repairPrompt, repairPrompt, repairPrompt],
+  );
+  assert.equal(Buffer.from(result.rawResponse).toString('utf8'), await fixture('notebooklm-story-playbook.json'));
+});
+
+test('rejects a second structurally invalid Story and Playbook answer as a typed quality issue', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const recipes = generationRecipes();
+  const invalidAnswer = await directStoryPlaybookFailure();
+  const provider = storyPlaybookProvider(calls, recipes, [
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+  ]);
+
+  await assert.rejects(
+    () => provider.execute(input('create_content')),
+    (error: unknown) => error instanceof Error
+      && error.message === 'notebooklm_content_invalid'
+      && 'needsHumanKind' in error
+      && error.needsHumanKind === 'quality',
+  );
+  assert.equal(calls.length, 3);
+});
+
+test('keeps accepted-source citation binding on a semantically repaired Story and Playbook answer', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const recipes = generationRecipes();
+  const repaired = JSON.parse(await fixture('notebooklm-story-playbook.json')) as { answer: { payload: { claims: Array<{ citations: Array<{ sourceId: string }> }> } } };
+  repaired.answer.payload.claims[0]!.citations[0]!.sourceId = '22222222-2222-4222-8222-222222222222';
+  const provider = storyPlaybookProvider(calls, recipes, [
+    { stdout: await directStoryPlaybookFailure(), stderr: '', exitCode: 0 },
+    { stdout: JSON.stringify(repaired), stderr: '', exitCode: 0 },
+  ]);
+
+  await assert.rejects(() => provider.execute(input('create_content')), /notebooklm_citation_source_missing/);
+  assert.equal(calls.length, 3);
 });
 
 test('accepts the NotebookLM CLI snake_case envelope and verifies run sources when citations have no URLs', async () => {
@@ -502,6 +572,67 @@ function processWith(
       return response;
     },
   };
+}
+
+function storyPlaybookProvider(
+  calls: Array<{ args: readonly string[]; stdin?: string }>,
+  recipes: ReturnType<typeof generationRecipes>,
+  responses: Array<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }>,
+) {
+  return new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\\n', stderr: '', exitCode: 0 },
+      ...responses,
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: 'returning to focused work',
+      locale: 'en-GB',
+      audience: 'busy knowledge workers',
+      objective: 'make interrupted work easier to resume',
+      evidence: {
+        sources: [{
+          sourceId,
+          title: 'Accepted source',
+          snapshotArtifactId: '55555555-5555-4555-8555-555555555555',
+        }],
+      },
+      generationPlan: generationPlanFor(recipes),
+      resolvedRecipes: recipes,
+    }),
+  });
+}
+
+async function directStoryPlaybookFailure(): Promise<string> {
+  const valid = JSON.parse(await fixture('notebooklm-story-playbook.json')) as { answer: { payload: Record<string, unknown> } };
+  const payload = valid.answer.payload;
+  return JSON.stringify({
+    conversationId: 'direct-unwrapped-story-playbook',
+    answer: {
+      ...payload,
+      claims: (payload.claims as Array<Record<string, unknown>>).map((claim) => ({
+        ...claim,
+        claimId: 'claim-one',
+      })),
+      read: {
+        ...(payload.read as Record<string, unknown>),
+        playbook: {
+          ...((payload.read as { playbook: Record<string, unknown> }).playbook),
+          watchOuts: 'Name the visible next step.',
+        },
+      },
+      visual: {
+        ...(payload.visual as Record<string, unknown>),
+        textEquivalent: 'Choose, separate, repeat.',
+      },
+      hero: {
+        ...(payload.hero as Record<string, unknown>),
+        accessibilityPurpose: 'A useful visual explanation.',
+      },
+    },
+  });
 }
 
 async function fixture(name: string): Promise<string> {

@@ -110,8 +110,24 @@ export class NotebookLmProvider implements ContentProvider {
         ? NOTEBOOKLM_RECIPE_CREATE_PROMPT_VERSION
         : NOTEBOOKLM_CREATE_PROMPT_VERSION;
     const response = await this.query(context.notebookId, prompt, input.signal);
-    const parsed = await this.parseOrRepair(context.notebookId, prompt, response, input.signal);
+    let parsed = await this.parseOrRepair(context.notebookId, prompt, response, input.signal);
     validateCitations(parsed.answer, input.action === 'create_content' ? context.evidence : undefined);
+    if (recipeExecution) {
+      const issues = storyPlaybookSemanticIssues(parsed.answer, context.evidence);
+      if (issues.length > 0) {
+        const semanticRepairPrompt = renderStoryPlaybookSemanticRepairPrompt(prompt, issues);
+        const semanticRepairResponse = await this.query(context.notebookId, semanticRepairPrompt, input.signal);
+        const repaired = await this.parseOrRepair(context.notebookId, semanticRepairPrompt, semanticRepairResponse, input.signal);
+        parsed = {
+          ...repaired,
+          prompts: [...parsed.prompts, ...repaired.prompts],
+        };
+        validateCitations(parsed.answer, context.evidence);
+        if (storyPlaybookSemanticIssues(parsed.answer, context.evidence).length > 0) {
+          throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
+        }
+      }
+    }
     const verified = input.action === 'collect_sources'
       ? await this.verifyResearch(parsed.answer, context, input.signal)
       : undefined;
@@ -365,6 +381,52 @@ function parseCreateOutput(
   const parsed = nugletLessonV1PayloadSchema.safeParse({ ...answer, claims, claimCoverage });
   if (!parsed.success) throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
   return parsed.data;
+}
+
+const MAX_SEMANTIC_REPAIR_ISSUES = 20;
+
+function storyPlaybookSemanticIssues(answer: Record<string, unknown>, evidence: EvidenceManifest | undefined): string[] {
+  if (!evidence) return ['$.payload: Accepted research evidence is required.'];
+  const issues: string[] = [];
+  if (answer.kind !== 'nuglet.lesson.v1') {
+    issues.push('$.kind: Expected "nuglet.lesson.v1".');
+  }
+  if (answer.schemaVersion !== '1.1.0') {
+    issues.push('$.schemaVersion: Expected "1.1.0".');
+  }
+
+  const snapshotsBySource = new Map(evidence.sources.map((source) => [source.sourceId, source.snapshotArtifactId]));
+  const payload = isRecord(answer.payload) ? answer.payload : {};
+  const parsed = storyPlaybookDraftSchema.safeParse({
+    ...payload,
+    claims: attachSnapshotArtifacts(payload.claims, snapshotsBySource),
+    claimCoverage: normalizeClaimCoverage(payload.claimCoverage),
+  });
+  if (!parsed.success) {
+    issues.push(...parsed.error.issues.map((issue) => (
+      `${zodIssuePath(['payload', ...issue.path])}: ${issue.message}.`
+    )));
+  }
+  return issues.slice(0, MAX_SEMANTIC_REPAIR_ISSUES);
+}
+
+function renderStoryPlaybookSemanticRepairPrompt(originalPrompt: string, issues: readonly string[]): string {
+  return [
+    originalPrompt,
+    'The prior answer was structurally invalid. Preserve grounded meaning and accepted citations while correcting only the strict output contract.',
+    'Return one strict JSON object with no markdown fences.',
+    'Validation issues:',
+    ...issues.map((issue) => `- ${issue}`),
+    'Exact required root envelope:',
+    '{ kind: "nuglet.lesson.v1", schemaVersion: "1.1.0", payload: { ... } }',
+    `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)}`,
+  ].join('\n');
+}
+
+function zodIssuePath(path: readonly (string | number)[]): string {
+  return path.reduce<string>((result, part) => (
+    typeof part === 'number' ? `${result}[${part}]` : `${result}.${part}`
+  ), '$');
 }
 
 function attachSnapshotArtifacts(value: unknown, snapshotsBySource: ReadonlyMap<string, string>): unknown {

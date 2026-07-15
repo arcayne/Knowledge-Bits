@@ -479,6 +479,27 @@ export const storyPlaybookDraftContractDescriptor = {
     kind: 'nuglet.lesson.v1',
     schemaVersion: '1.1.0',
   },
+  outputEnvelope: {
+    kind: 'nuglet.lesson.v1',
+    schemaVersion: '1.1.0',
+    payload: 'Story/Playbook draft payload object',
+    noAlternateIntermediateShape: true,
+  },
+  exactConstraints: {
+    payloadConstants: {
+      contentModel: 'story-playbook.v1',
+      materialization: 'draft',
+    },
+    claimIdentifiers: {
+      claimId: 'UUID',
+      claimReferences: 'UUID',
+    },
+    stringArrays: {
+      'read.playbook.watchOuts': 'array of non-empty strings with at least one item',
+      'visual.textEquivalent': 'array of non-empty strings with at least one item',
+    },
+    heroAccessibilityPurpose: ['informative', 'decorative'],
+  },
   payloadShape: {
     contentModel: 'story-playbook.v1',
     materialization: 'draft',

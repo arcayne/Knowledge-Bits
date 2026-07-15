@@ -12,6 +12,7 @@ import {
   knowledgeBitsRunBriefSchema,
   nugletGenerationPlanSchema,
   storyPlaybookDraftSchema,
+  storyPlaybookDraftContractDescriptor,
   storyPlaybookPayloadSchema,
   jobClaimSchema,
   jobResultSchema,
@@ -37,6 +38,34 @@ const recipeIds = {
   hero: 'nuglet.hero',
   editorialQa: 'nuglet.qa.editorial',
 };
+
+test('Story and Playbook descriptor states the exact provider output contract', () => {
+  const descriptor = storyPlaybookDraftContractDescriptor;
+
+  assert.deepEqual(descriptor.outputEnvelope, {
+    kind: 'nuglet.lesson.v1',
+    schemaVersion: '1.1.0',
+    payload: 'Story/Playbook draft payload object',
+    noAlternateIntermediateShape: true,
+  });
+  assert.deepEqual(descriptor.exactConstraints, {
+    payloadConstants: {
+      contentModel: 'story-playbook.v1',
+      materialization: 'draft',
+    },
+    claimIdentifiers: {
+      claimId: 'UUID',
+      claimReferences: 'UUID',
+    },
+    stringArrays: {
+      'read.playbook.watchOuts': 'array of non-empty strings with at least one item',
+      'visual.textEquivalent': 'array of non-empty strings with at least one item',
+    },
+    heroAccessibilityPurpose: ['informative', 'decorative'],
+  });
+  assert.doesNotThrow(() => JSON.stringify(descriptor));
+  assert.equal(JSON.stringify(descriptor), JSON.stringify(descriptor));
+});
 
 function validGenerationPlan() {
   return {
