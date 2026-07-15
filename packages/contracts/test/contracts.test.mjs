@@ -7,6 +7,8 @@ import {
   knowledgeBitsQaSchema,
   knowledgeBitsSchema,
   knowledgeBitsCreateRunRequestSchema,
+  prepareLegacyRevisionRequestSchema,
+  prepareLegacyRevisionResponseSchema,
   knowledgeBitsRunBriefSchema,
   nugletGenerationPlanSchema,
   storyPlaybookDraftSchema,
@@ -504,6 +506,65 @@ test('enforces the strict Nuglet brief at run intake without narrowing compatibl
     locale: 'en',
     brief: { objective: 'Keep the historical shape', notebookLmNotebookId: 'legacy-notebook' },
   }).success, true);
+});
+
+test('requires a strictly bound Nuglet replacement brief to prepare a legacy revision', () => {
+  const brief = {
+    baseline: { runId: 'fixture-run' },
+    generationPlan: validGenerationPlan(),
+    notebookLmNotebookId: 'notebook-fixture',
+  };
+  const request = {
+    expectedRevision: 1,
+    expectedPackageChecksum: checksum,
+    notebookLmNotebookId: 'notebook-fixture',
+    brief,
+    comment: 'Replace the unreadable legacy package with the validated baseline.',
+  };
+  assert.deepEqual(prepareLegacyRevisionRequestSchema.parse(request), request);
+  assert.equal(prepareLegacyRevisionRequestSchema.safeParse({ ...request, expectedRevision: 0 }).success, false);
+  assert.equal(prepareLegacyRevisionRequestSchema.safeParse({ ...request, expectedPackageChecksum: 'not-a-checksum' }).success, false);
+  assert.equal(prepareLegacyRevisionRequestSchema.safeParse({ ...request, notebookLmNotebookId: 'another-notebook' }).success, false);
+  assert.equal(prepareLegacyRevisionRequestSchema.safeParse({ ...request, brief: { notebookLmNotebookId: 'notebook-fixture' } }).success, false);
+  assert.deepEqual(prepareLegacyRevisionResponseSchema.parse({
+    run: {
+      id: packageId,
+      title: 'Fixture run',
+      locale: 'en',
+      brief,
+      notebookLmNotebookId: 'notebook-fixture',
+      currentStage: 'research',
+      currentRevision: 2,
+      packageChecksum: null,
+      approvedChecksum: null,
+      reviewStatus: 'pending',
+      stages: {},
+      nextRetryAt: null,
+      createdAt: '2026-07-15T12:00:00.000Z',
+      updatedAt: '2026-07-15T12:00:00.000Z',
+    },
+    previousRevision: 1,
+    previousPackageChecksum: checksum,
+  }), {
+    run: {
+      id: packageId,
+      title: 'Fixture run',
+      locale: 'en',
+      brief,
+      notebookLmNotebookId: 'notebook-fixture',
+      currentStage: 'research',
+      currentRevision: 2,
+      packageChecksum: null,
+      approvedChecksum: null,
+      reviewStatus: 'pending',
+      stages: {},
+      nextRetryAt: null,
+      createdAt: '2026-07-15T12:00:00.000Z',
+      updatedAt: '2026-07-15T12:00:00.000Z',
+    },
+    previousRevision: 1,
+    previousPackageChecksum: checksum,
+  });
 });
 
 test('requires distinct approved Brief and Discussion baseline artifacts', () => {

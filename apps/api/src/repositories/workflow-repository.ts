@@ -13,6 +13,7 @@ import type {
   StageState,
   WorkflowStage,
 } from '@knowledge-bits/contracts';
+import { knowledgeBitsRunBriefSchema, nugletGenerationPlanSchema } from '@knowledge-bits/contracts';
 import {
   calculatePackageChecksum,
   nextTransition,
@@ -323,6 +324,22 @@ export interface RetryStageInput {
   stage: Exclude<WorkflowStage, 'human_review' | 'deliver'>;
 }
 
+export interface PrepareLegacyRevisionInput {
+  runId: string;
+  expectedRevision: number;
+  expectedPackageChecksum: string;
+  notebookLmNotebookId: string;
+  brief: JsonObject;
+  comment: string;
+  operatorId: string;
+}
+
+export interface PrepareLegacyRevisionResult {
+  run: WorkflowRun;
+  previousRevision: number;
+  previousPackageChecksum: string;
+}
+
 export interface WorkflowStore {
   createRun(input: CreateRunInput): Promise<WorkflowRun>;
   bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun>;
@@ -351,6 +368,7 @@ export interface WorkflowStore {
   transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery>;
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
   retryStage(input: RetryStageInput): Promise<WorkflowRun>;
+  prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
   recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion>;
@@ -469,6 +487,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   retryStage(input: RetryStageInput): Promise<WorkflowRun> {
     return this.store.retryStage(input);
+  }
+
+  prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
+    return this.store.prepareLegacyRevision(input);
   }
 
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
@@ -737,6 +759,95 @@ export class PrismaWorkflowStore implements WorkflowStore {
         where: { id: input.runId },
         include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
       }));
+    });
+  }
+
+  async prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
+    assertStrictLegacyReplacement(input);
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
+      const run = await transaction.run.findUnique({
+        where: { id: input.runId },
+        include: { stages: true },
+      });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      const operation = legacyRevisionOperation(input);
+      const existingEffect = await transaction.workflowEffect.findUnique({ where: { effectKey: operation.effectKey } });
+      if (existingEffect) {
+        assertLegacyRevisionReplay(existingEffect.payload, operation.payload);
+        if (run.currentRevision !== input.expectedRevision + 1
+          || run.currentStage !== 'research'
+          || run.packageChecksum !== null
+          || run.approvedChecksum !== null
+          || run.reviewStatus !== 'pending'
+          || legacyBriefChecksum(run.brief as JsonObject) !== operation.replacementBriefChecksum) {
+          throw new WorkflowConflictError('Legacy revision preparation replay does not match the prepared run');
+        }
+        return {
+          run: toWorkflowRun(run),
+          previousRevision: input.expectedRevision,
+          previousPackageChecksum: input.expectedPackageChecksum,
+        };
+      }
+      assertLegacyRevisionFence(run, input);
+      const nextRevision = run.currentRevision + 1;
+      const now = new Date();
+      await transaction.job.updateMany({
+        where: { runId: run.id, state: { in: ['queued', 'running'] } },
+        data: {
+          state: 'superseded',
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          executionDeadlineAt: null,
+        },
+      });
+      for (const stage of WORKFLOW_STAGES) {
+        await transaction.stage.upsert({
+          where: { runId_name: { runId: run.id, name: stage } },
+          update: { state: 'queued', reason: null, attempt: 0, revisionAttempt: 0 },
+          create: { runId: run.id, name: stage, state: 'queued', reason: null, attempt: 0, revisionAttempt: 0 },
+        });
+      }
+      await transaction.run.update({
+        where: { id: run.id },
+        data: {
+          brief: toPrismaJson(input.brief),
+          currentStage: 'research',
+          currentRevision: nextRevision,
+          packageChecksum: null,
+          approvedChecksum: null,
+          reviewStatus: 'pending',
+        },
+      });
+      await transaction.job.create({
+        data: {
+          runId: run.id,
+          stage: 'research',
+          action: ACTION_BY_STAGE.research,
+          state: 'queued',
+          idempotencyKey: transitionJobIdempotencyKey(run.id, 'research', nextRevision),
+          availableAt: now,
+          input: toPrismaJson({ brief: input.brief, notebookLmNotebookId: input.notebookLmNotebookId }),
+        },
+      });
+      await transaction.workflowEffect.create({
+        data: {
+          runId: run.id,
+          jobId: `legacy-revision:${input.expectedRevision}`,
+          effectKey: operation.effectKey,
+          type: 'prepare_legacy_revision',
+          payload: toPrismaJson(operation.payload),
+        },
+      });
+      const updated = await transaction.run.findUniqueOrThrow({
+        where: { id: run.id },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      });
+      return {
+        run: toWorkflowRun(updated),
+        previousRevision: input.expectedRevision,
+        previousPackageChecksum: input.expectedPackageChecksum,
+      };
     });
   }
 
@@ -1946,6 +2057,80 @@ class InMemoryWorkflowStore implements WorkflowStore {
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
   }
 
+  async prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
+    assertStrictLegacyReplacement(input);
+    const run = this.requireRun(input.runId);
+    const operation = legacyRevisionOperation(input);
+    const existingEffect = this.effectsByKey.get(operation.effectKey);
+    if (existingEffect) {
+      assertLegacyRevisionReplay(existingEffect.payload, operation.payload);
+      if (run.currentRevision !== input.expectedRevision + 1
+        || run.currentStage !== 'research'
+        || run.packageChecksum !== null
+        || run.approvedChecksum !== null
+        || run.reviewStatus !== 'pending'
+        || legacyBriefChecksum(run.brief) !== operation.replacementBriefChecksum) {
+        throw new WorkflowConflictError('Legacy revision preparation replay does not match the prepared run');
+      }
+      return {
+        run: { ...run, nextRetryAt: this.nextRetryAt(run) },
+        previousRevision: input.expectedRevision,
+        previousPackageChecksum: input.expectedPackageChecksum,
+      };
+    }
+    assertLegacyRevisionFence(run, input);
+    const now = this.clock();
+    for (const job of this.jobs.values()) {
+      if (job.runId === run.id && (job.state === 'queued' || job.state === 'running')) {
+        job.state = 'superseded';
+        job.leaseOwner = null;
+        job.leaseExpiresAt = null;
+        job.executionDeadlineAt = null;
+        job.updatedAt = now;
+      }
+    }
+    for (const stage of WORKFLOW_STAGES) {
+      const snapshot = run.stages[stage] ?? {
+        name: stage,
+        state: 'queued',
+        reason: null,
+        attempt: 0,
+        revisionAttempts: 0,
+      };
+      snapshot.state = 'queued';
+      snapshot.reason = null;
+      snapshot.attempt = 0;
+      snapshot.revisionAttempts = 0;
+      run.stages[stage] = snapshot;
+    }
+    run.brief = input.brief;
+    run.currentStage = 'research';
+    run.currentRevision += 1;
+    run.packageChecksum = null;
+    run.approvedChecksum = null;
+    run.reviewStatus = 'pending';
+    run.updatedAt = now;
+    await this.queueJob({
+      runId: run.id,
+      stage: 'research',
+      action: ACTION_BY_STAGE.research,
+      idempotencyKey: transitionJobIdempotencyKey(run.id, 'research', run.currentRevision),
+      input: { brief: input.brief, notebookLmNotebookId: input.notebookLmNotebookId },
+      availableAt: now,
+    });
+    this.effectsByKey.set(operation.effectKey, {
+      runId: run.id,
+      jobId: `legacy-revision:${input.expectedRevision}`,
+      type: 'prepare_legacy_revision',
+      payload: operation.payload,
+    });
+    return {
+      run: { ...run, nextRetryAt: this.nextRetryAt(run) },
+      previousRevision: input.expectedRevision,
+      previousPackageChecksum: input.expectedPackageChecksum,
+    };
+  }
+
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
     assertWorkerId(input.workerId);
     assertLeaseSeconds(input.leaseSeconds);
@@ -2631,7 +2816,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
 
   private requireRun(runId: string): WorkflowRun {
     const run = this.runs.get(runId);
-    if (!run) throw new Error(`Run does not exist: ${runId}`);
+    if (!run) throw new WorkflowNotFoundError('Run not found');
     return run;
   }
 
@@ -2739,6 +2924,103 @@ function assertCapabilities(capabilities: string[] | undefined): void {
   if (capabilities && (!capabilities.length || capabilities.some((capability) => !capability.trim()))) {
     throw new TypeError('Worker capabilities must contain nonblank actions');
   }
+}
+
+function assertStrictLegacyReplacement(input: PrepareLegacyRevisionInput): void {
+  if (!Number.isInteger(input.expectedRevision) || input.expectedRevision <= 0) {
+    throw new WorkflowValidationError('Expected revision must be a positive integer');
+  }
+  if (!/^[a-f0-9]{64}$/.test(input.expectedPackageChecksum)) {
+    throw new WorkflowValidationError('Expected package checksum must be a 64-character checksum');
+  }
+  if (!input.notebookLmNotebookId.trim() || !input.comment.trim() || !input.operatorId.trim()) {
+    throw new WorkflowValidationError('Notebook ID, operator identity, and comment are required');
+  }
+  const brief = knowledgeBitsRunBriefSchema.safeParse(input.brief);
+  const plan = brief.success ? nugletGenerationPlanSchema.safeParse(brief.data.generationPlan) : undefined;
+  if (!brief.success || !plan?.success || plan.data.contentKind !== 'nuglet.lesson.v1') {
+    throw new WorkflowValidationError('Legacy revision preparation requires a strict Nuglet replacement brief');
+  }
+  if (brief.data.notebookLmNotebookId !== input.notebookLmNotebookId
+    || plan.data.mediaBaseline.descriptor.notebookId !== input.notebookLmNotebookId) {
+    throw new WorkflowValidationError('Replacement brief notebook binding must match the requested notebook');
+  }
+}
+
+function assertLegacyRevisionFence(
+  run: {
+    currentRevision: number;
+    packageChecksum: string | null;
+    approvedChecksum: string | null;
+    currentStage: string;
+    reviewStatus: string;
+    notebookLmNotebookId?: string | null;
+    brief: unknown;
+  },
+  input: PrepareLegacyRevisionInput,
+): void {
+  if (run.currentRevision !== input.expectedRevision) {
+    throw new WorkflowConflictError('Legacy revision expected revision does not match the current run revision');
+  }
+  if (run.packageChecksum !== input.expectedPackageChecksum) {
+    throw new WorkflowConflictError('Legacy revision expected package checksum does not match the current package');
+  }
+  if (run.currentStage !== 'human_review'
+    || !['pending', 'changes_requested'].includes(run.reviewStatus)
+    || run.approvedChecksum !== null) {
+    throw new WorkflowConflictError('Legacy revision preparation requires an unapproved human review run');
+  }
+  if (isStrictNugletBrief(run.brief)) {
+    throw new WorkflowConflictError('Legacy revision preparation rejects an already strict run');
+  }
+  if (!run.notebookLmNotebookId || run.notebookLmNotebookId !== input.notebookLmNotebookId) {
+    throw new WorkflowConflictError('Legacy revision preparation cannot change the NotebookLM notebook');
+  }
+}
+
+function isStrictNugletBrief(value: unknown): boolean {
+  const brief = knowledgeBitsRunBriefSchema.safeParse(value);
+  return brief.success && nugletGenerationPlanSchema.safeParse(brief.data.generationPlan).success;
+}
+
+function legacyRevisionOperation(input: PrepareLegacyRevisionInput): {
+  effectKey: string;
+  replacementBriefChecksum: string;
+  payload: JsonObject;
+} {
+  const replacementBriefChecksum = legacyBriefChecksum(input.brief);
+  return {
+    effectKey: `legacy-revision:${input.runId}:${input.expectedRevision}:${input.expectedPackageChecksum}:${replacementBriefChecksum}`,
+    replacementBriefChecksum,
+    payload: {
+      operatorId: input.operatorId,
+      comment: input.comment,
+      previousRevision: input.expectedRevision,
+      previousPackageChecksum: input.expectedPackageChecksum,
+      replacementBriefChecksum,
+    },
+  };
+}
+
+function assertLegacyRevisionReplay(actual: unknown, expected: JsonObject): void {
+  if (!isDeepStrictEqual(actual, expected)) {
+    throw new WorkflowConflictError('Legacy revision preparation conflicts with an existing operation');
+  }
+}
+
+function legacyBriefChecksum(brief: JsonObject): string {
+  return createHash('sha256').update(canonicalJson(brief)).digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isJsonObject(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  throw new WorkflowValidationError('Legacy revision brief must contain JSON values');
 }
 
 function assertRetryAtInFuture(retryAt: Date | undefined, now: Date): void {

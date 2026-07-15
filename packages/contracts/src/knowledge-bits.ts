@@ -6,6 +6,7 @@ import {
   createRunRequestSchema,
   reviewStatusSchema,
   workflowStageSchema,
+  workflowRunResponseSchema,
 } from './workflow.js';
 
 const packageIdSchema = z.string().uuid();
@@ -211,6 +212,45 @@ export const knowledgeBitsCreateRunRequestSchema = createRunRequestSchema.superR
     });
   }
 });
+
+export const prepareLegacyRevisionRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  expectedPackageChecksum: checksumSchema,
+  notebookLmNotebookId: z.string().trim().min(1),
+  brief: z.record(z.unknown()),
+  comment: z.string().trim().min(1),
+}).strict().superRefine((request, context) => {
+  const parsedBrief = knowledgeBitsRunBriefSchema.safeParse(request.brief);
+  if (!parsedBrief.success) {
+    for (const issue of parsedBrief.error.issues) {
+      context.addIssue({ ...issue, path: ['brief', ...issue.path] });
+    }
+    return;
+  }
+  const generationPlan = nugletGenerationPlanSchema.safeParse(parsedBrief.data.generationPlan);
+  if (!generationPlan.success || generationPlan.data.contentKind !== 'nuglet.lesson.v1') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Legacy revision preparation requires a strict Nuglet generation plan',
+      path: ['brief', 'generationPlan'],
+    });
+    return;
+  }
+  if (parsedBrief.data.notebookLmNotebookId !== request.notebookLmNotebookId
+    || generationPlan.data.mediaBaseline.descriptor.notebookId !== request.notebookLmNotebookId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Replacement brief NotebookLM notebook ID must match the request',
+      path: ['notebookLmNotebookId'],
+    });
+  }
+});
+
+export const prepareLegacyRevisionResponseSchema = z.object({
+  run: workflowRunResponseSchema,
+  previousRevision: z.number().int().positive(),
+  previousPackageChecksum: checksumSchema,
+}).strict();
 
 function targetsNugletLesson(brief: Record<string, unknown>): boolean {
   const generationPlan = brief.generationPlan;

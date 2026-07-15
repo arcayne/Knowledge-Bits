@@ -1,4 +1,6 @@
 import {
+  prepareLegacyRevisionRequestSchema,
+  prepareLegacyRevisionResponseSchema,
   reviewRunRequestSchema,
   reviewRunResponseSchema,
 } from '@knowledge-bits/contracts';
@@ -115,6 +117,39 @@ export function registerReviewRoutes(
       throw error;
     }
   });
+
+  app.post('/runs/:id/prepare-legacy-revision', async (context) => {
+    const principal = requireReviewPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const input = prepareLegacyRevisionRequestSchema.safeParse(await readJson(context.req.raw));
+    if (!input.success) return context.json({ error: 'Invalid legacy revision preparation input' }, 400);
+    try {
+      const prepared = await dependencies.repository.prepareLegacyRevision({
+        runId: context.req.param('id'),
+        operatorId: principal,
+        ...input.data,
+      });
+      return context.json(prepareLegacyRevisionResponseSchema.parse({
+        ...prepared,
+        run: toRunResponse(prepared.run),
+      }));
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
+      throw error;
+    }
+  });
+}
+
+function toRunResponse(run: WorkflowRun) {
+  return {
+    ...run,
+    notebookLmNotebookId: run.notebookLmNotebookId ?? null,
+    nextRetryAt: run.nextRetryAt?.toISOString() ?? null,
+    createdAt: run.createdAt.toISOString(),
+    updatedAt: run.updatedAt.toISOString(),
+  };
 }
 
 async function currentRetryableStage(

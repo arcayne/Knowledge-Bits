@@ -12,7 +12,7 @@ import {
   createInMemoryWorkflowStore,
   WorkflowRepository,
 } from '../repositories/workflow-repository.js';
-import { strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
+import { strictLegacyReplacementBrief, strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 
 const checksumA = 'a'.repeat(64);
 const sourceId = '11111111-1111-4111-8111-111111111111';
@@ -365,6 +365,63 @@ test('only the run-level review endpoint is available', async () => {
     body: JSON.stringify({ decision: 'approve', packageChecksum, reviewerId: 'browser-controlled' }),
   });
   assert.equal(untrustedIdentity.status, 400);
+});
+
+test('prepares a legacy revision only for an authenticated review principal', async () => {
+  const { app, repository } = createTestApp();
+  const legacyPackage = strictPackageVersionInput('0f8fad5b-d9cb-469f-a165-70867728950e', 'legacy');
+  const run = await repository.createRun({
+    id: legacyPackage.runId,
+    title: 'Legacy review run',
+    locale: 'en',
+    brief: { objective: 'Historical package', notebookLmNotebookId: 'notebook-fixture' },
+    notebookLmNotebookId: 'notebook-fixture',
+    currentStage: 'human_review',
+    packageChecksum: legacyPackage.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  await repository.recordPackageVersion(legacyPackage);
+  const body = {
+    expectedRevision: 1,
+    expectedPackageChecksum: legacyPackage.packageChecksum,
+    notebookLmNotebookId: 'notebook-fixture',
+    brief: strictLegacyReplacementBrief(),
+    comment: 'Replace the unreadable legacy package with the validated baseline.',
+  };
+  const apiToken = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(apiToken.status, 403);
+  const missingPrincipal = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-review-test' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(missingPrincipal.status, 401);
+  const prepared = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify(body),
+  });
+  assert.equal(prepared.status, 200, await prepared.clone().text());
+  const preparedBody = await prepared.json();
+  assert.equal(preparedBody.run.id, run.id);
+  assert.equal(preparedBody.run.currentRevision, 2);
+  assert.equal(preparedBody.previousRevision, 1);
+  const replay = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify(body),
+  });
+  assert.equal(replay.status, 200, await replay.clone().text());
+  const stale = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify({ ...body, expectedRevision: 2 }),
+  });
+  assert.equal(stale.status, 409);
 });
 
 async function reviewReadyRun(

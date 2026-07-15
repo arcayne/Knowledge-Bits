@@ -8,6 +8,66 @@ const snapshotArtifactId = '10000000-0000-4000-8000-000000000002';
 const claimId = '10000000-0000-4000-8000-000000000003';
 const snapshotChecksum = '1'.repeat(64);
 
+export function strictLegacyReplacementBrief(notebookLmNotebookId = 'notebook-fixture'): Record<string, unknown> {
+  const checksum = 'a'.repeat(64);
+  const recipe = (id: string) => ({ id, version: '1.0.0', checksum: `sha256:${checksum}` });
+  const evidence = (id: string, artifactId: string) => ({
+    artifactId,
+    model: 'notebooklm-cli:fixture',
+    notebookId: notebookLmNotebookId,
+    prompt: { bytesBase64: Buffer.from(`Generate ${artifactId}`).toString('base64'), checksum: `sha256:${checksum}` },
+    provider: 'notebooklm',
+    recipe: recipe(id),
+  });
+  const artifact = (id: string, artifactId: string, path: string, mediaType: string, artifactChecksum: string) => ({
+    checksum: `sha256:${artifactChecksum.repeat(64)}`,
+    generation: evidence(id, artifactId),
+    mediaType,
+    path,
+    providerArtifactId: artifactId,
+  });
+  return {
+    baseline: { runId: 'fixture-run' },
+    notebookLmNotebookId,
+    generationPlan: {
+      contentKind: 'nuglet.lesson.v1',
+      schemaVersion: '1.1.0',
+      recipes: {
+        story: recipe('nuglet.lesson.story'),
+        playbook: recipe('nuglet.lesson.playbook'),
+        challenge: recipe('nuglet.challenge'),
+        infographic: recipe('nuglet.visual.infographic'),
+        audioBrief: recipe('nuglet.audio.brief'),
+        audioDiscussion: recipe('nuglet.audio.discussion'),
+        hero: recipe('nuglet.hero'),
+        editorialQa: recipe('nuglet.qa.editorial'),
+      },
+      heroDirection: {
+        concept: 'Moving from saving to growth',
+        metaphor: 'A vessel connected to tokens and a seedling',
+        compositionFamily: 'asymmetrical-story',
+        mustInclude: ['one vessel'],
+        mustAvoid: ['rigid symmetry'],
+      },
+      mediaBaseline: {
+        descriptorChecksum: `sha256:${checksum}`,
+        descriptorPath: 'knowledge-bits/media-baseline.v1.json',
+        descriptor: {
+          artifacts: {
+            infographic: artifact('nuglet.visual.infographic', 'infographic-artifact', 'notebooklm/infographic.webp', 'image/webp', 'a'),
+            audioBrief: artifact('nuglet.audio.brief', 'brief-artifact', 'audio/notebooklm-short-brief.m4a', 'audio/mp4', 'b'),
+            audioDiscussion: artifact('nuglet.audio.discussion', 'discussion-artifact', 'audio/notebooklm-medium-debate.m4a', 'audio/mp4', 'c'),
+          },
+          notebookId: notebookLmNotebookId,
+          runFolder: 'apps/nuglet-lab/outputs/fixture-run',
+          runId: 'fixture-run',
+          schemaVersion: 'nuglet.media-baseline.v1',
+        },
+      },
+    },
+  };
+}
+
 export function strictPackageVersionInput(
   runId: string,
   variant: string,
