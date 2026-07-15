@@ -38,7 +38,12 @@ type MediaContextResolver = (input: ProviderExecutionInput) => Promise<{
   generationPlan?: NugletGenerationPlan;
 }>;
 
+export interface TrustedRecipeBindingVerifier {
+  verify(plan: NugletGenerationPlan): boolean | Promise<boolean>;
+}
+
 export interface ProviderRuntime {
+  recipeBindingVerifier?: TrustedRecipeBindingVerifier;
   notebookProcess?: NotebookLmProcess;
   notebookContext?: NotebookContextResolver;
   sourceVerifier?: ResearchSourceVerifier;
@@ -69,16 +74,22 @@ export function composeWorkerProviders(options: {
     runtime.notebookProcess && runtime.notebookContext && runtime.sourceVerifier
       ? new NotebookLmProvider({
         process: runtime.notebookProcess,
-        context: runtime.notebookContext,
+        context: trustedContextResolver(runtime.notebookContext, runtime.recipeBindingVerifier),
         sourceVerifier: runtime.sourceVerifier,
         timeoutMs: configuredPositiveInteger(env, 'NOTEBOOKLM_TIMEOUT_MS', 180_000),
       })
       : new UnavailableProvider('notebooklm', ['collect_sources', 'create_content']),
     runtime.piClient && runtime.piContext
-      ? new PiEditorialProvider({ client: runtime.piClient, context: runtime.piContext })
+      ? new PiEditorialProvider({
+        client: runtime.piClient,
+        context: trustedContextResolver(runtime.piContext, runtime.recipeBindingVerifier),
+      })
       : new UnavailableProvider('pi', ['check_content']),
     runtime.mediaClient && runtime.mediaContext
-      ? new MediaProviderAdapter({ client: runtime.mediaClient, context: runtime.mediaContext })
+      ? new MediaProviderAdapter({
+        client: runtime.mediaClient,
+        context: trustedContextResolver(runtime.mediaContext, runtime.recipeBindingVerifier),
+      })
       : new UnavailableProvider('media', ['produce_assets'], runtime.configurationIssues?.media),
   ];
 }
@@ -126,11 +137,14 @@ function configuredRuntime(
 }
 
 export class LeaseScopedJobContextResolver {
-  constructor(private readonly client: WorkerEngineClient) {}
+  constructor(
+    private readonly client: WorkerEngineClient,
+    private readonly recipeBindingVerifier?: TrustedRecipeBindingVerifier,
+  ) {}
 
   async notebook(input: ProviderExecutionInput): Promise<NotebookLmContext> {
     const brief = jobBrief(input);
-    const generationPlan = validatedGenerationPlan(brief);
+    const generationPlan = await validatedGenerationPlan(brief, this.recipeBindingVerifier);
     const notebookId = notebookIdFromJob(input);
     const research = input.action === 'create_content' ? await this.verifiedResearch(input) : undefined;
     return {
@@ -143,7 +157,7 @@ export class LeaseScopedJobContextResolver {
   }
 
   async pi(input: ProviderExecutionInput) {
-    const generationPlan = validatedGenerationPlan(jobBrief(input));
+    const generationPlan = await validatedGenerationPlan(jobBrief(input), this.recipeBindingVerifier);
     return {
       candidate: await this.content(input),
       evidence: await this.evidence(input),
@@ -153,7 +167,7 @@ export class LeaseScopedJobContextResolver {
   }
 
   async media(input: ProviderExecutionInput) {
-    const generationPlan = validatedGenerationPlan(jobBrief(input));
+    const generationPlan = await validatedGenerationPlan(jobBrief(input), this.recipeBindingVerifier);
     const content = await this.content(input);
     const qa = knowledgeBitsQaSchema.parse(await this.readJsonDependency(input, 'check_content', 'parsed_output'));
     const contentChecksum = calculateContentChecksum(content);
@@ -480,7 +494,10 @@ function jobBrief(input: ProviderExecutionInput): Record<string, unknown> {
   return brief;
 }
 
-function validatedGenerationPlan(brief: Record<string, unknown>): NugletGenerationPlan | undefined {
+async function validatedGenerationPlan(
+  brief: Record<string, unknown>,
+  verifier: TrustedRecipeBindingVerifier | undefined,
+): Promise<NugletGenerationPlan | undefined> {
   const value = brief.generationPlan;
   if (value === undefined) {
     if (brief.contentKind === 'nuglet.lesson.v1') {
@@ -497,7 +514,27 @@ function validatedGenerationPlan(brief: Record<string, unknown>): NugletGenerati
   }
   const parsed = nugletGenerationPlanSchema.safeParse(value);
   if (!parsed.success) throw new ProviderNeedsHumanError('generation_plan_invalid');
+  if (!verifier) throw new ProviderNeedsHumanError('generation_recipe_verifier_unconfigured');
+  let matches: boolean;
+  try {
+    matches = await verifier.verify(parsed.data);
+  } catch (error) {
+    if (error instanceof ProviderNeedsHumanError) throw error;
+    throw new ProviderNeedsHumanError('generation_recipe_verification_failed');
+  }
+  if (!matches) throw new ProviderNeedsHumanError('generation_recipe_binding_mismatch');
   return parsed.data;
+}
+
+function trustedContextResolver<T extends { generationPlan?: NugletGenerationPlan }>(
+  resolver: (input: ProviderExecutionInput) => Promise<T>,
+  verifier: TrustedRecipeBindingVerifier | undefined,
+): (input: ProviderExecutionInput) => Promise<T> {
+  return async (input) => {
+    const generationPlan = await validatedGenerationPlan(jobBrief(input), verifier);
+    const context = await resolver(input);
+    return generationPlan ? { ...context, generationPlan } : context;
+  };
 }
 
 function parseMediaAsset(value: unknown): {

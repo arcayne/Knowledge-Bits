@@ -10,6 +10,7 @@ import {
   LocalPiSdkClient,
   runProcess,
   type ProviderRuntime,
+  type TrustedRecipeBindingVerifier,
 } from './runtime.js';
 import type { WorkerEngineClient } from './engine-client.js';
 
@@ -119,7 +120,7 @@ test('reconstructs Pi and media context from lease-scoped artifact dependencies'
     }))],
   ]);
   const client = contextClient(bodies);
-  const resolver = new LeaseScopedJobContextResolver(client);
+  const resolver = new LeaseScopedJobContextResolver(client, acceptingRecipeVerifier());
   const dependencies = [
     { artifactId: researchId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'collect_sources' },
     { artifactId: evidence.sources[0]!.snapshotArtifactId, revision: 1, kind: 'source_snapshot', mediaType: 'text/plain', checksum: inputChecksum, action: 'collect_sources', sourceId: evidence.sources[0]!.sourceId },
@@ -150,7 +151,7 @@ test('builds Create context from accepted source URLs instead of brief candidate
       }],
     }))],
   ]));
-  const resolver = new LeaseScopedJobContextResolver(client);
+  const resolver = new LeaseScopedJobContextResolver(client, acceptingRecipeVerifier());
   const dependencies = [
     { artifactId: researchId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'collect_sources' },
     { artifactId: snapshotId, revision: 1, kind: 'source_snapshot', mediaType: 'text/plain', checksum: inputChecksum, action: 'collect_sources', sourceId: evidence.sources[0]!.sourceId },
@@ -183,7 +184,7 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
       editorial: { summary: 'Ready.', findings: [] },
     }))],
   ]));
-  const resolver = new LeaseScopedJobContextResolver(client);
+  const resolver = new LeaseScopedJobContextResolver(client, acceptingRecipeVerifier());
   const dependencies = [
     { artifactId: researchId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'collect_sources' },
     { artifactId: evidence.sources[0]!.snapshotArtifactId, revision: 1, kind: 'source_snapshot', mediaType: 'text/plain', checksum: inputChecksum, action: 'collect_sources', sourceId: evidence.sources[0]!.sourceId },
@@ -208,7 +209,7 @@ test('rejects missing or invalid Nuglet generation plans before reading provider
     artifactReads += 1;
     throw new Error('provider dependency should not be read');
   };
-  const resolver = new LeaseScopedJobContextResolver(client);
+  const resolver = new LeaseScopedJobContextResolver(client, acceptingRecipeVerifier());
 
   await assert.rejects(
     () => resolver.notebook(input('collect_sources', [], { title: 'Focus', contentKind: 'nuglet.lesson.v1' })),
@@ -223,12 +224,98 @@ test('rejects missing or invalid Nuglet generation plans before reading provider
   );
 
   const mismatched = structuredClone(generationPlan);
-  mismatched.recipes.hero.checksum = `sha256:${'b'.repeat(63)}`;
+  mismatched.recipes.hero.checksum = `sha256:${'b'.repeat(64)}`;
+  const rejectingResolver = new LeaseScopedJobContextResolver(client, exactRecipeVerifier(generationPlan));
   await assert.rejects(
-    () => resolver.pi(input('check_content', [], { title: 'Focus', generationPlan: mismatched })),
-    /generation_plan_invalid/,
+    () => rejectingResolver.pi(input('check_content', [], { title: 'Focus', generationPlan: mismatched })),
+    /generation_recipe_binding_mismatch/,
   );
   assert.equal(artifactReads, 0);
+});
+
+test('fails closed without a trusted recipe verifier before reading dependencies', async () => {
+  let artifactReads = 0;
+  const client = contextClient(new Map());
+  client.readArtifact = async () => {
+    artifactReads += 1;
+    throw new Error('provider dependency should not be read');
+  };
+  const resolver = new LeaseScopedJobContextResolver(client);
+
+  await assert.rejects(
+    () => resolver.notebook(input('collect_sources', [], { title: 'Focus', generationPlan })),
+    /generation_recipe_verifier_unconfigured/,
+  );
+  assert.equal(artifactReads, 0);
+});
+
+test('invalid or untrusted Nuglet plans make zero NotebookLM, editorial, and media calls', async () => {
+  const externalCalls = { notebooklm: 0, pi: 0, media: 0 };
+  const verifier = exactRecipeVerifier(generationPlan);
+  const runtime: ProviderRuntime = {
+    recipeBindingVerifier: verifier,
+    notebookProcess: {
+      async run() {
+        externalCalls.notebooklm += 1;
+        throw new Error('NotebookLM must not run');
+      },
+    },
+    notebookContext: async () => ({ notebookId: 'notebook-1', sourceUrls: [], topic: 'Focus' }),
+    sourceVerifier: {
+      async verify() { throw new Error('source verifier must not run'); },
+    },
+    piClient: {
+      async check() {
+        externalCalls.pi += 1;
+        throw new Error('Pi must not run');
+      },
+    },
+    piContext: async () => ({ candidate, evidence, rubric: 'Check it.' }),
+    mediaClient: {
+      async generate() {
+        externalCalls.media += 1;
+        throw new Error('media must not run');
+      },
+    },
+    mediaContext: async () => ({ passedCheck: true, content: candidate, contentChecksum: inputChecksum }),
+  };
+  const [notebook, pi, media] = composeWorkerProviders({ env: {}, runtime });
+  assert.ok(notebook && pi && media);
+
+  const mismatched = structuredClone(generationPlan);
+  mismatched.recipes.hero.checksum = `sha256:${'b'.repeat(64)}`;
+  const badBrief = { title: 'Focus', generationPlan: mismatched };
+  await assert.rejects(() => notebook.execute(input('collect_sources', [], badBrief)), /generation_recipe_binding_mismatch/);
+  await assert.rejects(() => pi.execute(input('check_content', [], badBrief)), /generation_recipe_binding_mismatch/);
+  await assert.rejects(() => media.execute(input('produce_assets', [], badBrief)), /generation_recipe_binding_mismatch/);
+
+  const missingBrief = { title: 'Focus', contentKind: 'nuglet.lesson.v1' };
+  await assert.rejects(() => notebook.execute(input('collect_sources', [], missingBrief)), /generation_plan_missing/);
+  await assert.rejects(() => pi.execute(input('check_content', [], missingBrief)), /generation_plan_missing/);
+  await assert.rejects(() => media.execute(input('produce_assets', [], missingBrief)), /generation_plan_missing/);
+
+  const unverifiedRuntime = { ...runtime };
+  delete unverifiedRuntime.recipeBindingVerifier;
+  const [unverifiedNotebook, unverifiedPi, unverifiedMedia] = composeWorkerProviders({
+    env: {},
+    runtime: unverifiedRuntime,
+  });
+  assert.ok(unverifiedNotebook && unverifiedPi && unverifiedMedia);
+  const validBrief = { title: 'Focus', generationPlan };
+  await assert.rejects(
+    () => unverifiedNotebook.execute(input('collect_sources', [], validBrief)),
+    /generation_recipe_verifier_unconfigured/,
+  );
+  await assert.rejects(
+    () => unverifiedPi.execute(input('check_content', [], validBrief)),
+    /generation_recipe_verifier_unconfigured/,
+  );
+  await assert.rejects(
+    () => unverifiedMedia.execute(input('produce_assets', [], validBrief)),
+    /generation_recipe_verifier_unconfigured/,
+  );
+
+  assert.deepEqual(externalCalls, { notebooklm: 0, pi: 0, media: 0 });
 });
 
 test('executes editorial inference through the local Pi SDK adapter with an abort signal', async () => {
@@ -393,5 +480,17 @@ function contextClient(bodies: Map<string, Uint8Array>): WorkerEngineClient {
     async completeArtifact() { throw new Error('not used'); },
     async reportResult() { throw new Error('not used'); },
     async runDelivery() { throw new Error('not used'); },
+  };
+}
+
+function acceptingRecipeVerifier(): TrustedRecipeBindingVerifier {
+  return { verify: () => true };
+}
+
+function exactRecipeVerifier(trusted: typeof generationPlan): TrustedRecipeBindingVerifier {
+  return {
+    verify(candidatePlan) {
+      return JSON.stringify(candidatePlan.recipes) === JSON.stringify(trusted.recipes);
+    },
   };
 }
