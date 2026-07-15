@@ -60,6 +60,9 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
       button:disabled { cursor: not-allowed; opacity: .45; }
       .decision-bar { position: fixed; inset: auto 0 0; z-index: 10; background: #202526; color: #fff; border-top: 1px solid #0f1112; padding: .75rem 1.25rem; }
       .decision-inner { max-width: 980px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+      .editorial-warnings { flex: 1 1 100%; border-left: 3px solid #d7ee72; padding-left: .65rem; color: #fff; }
+      .editorial-warnings strong { display: block; }
+      .editorial-warnings ul { margin: .25rem 0 0; padding-left: 1.1rem; }
       button { border: 1px solid transparent; padding: .55rem .8rem; font: inherit; cursor: pointer; }
       button[data-decision="approve"] { background: #d7ee72; color: #202526; }
       button[data-decision="request_changes"] { background: transparent; color: #fff; border-color: #c5d2cd; }
@@ -127,6 +130,7 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
     <footer class="decision-bar" aria-label="Overall review decision">
       <div class="decision-inner">
         <span id="decision-status">One overall package decision</span>
+        <section class="editorial-warnings" id="editorial-warnings" aria-live="polite" hidden></section>
         <button type="button" data-decision="approve" disabled>Approve</button>
         <button type="button" data-decision="request_changes" disabled>Request changes</button>
         <form id="change-form">

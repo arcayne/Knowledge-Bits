@@ -104,7 +104,65 @@ test('runs Story and Playbook editorial QA from the resolved rubric with immutab
   assert.equal(report.renderedPrompt, renderedPrompt);
 });
 
-test('Pi blocks critical and unsupported-claim findings without a rewrite or scheduling interface', async () => {
+test('Story and Playbook Pi keeps valid blocking findings as provenance-backed QA success', async () => {
+  const editorialRecipe = resolvedRecipe('nuglet.qa.editorial', {
+    id: 'nuglet.qa.editorial',
+    version: '1.0.0',
+    status: 'approved',
+    instructions: ['Flag claims that need stronger support.'],
+    validationChecks: ['Keep findings specific.'],
+  });
+  const provider = new PiEditorialProvider({
+    client: {
+      async check() {
+        return {
+          summary: 'Review before publishing.',
+          findings: [{
+            code: 'unsupported-claim',
+            severity: 'major',
+            message: 'This claim needs a stronger source.',
+          }],
+        };
+      },
+    },
+    context: async () => ({
+      candidate: await semanticCandidate(),
+      evidence,
+      rubric: 'Check source faithfulness and practical value.',
+      generationPlan: { schemaVersion: '1.1.0' } as never,
+      resolvedRecipes: { editorialQa: editorialRecipe },
+    }),
+  });
+
+  const result = await provider.execute(input());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.deepEqual((result.parsedOutput as { editorial: unknown }).editorial, {
+    summary: 'Review before publishing.',
+    findings: [{
+      code: 'unsupported-claim',
+      severity: 'major',
+      blocking: true,
+      message: 'This claim needs a stronger source.',
+    }],
+  });
+  assert.deepEqual(result.supportArtifacts?.map((artifact) => artifact.kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+  ]);
+});
+
+test('Pi rejects malformed editorial responses instead of converting them to warnings', async () => {
+  const provider = new PiEditorialProvider({
+    client: { async check() { return { summary: 'Malformed.', findings: [{}] }; } },
+    context: async () => ({ candidate, evidence, rubric: 'Evaluate the candidate.' }),
+  });
+
+  await assert.rejects(() => provider.execute(input()), /Editorial finding requires code and message/);
+});
+
+test('Pi persists blocking editorial findings as successful QA without a rewrite or scheduling interface', async () => {
   const client: PiSdkClient = {
     async check() {
       return {
@@ -121,7 +179,44 @@ test('Pi blocks critical and unsupported-claim findings without a rewrite or sch
     context: async () => ({ candidate, evidence, rubric: 'Evaluate the candidate.' }),
   });
 
-  await assert.rejects(() => provider.execute(input()), /editorial_check_failed/);
+  const result = await provider.execute(input());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.deepEqual(JSON.parse(Buffer.from(result.rawResponse).toString('utf8')), {
+    findings: [
+      { code: 'unsupported-claim', severity: 'major', message: 'The claim has no usable source.' },
+      { code: 'tone', severity: 'critical', message: 'The draft makes a harmful assertion.' },
+    ],
+    summary: 'Not ready.',
+  });
+  const parsed = result.parsedOutput as {
+    deterministic: { passed: boolean; contentChecksum: string; findings: unknown[] };
+    editorial: unknown;
+  };
+  assert.deepEqual(parsed.deterministic, {
+    passed: true,
+    contentChecksum: parsed.deterministic.contentChecksum,
+    findings: [],
+  });
+  assert.match(parsed.deterministic.contentChecksum, /^[a-f0-9]{64}$/);
+  assert.deepEqual(parsed.editorial, {
+    summary: 'Not ready.',
+    findings: [
+      {
+        code: 'unsupported-claim',
+        severity: 'major',
+        blocking: true,
+        message: 'The claim has no usable source.',
+      },
+      {
+        code: 'tone',
+        severity: 'critical',
+        blocking: true,
+        message: 'The draft makes a harmful assertion.',
+      },
+    ],
+  });
   assert.equal('rewrite' in client, false);
   assert.equal('schedule' in client, false);
 });

@@ -951,6 +951,7 @@ test('requires four distinct review assets and complete generation execution lin
     currentPackageChecksum: checksum,
     decisionAllowed: true,
     issues: [],
+    warnings: ['Editorial warning: unsupported-claim: A claim is unsupported.'],
     package: {
       id: 'review-package-1',
       schemaVersion: 'knowledge-bits.review-package.v1',

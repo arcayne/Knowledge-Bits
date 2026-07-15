@@ -302,7 +302,7 @@ test('automatic quality revision carries accepted evidence through package assem
       state: 'needs_human',
       completedAt: '2026-07-13T10:05:00.000Z',
       outputChecksum: null,
-      error: 'editorial_quality_failed',
+      error: 'deterministic_quality_failed',
       needsHumanKind: 'quality',
     },
     transition: nextTransition({
@@ -311,7 +311,7 @@ test('automatic quality revision carries accepted evidence through package assem
       revisionAttempts: firstCheckContext.stage.revisionAttempts,
       packageChecksum: firstCheckContext.packageChecksum as `${string}` | null,
       approvedChecksum: firstCheckContext.approvedChecksum as `${string}` | null,
-    }, { type: 'quality_failed', reason: 'editorial_quality_failed' }),
+    }, { type: 'quality_failed', reason: 'deterministic_quality_failed' }),
   });
 
   const secondCreate = await requiredClaim(repository, 'create_content', 'create-worker');
@@ -345,6 +345,57 @@ test('automatic quality revision carries accepted evidence through package assem
   });
   assert.equal(approved.status, 200, await approved.clone().text());
   assert.equal((await approved.json()).reviewStatus, 'approved');
+});
+
+test('a successful editorial check with blocking findings queues asset production', async () => {
+  const { repository, storage } = createTestApp();
+  const run = await repository.bootstrapRun({
+    title: 'Editorial warning review',
+    locale: 'en',
+    brief: { objective: 'Keep editorial evidence for the human decision.' },
+  });
+  const fixtures = reviewStageFixtures();
+  const contentChecksum = (fixtures.check_content[0]!.body as {
+    deterministic: { contentChecksum: string };
+  }).deterministic.contentChecksum;
+
+  const research = await requiredClaim(repository, 'collect_sources', 'research-worker');
+  await recordClaimArtifacts(repository, storage, research, 'research-worker', fixtures.collect_sources);
+  await completeClaim(repository, research, 'research-worker');
+
+  const create = await requiredClaim(repository, 'create_content', 'create-worker');
+  await recordClaimArtifacts(repository, storage, create, 'create-worker', fixtures.create_content);
+  await completeClaim(repository, create, 'create-worker');
+
+  const check = await requiredClaim(repository, 'check_content', 'check-worker');
+  await recordClaimArtifacts(repository, storage, check, 'check-worker', [{
+    kind: 'parsed_output',
+    mediaType: 'application/json',
+    body: {
+      deterministic: { passed: true, contentChecksum, findings: [] },
+      editorial: {
+        summary: 'Review the cited claim before publishing.',
+        findings: [{
+          code: 'unsupported-claim',
+          severity: 'major',
+          blocking: true,
+          message: 'A claim needs a stronger source.',
+        }],
+      },
+    },
+  }]);
+  await completeClaim(repository, check, 'check-worker');
+
+  const assets = await requiredClaim(repository, 'produce_assets', 'asset-worker');
+  assert.equal(assets.revision, 1);
+  await recordClaimArtifacts(repository, storage, assets, 'asset-worker', fixtures.produce_assets);
+  await completeClaim(repository, assets, 'asset-worker');
+
+  const model = await new ReviewPackageService({ repository, storage }).load(run.id);
+  assert.equal(model.decisionAllowed, true);
+  assert.deepEqual(model.warnings, [
+    'Editorial warning: unsupported-claim: A claim needs a stronger source.',
+  ]);
 });
 
 test('only the run-level review endpoint is available', async () => {

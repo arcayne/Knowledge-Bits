@@ -2,7 +2,7 @@
   "workflow": "agentic-delivery-playbook",
   "version": "0.2",
   "phase": "implementation",
-  "status": "in_progress",
+  "status": "complete",
   "taskFit": "broad-ticket",
   "specPath": "specs/20260715-1810-editorial-warning-review/spec.md",
   "approval": "User explicitly decided editorial_check_failed quality verdicts must continue to human review with a warning and never become a blind pipeline stop.",
@@ -10,10 +10,67 @@
   "activeModel": "runtime-default",
   "modelLedger": [{ "role": "parent", "model": "runtime-default", "source": "runtime-default" }],
   "reviewGates": ["tests-first", "implementation-qa", "verification"],
-  "changedFiles": [],
-  "validationEvidence": [],
-  "findings": [],
-  "knownGaps": [],
-  "nextAction": "Write and verify failing behavioral tests."
+  "changedFiles": [
+    "apps/worker/src/providers/pi.ts",
+    "apps/worker/src/providers/pi.test.ts",
+    "apps/worker/src/runtime.ts",
+    "apps/worker/src/runtime.test.ts",
+    "apps/worker/src/executor.test.ts",
+    "packages/contracts/src/knowledge-bits.ts",
+    "packages/contracts/test/contracts.test.mjs",
+    "apps/api/src/services/review-packages.ts",
+    "apps/api/src/services/review-packages.test.ts",
+    "apps/api/src/routes/reviews.test.ts",
+    "apps/review/src/review-client.mjs",
+    "apps/review/src/review-client.test.mjs",
+    "apps/review/src/pages/runs/[runId].astro",
+    "specs/20260715-1810-editorial-warning-review/run.json",
+    "specs/20260715-1810-editorial-warning-review/notes.md"
+  ],
+  "validationEvidence": [
+    {
+      "phase": "red",
+      "command": "pnpm --filter @knowledge-bits/worker exec tsx --test src/runtime.test.ts",
+      "result": "Failed as expected before the runtime change: blocking editorial findings set passedCheck to false for both legacy and Story/Playbook candidates."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/worker typecheck && pnpm --filter @knowledge-bits/worker test",
+      "result": "Passed: 138 tests."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/contracts typecheck && pnpm --filter @knowledge-bits/contracts test",
+      "result": "Passed: 32 tests."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/pipeline typecheck && pnpm --filter @knowledge-bits/pipeline test",
+      "result": "Passed: 34 tests."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/api typecheck && pnpm --filter @knowledge-bits/api test",
+      "result": "Passed: 112 tests, including the warning-bearing check to asset production sequence."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/review typecheck && pnpm --filter @knowledge-bits/review build && pnpm --filter @knowledge-bits/review test",
+      "result": "Completed with zero Astro diagnostics; the production review build and focused client behavior tests passed."
+    }
+  ],
+  "findings": [
+    {
+      "severity": "resolved",
+      "detail": "Runtime media eligibility previously treated blocking editorial findings as failed QA. It now depends only on deterministic QA and the semantic content checksum."
+    },
+    {
+      "severity": "resolved",
+      "detail": "Review warnings are a separate read-model field. Hard issues remain the only review-package blockers."
+    }
+  ],
+  "knownGaps": [
+    "Validation ran with Node 26.5.0 while the package declares >=24 <25. pnpm emitted its engine warning, and the review build reported that Vercel will use Node 24."
+  ],
+  "nextAction": "Completed and committed on codex/nuglet-generation-v03."
 }
-

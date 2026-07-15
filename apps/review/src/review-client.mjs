@@ -175,6 +175,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
         renderGenerationExecutions(payload.generationExecutions);
         fillList('#claim-coverage', learner.claimCoverage.map((entry) => `${entry.path}: ${entry.claimIds.join(', ')}`), 'No claim coverage.');
       }
+      renderEditorialWarnings(payload.warnings);
       const allowed = Boolean(payload.decisionAllowed && checksumMatches);
       setDecisionAllowed(allowed);
       decisionStatus.textContent = allowed ? 'One overall package decision' : (payload.issues[0] || 'This package is not open for review.');
@@ -228,6 +229,22 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     required('#qa').textContent = `${reviewPackage.qa.deterministic.passed ? 'Passed' : 'Failed'}: ${reviewPackage.qa.editorial.summary}`;
     const all = [...reviewPackage.qa.deterministic.findings, ...reviewPackage.qa.editorial.findings];
     fillList('#qa-findings', all.map((finding) => `${finding.code}: ${finding.message}`), 'No QA findings.');
+  };
+
+  const renderEditorialWarnings = (warnings = []) => {
+    const container = required('#editorial-warnings');
+    container.replaceChildren();
+    container.hidden = warnings.length === 0;
+    if (warnings.length === 0) return;
+    const label = document.createElement('strong');
+    label.textContent = 'Editorial warnings';
+    const list = document.createElement('ul');
+    for (const warning of warnings) {
+      const item = document.createElement('li');
+      item.textContent = warning;
+      list.append(item);
+    }
+    container.append(label, list);
   };
 
   const renderGenerationExecutions = (generationExecutions = {}) => {

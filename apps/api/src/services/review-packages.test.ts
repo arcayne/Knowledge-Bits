@@ -213,18 +213,41 @@ test('binds selected outputs to complete evidence from the same execution', () =
   );
 });
 
-test('blocks approval for failed QA, blocking editorial findings, or stale asset inputs', async () => {
+test('blocks approval for failed deterministic QA or stale asset inputs', async () => {
   for (const options of [
     { qaPassed: false },
-    { blockingEditorial: true },
     { assetInputChecksum: 'd'.repeat(64) },
   ]) {
     const { repository, storage } = await fixture(options);
     const model = await new ReviewPackageService({ repository, storage }).load(runId);
     assert.equal(model.decisionAllowed, false);
     assert.ok(model.package);
-    assert.match(model.issues.join(' '), /deterministic|editorial|checksum/i);
+    assert.match(model.issues.join(' '), /deterministic|checksum/i);
   }
+});
+
+test('keeps blocking editorial findings as decision-ready review warnings', async () => {
+  const { repository, storage } = await fixture({ blockingEditorial: true });
+
+  const model = await new ReviewPackageService({ repository, storage }).load(runId);
+
+  assert.equal(model.decisionAllowed, true);
+  assert.deepEqual(model.issues, []);
+  assert.deepEqual(model.warnings, [
+    'Editorial warning: unsupported-claim: A claim is unsupported.',
+  ]);
+});
+
+test('keeps editorial warnings visible when a separate hard gate blocks decisions', async () => {
+  const { repository, storage } = await fixture({ blockingEditorial: true, qaPassed: false });
+
+  const model = await new ReviewPackageService({ repository, storage }).load(runId);
+
+  assert.equal(model.decisionAllowed, false);
+  assert.match(model.issues.join(' '), /deterministic/i);
+  assert.deepEqual(model.warnings, [
+    'Editorial warning: unsupported-claim: A claim is unsupported.',
+  ]);
 });
 
 test('excludes superseded assets so approval is bound to the displayed canonical package', async () => {

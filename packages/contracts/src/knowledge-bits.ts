@@ -1121,6 +1121,7 @@ export const reviewReadModelSchema = z.object({
   currentPackageChecksum: checksumSchema.nullable(),
   decisionAllowed: z.boolean(),
   issues: z.array(z.string().min(1)),
+  warnings: z.array(z.string().min(1)),
   package: reviewPackageVersionSchema.nullable(),
   assets: z.object({
     hero: reviewAssetSchema,

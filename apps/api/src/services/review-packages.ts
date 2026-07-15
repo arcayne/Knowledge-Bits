@@ -82,6 +82,7 @@ export class ReviewPackageService {
         ...qaApprovalIssues(qa, assembled.semanticChecksum),
         ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum),
       ];
+      const warnings = editorialWarnings(qa);
       const packageChecksum = calculatePackageChecksum({
         content,
         evidence,
@@ -134,6 +135,7 @@ export class ReviewPackageService {
           && current.packageChecksum === packageVersion.packageChecksum
           && approvalIssues.length === 0,
         issues: approvalIssues,
+        warnings,
         package: packageVersion,
         assets,
         generationExecutions,
@@ -149,6 +151,7 @@ export class ReviewPackageService {
         currentPackageChecksum: run.packageChecksum,
         decisionAllowed: false,
         issues: [assemblyErrorMessage(error)],
+        warnings: [],
         package: null,
         assets,
         generationExecutions: emptyGenerationExecutions(),
@@ -563,8 +566,13 @@ function qaApprovalIssues(qa: ReturnType<typeof knowledgeBitsQaSchema.parse>, co
   return [
     ...(!qa.deterministic.passed ? ['Deterministic QA did not pass'] : []),
     ...(qa.deterministic.contentChecksum !== contentChecksum ? ['Deterministic QA content checksum does not match learner content'] : []),
-    ...(qa.editorial.findings.some((finding) => finding.blocking) ? ['Editorial QA contains blocking findings'] : []),
   ];
+}
+
+function editorialWarnings(qa: ReturnType<typeof knowledgeBitsQaSchema.parse>): string[] {
+  return qa.editorial.findings
+    .filter((finding) => finding.blocking)
+    .map((finding) => `Editorial warning: ${finding.code}: ${finding.message}`);
 }
 
 function assetChecksumIssues(artifacts: readonly WorkflowArtifact[], contentChecksum: string): string[] {

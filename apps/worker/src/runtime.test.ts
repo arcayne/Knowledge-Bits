@@ -168,6 +168,36 @@ test('reconstructs Pi and media context from lease-scoped artifact dependencies'
   assert.equal(media.contentChecksum, calculateContentChecksum(candidate));
 });
 
+test('keeps a valid blocking legacy editorial QA response eligible for asset production', async () => {
+  const createId = '66666666-6666-4666-8666-666666666661';
+  const checkId = '66666666-6666-4666-8666-666666666662';
+  const client = contextClient(new Map([
+    [createId, Buffer.from(JSON.stringify(candidate))],
+    [checkId, Buffer.from(JSON.stringify({
+      deterministic: { passed: true, contentChecksum: calculateContentChecksum(candidate), findings: [] },
+      editorial: {
+        summary: 'Review this claim before publishing.',
+        findings: [{
+          code: 'unsupported-claim',
+          severity: 'major',
+          blocking: true,
+          message: 'The claim needs a stronger source.',
+        }],
+      },
+    }))],
+  ]));
+  const resolver = new LeaseScopedJobContextResolver(client, acceptingRecipeVerifier());
+  const dependencies = [
+    { artifactId: createId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'create_content' },
+    { artifactId: checkId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'check_content' },
+  ];
+
+  const media = await resolver.media(input('produce_assets', dependencies));
+
+  assert.equal(media.passedCheck, true);
+  assert.equal(media.contentChecksum, calculateContentChecksum(candidate));
+});
+
 test('builds Create context from accepted source URLs instead of brief candidates', async () => {
   const researchId = '77777777-7777-4777-8777-777777777771';
   const snapshotId = evidence.sources[0]!.snapshotArtifactId;
@@ -213,7 +243,15 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
     [createId, Buffer.from(JSON.stringify(storyCandidate))],
     [checkId, Buffer.from(JSON.stringify({
       deterministic: { passed: true, contentChecksum: calculateContentChecksum(storyCandidate), findings: [] },
-      editorial: { summary: 'Ready.', findings: [] },
+      editorial: {
+        summary: 'Review this claim before publishing.',
+        findings: [{
+          code: 'unsupported-claim',
+          severity: 'major',
+          blocking: true,
+          message: 'The claim needs a stronger source.',
+        }],
+      },
     }))],
   ]));
   const resolver = new LeaseScopedJobContextResolver(client, acceptingRecipeVerifier());
@@ -244,10 +282,75 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   assert.equal(notebook.objective, 'make interrupted work easier to resume');
   assert.equal(notebook.centralIdea, 'A visible next step reduces restart friction.');
   assert.deepEqual(pi.candidate, storyCandidate);
+  assert.equal(media.passedCheck, true);
   assert.equal(media.contentChecksum, calculateContentChecksum(storyCandidate));
   assert.equal(notebook.resolvedRecipes?.story?.id, generationPlan.recipes.story.id);
   assert.equal(pi.resolvedRecipes?.editorialQa?.id, generationPlan.recipes.editorialQa.id);
   assert.equal(media.resolvedRecipes?.hero?.id, generationPlan.recipes.hero.id);
+});
+
+test('passes warning-bearing Story and Playbook QA through the media provider gate', async () => {
+  const researchId = '99999999-9999-4999-8999-999999999991';
+  const createId = '99999999-9999-4999-8999-999999999992';
+  const checkId = '99999999-9999-4999-8999-999999999993';
+  const storyCandidate = await semanticCandidate();
+  const client = contextClient(new Map([
+    [researchId, Buffer.from(JSON.stringify({ acceptedSources: [{
+      sourceId: evidence.sources[0]!.sourceId,
+      title: evidence.sources[0]!.title,
+      url: 'https://accepted.example.test/evidence',
+    }] }))],
+    [createId, Buffer.from(JSON.stringify(storyCandidate))],
+    [checkId, Buffer.from(JSON.stringify({
+      deterministic: { passed: true, contentChecksum: calculateContentChecksum(storyCandidate), findings: [] },
+      editorial: {
+        summary: 'Review this claim before publishing.',
+        findings: [{
+          code: 'unsupported-claim',
+          severity: 'major',
+          blocking: true,
+          message: 'The claim needs a stronger source.',
+        }],
+      },
+    }))],
+  ]));
+  const resolver = new LeaseScopedJobContextResolver(client, acceptingRecipeVerifier());
+  const dependencies = [
+    { artifactId: researchId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'collect_sources' },
+    { artifactId: evidence.sources[0]!.snapshotArtifactId, revision: 1, kind: 'source_snapshot', mediaType: 'application/json', checksum: inputChecksum, action: 'collect_sources', sourceId: evidence.sources[0]!.sourceId },
+    { artifactId: createId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'create_content' },
+    { artifactId: checkId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'check_content' },
+  ];
+  let mediaCalls = 0;
+  const providers = composeWorkerProviders({
+    env: {},
+    runtime: {
+      recipeBindingVerifier: acceptingRecipeVerifier(),
+      mediaClient: {
+        async generate() {
+          mediaCalls += 1;
+          return [];
+        },
+      },
+      mediaContext: (execution) => resolver.media(execution),
+    },
+  });
+  const media = providers[2];
+  assert.ok(media);
+  const brief = {
+    title: 'Focus',
+    locale: 'en-GB',
+    audience: 'busy knowledge workers',
+    objective: 'make interrupted work easier to resume',
+    centralIdea: 'A visible next step reduces restart friction.',
+    generationPlan,
+  };
+
+  await assert.rejects(
+    () => media.execute(input('produce_assets', dependencies, brief)),
+    /media_empty_response/,
+  );
+  assert.equal(mediaCalls, 1);
 });
 
 test('rejects missing or invalid Nuglet generation plans before reading provider dependencies', async () => {

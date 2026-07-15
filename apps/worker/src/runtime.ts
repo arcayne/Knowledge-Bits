@@ -211,8 +211,7 @@ export class LeaseScopedJobContextResolver {
     const contentChecksum = calculateContentChecksum(content);
     return {
       passedCheck: qa.deterministic.passed
-        && qa.deterministic.contentChecksum === contentChecksum
-        && !qa.editorial.findings.some((finding) => finding.blocking),
+        && qa.deterministic.contentChecksum === contentChecksum,
       content,
       contentChecksum,
       ...(generation ? { generationPlan: generation.plan, resolvedRecipes: generation.recipes } : {}),

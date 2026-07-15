@@ -212,6 +212,63 @@ test('uploads raw response, parsed output, and execution report before a success
   assert.match(client.results[0]?.result.outputChecksum ?? '', /^[a-f0-9]{64}$/);
 });
 
+test('persists warning-bearing editorial QA and provenance before completing check', async () => {
+  const client = new FakeEngineClient();
+  const recipeBody = Buffer.from('{"id":"nuglet.qa.editorial","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Review the candidate.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const checkJob = jobWithRecipePlan('check', { editorialQa: recipeBinding(provenance) });
+  const provider = providerFor('check_content', {
+    kind: 'success',
+    rawResponse: Buffer.from('{"summary":"Review before publishing."}\n'),
+    parsedOutput: {
+      deterministic: { passed: true, contentChecksum: 'a'.repeat(64), findings: [] },
+      editorial: {
+        summary: 'Review before publishing.',
+        findings: [{
+          code: 'unsupported-claim',
+          severity: 'major',
+          blocking: true,
+          message: 'This claim needs a stronger source.',
+        }],
+      },
+    },
+    executionReport: { provider: 'pi', promptVersion: 'nuglet.qa.editorial@1.0.0' },
+    supportArtifacts: [
+      {
+        kind: 'generation.recipe.snapshot',
+        mediaType: 'application/json',
+        body: recipeBody,
+        inputChecksum: null,
+        provenance,
+      },
+      {
+        kind: 'generation.prompt.rendered',
+        mediaType: 'text/plain',
+        body: promptBody,
+        inputChecksum: prefixedChecksum(recipeBody),
+        provenance,
+      },
+    ],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(checkJob);
+
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+    'raw_response',
+    'parsed_output',
+    'generation.execution.report',
+  ]);
+  const parsed = client.uploadedArtifacts.find(({ artifactId }) => (
+    client.completedArtifacts.find((artifact) => artifact.artifactId === artifactId)?.kind === 'parsed_output'
+  ));
+  assert.match(Buffer.from(parsed?.body ?? []).toString('utf8'), /unsupported-claim/);
+  assert.equal(client.results[0]?.result.state, 'done');
+});
+
 test('uploads generated media bytes with their media metadata and content checksum before audit artifacts', async () => {
   const client = new FakeEngineClient();
   const contentChecksum = 'a'.repeat(64);
