@@ -22,13 +22,15 @@ const runId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 function createRepository(initialNow = new Date('2026-07-12T12:00:00.000Z')) {
   let identifier = 0;
   let now = new Date(initialNow);
-  const repository = new WorkflowRepository(createInMemoryWorkflowStore({
+  const store = createInMemoryWorkflowStore({
     clock: () => new Date(now),
     idGenerator: () => `test-${++identifier}`,
-  }));
+  });
+  const repository = new WorkflowRepository(store);
 
   return {
     repository,
+    store,
     now,
     setNow(value: Date) {
       now = new Date(value);
@@ -806,7 +808,7 @@ test('recordDelivery returns the existing row for its idempotency key', async ()
 });
 
 test('prepares one guarded strict revision from an unreadable legacy review without replacing its immutable package', async () => {
-  const { repository } = createRepository();
+  const { repository, store } = createRepository();
   const legacyPackage = packageVersionInput('legacy-revision');
   await repository.createRun({
     id: runId,
@@ -842,6 +844,10 @@ test('prepares one guarded strict revision from an unreadable legacy review with
 
   assert.equal(prepared.previousRevision, 1);
   assert.equal(prepared.previousPackageChecksum, legacyPackage.packageChecksum);
+  const effect = [...(store as unknown as {
+    effectsByKey: Map<string, { type: string; payload: Record<string, unknown> }>;
+  }).effectsByKey.values()].find((candidate) => candidate.type === 'prepare_legacy_revision');
+  assert.equal(effect?.payload.newRevision, 2);
   assert.equal(prepared.run.currentRevision, 2);
   assert.equal(prepared.run.currentStage, 'research');
   assert.equal(prepared.run.packageChecksum, null);

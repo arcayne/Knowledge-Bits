@@ -2996,6 +2996,7 @@ function legacyRevisionOperation(input: PrepareLegacyRevisionInput): {
       operatorId: input.operatorId,
       comment: input.comment,
       previousRevision: input.expectedRevision,
+      newRevision: input.expectedRevision + 1,
       previousPackageChecksum: input.expectedPackageChecksum,
       replacementBriefChecksum,
     },

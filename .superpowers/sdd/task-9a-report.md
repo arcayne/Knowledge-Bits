@@ -72,3 +72,38 @@ git diff --check
 Results: 30 contract tests passed. 45 focused API tests passed, including the
 OrbStack-backed Prisma integration path. Both affected typechecks and the diff
 check passed.
+
+## Repair Verification
+
+All repair verification commands used Node `24.18.0`.
+
+```text
+PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH" node --version
+```
+
+Result: `v24.18.0`.
+
+```text
+PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH" pnpm --filter @knowledge-bits/api exec tsx --test src/repositories/workflow-repository.test.ts
+```
+
+Result: exit 0. 34 tests passed, 0 failed.
+
+```text
+PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH" pnpm --filter @knowledge-bits/api exec tsx --test src/repositories/workflow-repository.integration.test.ts
+```
+
+Result: exit 0. 4 tests passed, 0 failed, including the OrbStack-backed Prisma
+legacy revision test.
+
+```text
+PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH" pnpm --filter @knowledge-bits/api typecheck
+```
+
+Result: exit 0.
+
+```text
+git diff --check
+```
+
+Result: exit 0 with no output.

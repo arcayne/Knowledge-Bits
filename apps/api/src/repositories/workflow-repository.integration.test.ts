@@ -905,6 +905,7 @@ test(
     assert.equal(await prisma.job.count({ where: { runId, stage: 'human_review', state: 'queued' } }), 0);
     const effect = await prisma.workflowEffect.findFirst({ where: { runId, type: 'prepare_legacy_revision' } });
     assert.ok(effect);
+    assert.equal((effect.payload as { newRevision?: unknown }).newRevision, 2);
     const serializedEffect = JSON.stringify(effect.payload);
     assert.match(serializedEffect, /editor-1/);
     assert.doesNotMatch(serializedEffect, /bytesBase64|Generate infographic-artifact/);
