@@ -191,12 +191,290 @@ export const nugletLessonV1PayloadSchema = z.object({
   });
 });
 
+export const legacyNugletLessonTargetSchema = z.object({
+  kind: z.literal('nuglet.lesson.v1'),
+  schemaVersion: z.literal('1.0.0'),
+  payload: nugletLessonV1PayloadSchema,
+}).strict();
+
+export const storyPlaybookLearnerContentPathSchema = z.enum([
+  'identity.title',
+  'learning.centralIdea',
+  'learning.whyItMatters',
+  'learning.oneLineToKeep',
+  'learning.action',
+  'read.story',
+  'read.playbook',
+  'visual',
+  'listen.brief',
+  'listen.discussion',
+  'quiz',
+]);
+
+const claimReferencesSchema = z.array(z.string().uuid());
+
+const storyBlockSchema = z.object({
+  type: z.enum(['opening', 'turning_point', 'evidence', 'practical_bridge']),
+  text: z.string().trim().min(1),
+  claimRefs: claimReferencesSchema,
+}).strict();
+
+const storySchema = z.object({
+  title: z.string().trim().min(1),
+  estimatedMinutes: z.number().int().positive(),
+  blocks: z.array(storyBlockSchema).min(1),
+}).strict();
+
+const playbookStepSchema = z.object({
+  id: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  body: z.string().trim().min(1),
+  claimRefs: claimReferencesSchema,
+}).strict();
+
+const playbookSchema = z.object({
+  title: z.string().trim().min(1),
+  estimatedMinutes: z.number().int().positive(),
+  principle: z.string().trim().min(1),
+  whyItMatters: z.string().trim().min(1),
+  steps: z.array(playbookStepSchema).min(3).max(5),
+  example: z.object({
+    title: z.string().trim().min(1),
+    body: z.string().trim().min(1),
+    claimRefs: claimReferencesSchema,
+  }).strict(),
+  watchOuts: z.array(z.string().trim().min(1)).min(1),
+  action: z.string().trim().min(1),
+}).strict();
+
+const identitySchema = z.object({
+  locale: z.string().trim().min(1),
+  topic: z.object({
+    label: z.string().trim().min(1),
+    categoryId: z.string().trim().min(1).nullable(),
+  }).strict(),
+  tags: z.array(z.string().trim().min(1)),
+  title: z.string().trim().min(1),
+  deck: z.string().trim().min(1),
+  slugSuggestion: z.string().trim().min(1),
+}).strict();
+
+const learningSchema = z.object({
+  centralIdea: z.string().trim().min(1),
+  whyItMatters: z.string().trim().min(1),
+  oneLineToKeep: z.string().trim().min(1),
+  action: z.object({
+    label: z.string().trim().min(1),
+    instruction: z.string().trim().min(1),
+  }).strict(),
+}).strict();
+
+const heroBriefSchema = z.object({
+  altText: z.string().trim().min(1),
+  accessibilityPurpose: z.enum(['informative', 'decorative']),
+  mediaBrief: z.object({
+    concept: z.string().trim().min(1),
+    metaphor: z.string().trim().min(1),
+    compositionFamily: z.string().trim().min(1),
+  }).strict(),
+}).strict();
+
+const visualBriefSchema = z.object({
+  title: z.string().trim().min(1),
+  altText: z.string().trim().min(1),
+  textEquivalent: z.array(z.string().trim().min(1)).min(1),
+  claimRefs: claimReferencesSchema,
+  mediaBrief: z.object({
+    objective: z.string().trim().min(1),
+    structure: z.string().trim().min(1),
+  }).strict(),
+}).strict();
+
+const audioEditorialBriefSchema = z.object({
+  editorialBrief: z.object({
+    objective: z.string().trim().min(1),
+    tone: z.string().trim().min(1),
+    keyPoints: z.array(z.string().trim().min(1)).min(1),
+  }).strict(),
+}).strict();
+
+const quizQuestionSchema = z.object({
+  id: z.string().trim().min(1),
+  prompt: z.string().trim().min(1),
+  options: z.array(z.object({
+    id: z.string().trim().min(1),
+    text: z.string().trim().min(1),
+  }).strict()).min(3).max(4),
+  correctOptionId: z.string().trim().min(1),
+  rationale: z.string().trim().min(1),
+  reviewConcept: z.string().trim().min(1),
+  claimRefs: claimReferencesSchema,
+}).strict().superRefine(({ correctOptionId, options }, context) => {
+  const optionIds = new Set(options.map((option) => option.id));
+  if (optionIds.size !== options.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Quiz option IDs must be unique',
+      path: ['options'],
+    });
+  }
+  if (!optionIds.has(correctOptionId)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Correct option must reference a supplied option',
+      path: ['correctOptionId'],
+    });
+  }
+});
+
+const publicSourceSchema = z.object({
+  evidenceSourceId: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  publisher: z.string().trim().min(1),
+}).strict();
+
+const storyPlaybookClaimCoverageSchema = z.array(z.object({
+  path: storyPlaybookLearnerContentPathSchema,
+  claimIds: z.array(z.string().uuid()).min(1),
+}).strict());
+
+const storyPlaybookBaseShape = {
+  // Keeps legacy consumers that read payload.title type-safe while the
+  // canonical Story/Playbook title remains identity.title.
+  title: z.never().optional(),
+  contentModel: z.literal('story-playbook.v1'),
+  identity: identitySchema,
+  learning: learningSchema,
+  read: z.object({
+    story: storySchema,
+    playbook: playbookSchema,
+  }).strict(),
+  quiz: z.object({
+    questions: z.array(quizQuestionSchema).length(3),
+  }).strict(),
+  publicSources: z.array(publicSourceSchema).min(1),
+  claims: z.array(claimSchema).min(1),
+  claimCoverage: storyPlaybookClaimCoverageSchema,
+};
+
+function validateStoryPlaybookClaims(
+  value: {
+    claims: z.infer<typeof claimSchema>[];
+    claimCoverage: z.infer<typeof storyPlaybookClaimCoverageSchema>;
+  },
+  context: z.RefinementCtx,
+): void {
+  const claimIds = new Set(value.claims.map((claim) => claim.claimId));
+  const coveredPaths = new Set(value.claimCoverage.map((entry) => entry.path));
+  for (const path of storyPlaybookLearnerContentPathSchema.options) {
+    if (!coveredPaths.has(path)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Claim coverage is required for ${path}`,
+        path: ['claimCoverage'],
+      });
+    }
+  }
+  if (coveredPaths.size !== value.claimCoverage.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Claim coverage paths must be unique',
+      path: ['claimCoverage'],
+    });
+  }
+  value.claimCoverage.forEach((entry, coverageIndex) => {
+    entry.claimIds.forEach((claimId, claimIndex) => {
+      if (!claimIds.has(claimId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Claim coverage must reference a supplied claim',
+          path: ['claimCoverage', coverageIndex, 'claimIds', claimIndex],
+        });
+      }
+    });
+  });
+}
+
+export const storyPlaybookDraftSchema = z.object({
+  ...storyPlaybookBaseShape,
+  materialization: z.literal('draft'),
+  hero: heroBriefSchema,
+  visual: visualBriefSchema,
+  listen: z.object({
+    brief: audioEditorialBriefSchema,
+    discussion: audioEditorialBriefSchema,
+  }).strict(),
+}).strict().superRefine(validateStoryPlaybookClaims);
+
+const pointSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+}).strict();
+
+const transcriptSchema = z.object({
+  source: z.literal('final_audio_bytes'),
+  text: z.string().trim().min(1),
+  checksum: checksumSchema,
+}).strict();
+
+const finalAudioSchema = z.object({
+  editorialBrief: audioEditorialBriefSchema.shape.editorialBrief,
+  asset: artifactReferenceSchema,
+  durationSeconds: z.number().positive(),
+  transcript: transcriptSchema,
+}).strict();
+
+export const storyPlaybookPayloadSchema = z.object({
+  ...storyPlaybookBaseShape,
+  materialization: z.literal('materialized'),
+  hero: z.object({
+    ...heroBriefSchema.shape,
+    asset: artifactReferenceSchema,
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    focalPoint: pointSchema,
+    cropSafeArea: z.object({
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      width: z.number().positive().max(1),
+      height: z.number().positive().max(1),
+    }).strict(),
+  }).strict(),
+  visual: z.object({
+    ...visualBriefSchema.shape,
+    asset: artifactReferenceSchema,
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  }).strict(),
+  listen: z.object({
+    brief: finalAudioSchema,
+    discussion: finalAudioSchema,
+  }).strict(),
+}).strict().superRefine(validateStoryPlaybookClaims);
+
+export const storyPlaybookNugletLessonTargetSchema = z.object({
+  kind: z.literal('nuglet.lesson.v1'),
+  schemaVersion: z.literal('1.1.0'),
+  payload: z.union([storyPlaybookDraftSchema, storyPlaybookPayloadSchema]),
+}).strict();
+
+export const nugletLessonTargetSchema = z.discriminatedUnion('schemaVersion', [
+  legacyNugletLessonTargetSchema,
+  storyPlaybookNugletLessonTargetSchema,
+]);
+
+const compatibleNugletLessonTargetSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  if ('schemaVersion' in value || !('payload' in value)) return value;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.kind !== 'nuglet.lesson.v1') return value;
+  if (!nugletLessonV1PayloadSchema.safeParse(candidate.payload).success) return value;
+  return { ...candidate, schemaVersion: '1.0.0' };
+}, nugletLessonTargetSchema);
+
 export const knowledgeBitsContentSchema = z.object({
   schemaVersion: z.literal('knowledge-bits.content.v1'),
-  target: z.object({
-    kind: z.literal('nuglet.lesson.v1'),
-    payload: nugletLessonV1PayloadSchema,
-  }).strict(),
+  target: compatibleNugletLessonTargetSchema,
 }).strict();
 
 export const knowledgeBitsQaSchema = z.object({
@@ -248,10 +526,7 @@ export const knowledgeBitsSchema = z.object({
   locale: z.string().min(1),
   owner: z.string().min(1),
   riskClass: z.enum(['low', 'medium', 'high']),
-  target: z.object({
-    kind: z.literal('nuglet.lesson.v1'),
-    payload: nugletLessonV1PayloadSchema,
-  }).strict(),
+  target: compatibleNugletLessonTargetSchema,
   surfaces: z.object({
     manifest: artifactReferenceSchema,
     evidence: artifactReferenceSchema,
@@ -281,8 +556,15 @@ export const knowledgeBitsSchema = z.object({
 });
 
 export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
-export type KnowledgeBitsContent = z.infer<typeof knowledgeBitsContentSchema>;
+type LegacyUnversionedNugletLessonTarget = Omit<z.infer<typeof legacyNugletLessonTargetSchema>, 'schemaVersion'>;
+export type KnowledgeBitsContent = z.infer<typeof knowledgeBitsContentSchema> | {
+  schemaVersion: 'knowledge-bits.content.v1';
+  target: LegacyUnversionedNugletLessonTarget;
+};
 export type NugletLessonV1Payload = z.infer<typeof nugletLessonV1PayloadSchema>;
+export type StoryPlaybookDraft = z.infer<typeof storyPlaybookDraftSchema>;
+export type StoryPlaybookPayload = z.infer<typeof storyPlaybookPayloadSchema>;
+export type NugletLessonTarget = z.infer<typeof nugletLessonTargetSchema>;
 export type KnowledgeBitsManifest = z.infer<typeof knowledgeBitsManifestSchema>;
 export type KnowledgeBits = z.infer<typeof knowledgeBitsSchema>;
 export type KnowledgeBitsQa = z.infer<typeof knowledgeBitsQaSchema>;

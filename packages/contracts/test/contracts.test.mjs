@@ -5,6 +5,8 @@ import {
   knowledgeBitsEvidenceSchema,
   knowledgeBitsQaSchema,
   knowledgeBitsSchema,
+  storyPlaybookDraftSchema,
+  storyPlaybookPayloadSchema,
   jobClaimSchema,
   jobResultSchema,
   reviewRunRequestSchema,
@@ -52,6 +54,7 @@ function validKnowledgeBits() {
     riskClass: 'low',
     target: {
       kind: 'nuglet.lesson.v1',
+      schemaVersion: '1.0.0',
       payload: {
         title: 'Build a rainy day fund',
         takeaway: 'A small reserve makes surprise costs easier to handle.',
@@ -104,6 +107,195 @@ function validKnowledgeBits() {
       decidedAt: null,
       approvedChecksum: null,
       comment: null,
+    },
+  };
+}
+
+function storyPlaybookDraft() {
+  const secondClaimId = '0f8fad5b-d9cb-469f-a165-708677289520';
+  const claims = [
+    {
+      claimId,
+      statement: 'A rainy day fund can help cover an unexpected expense.',
+      citations: [{ sourceId, snapshotArtifactId, excerpt: 'An emergency fund covers unexpected expenses.' }],
+    },
+    {
+      claimId: secondClaimId,
+      statement: 'A small repeated transfer can build an emergency reserve.',
+      citations: [{ sourceId, snapshotArtifactId, excerpt: 'Regular contributions can build savings over time.' }],
+    },
+  ];
+  return {
+    materialization: 'draft',
+    contentModel: 'story-playbook.v1',
+    identity: {
+      locale: 'en-GB',
+      topic: { label: 'Personal finance', categoryId: null },
+      tags: ['saving', 'resilience'],
+      title: 'Build a rainy day fund',
+      deck: 'Why a small reserve makes surprise costs easier to handle.',
+      slugSuggestion: 'build-a-rainy-day-fund',
+    },
+    learning: {
+      centralIdea: 'A small reserve reduces the disruption caused by surprise costs.',
+      whyItMatters: 'Unexpected expenses are easier to absorb when money is already set aside.',
+      oneLineToKeep: 'Start with a buffer small enough to build consistently.',
+      action: {
+        label: 'Choose your first transfer',
+        instruction: 'Set aside one affordable amount today.',
+      },
+    },
+    hero: {
+      altText: 'A small vessel collecting coins beside a growing seedling.',
+      accessibilityPurpose: 'informative',
+      mediaBrief: {
+        concept: 'Moving from surprise costs to resilience',
+        metaphor: 'A vessel collecting tokens beside a seedling',
+        compositionFamily: 'asymmetrical-story',
+      },
+    },
+    read: {
+      story: {
+        title: 'The expense that arrived before payday',
+        estimatedMinutes: 4,
+        blocks: [
+          { type: 'opening', text: 'The repair bill arrived on a Tuesday.', claimRefs: [] },
+          { type: 'turning_point', text: 'A small reserve changed the decision.', claimRefs: [claimId] },
+          { type: 'practical_bridge', text: 'The first transfer can be deliberately small.', claimRefs: [secondClaimId] },
+        ],
+      },
+      playbook: {
+        title: 'Build a buffer you can repeat',
+        estimatedMinutes: 4,
+        principle: 'Consistency matters more than a heroic first deposit.',
+        whyItMatters: 'A repeatable transfer builds a reserve without destabilizing the month.',
+        steps: [
+          { id: 'step-1', title: 'Choose', body: 'Pick an affordable amount.', claimRefs: [secondClaimId] },
+          { id: 'step-2', title: 'Separate', body: 'Move it to a dedicated place.', claimRefs: [claimId] },
+          { id: 'step-3', title: 'Repeat', body: 'Schedule the next transfer.', claimRefs: [secondClaimId] },
+        ],
+        example: { title: 'Start with ten', body: 'Ten each week is a valid starting point.', claimRefs: [secondClaimId] },
+        watchOuts: ['Do not choose an amount that creates a new shortfall.'],
+        action: 'Set aside one affordable amount today.',
+      },
+    },
+    visual: {
+      title: 'The buffer loop',
+      altText: 'A three-step loop showing choose, separate, and repeat.',
+      textEquivalent: ['Choose an amount.', 'Separate the money.', 'Repeat the transfer.'],
+      claimRefs: [claimId, secondClaimId],
+      mediaBrief: {
+        objective: 'Explain how a small repeated transfer becomes a buffer.',
+        structure: 'three-step loop',
+      },
+    },
+    listen: {
+      brief: {
+        editorialBrief: {
+          objective: 'Explain the central idea concisely.',
+          tone: 'calm and practical',
+          keyPoints: ['Start small.', 'Repeat the transfer.'],
+        },
+      },
+      discussion: {
+        editorialBrief: {
+          objective: 'Explore the emotional friction around emergency saving.',
+          tone: 'reflective and conversational',
+          keyPoints: ['Avoid shame.', 'Choose a sustainable amount.'],
+        },
+      },
+    },
+    quiz: {
+      questions: [
+        {
+          id: 'q1',
+          prompt: 'What is the central idea?',
+          options: [{ id: 'a', text: 'Start small' }, { id: 'b', text: 'Wait for more income' }, { id: 'c', text: 'Borrow first' }],
+          correctOptionId: 'a',
+          rationale: 'A repeatable small transfer builds the buffer.',
+          reviewConcept: 'Consistency over size.',
+          claimRefs: [secondClaimId],
+        },
+        {
+          id: 'q2',
+          prompt: 'Which action is practical today?',
+          options: [{ id: 'a', text: 'Set aside an affordable amount' }, { id: 'b', text: 'Skip all bills' }, { id: 'c', text: 'Invest the rent' }],
+          correctOptionId: 'a',
+          rationale: 'The action must not create a new shortfall.',
+          reviewConcept: 'Sustainable action.',
+          claimRefs: [claimId],
+        },
+        {
+          id: 'q3',
+          prompt: 'What should you avoid?',
+          options: [{ id: 'a', text: 'A dedicated reserve' }, { id: 'b', text: 'An unaffordable transfer' }, { id: 'c', text: 'A repeatable habit' }],
+          correctOptionId: 'b',
+          rationale: 'Saving should not create a new immediate shortfall.',
+          reviewConcept: 'The boundary of the advice.',
+          claimRefs: [claimId],
+        },
+      ],
+    },
+    publicSources: [{ evidenceSourceId: sourceId, label: 'Example source', publisher: 'Example publisher' }],
+    claims,
+    claimCoverage: [
+      { path: 'identity.title', claimIds: [claimId] },
+      { path: 'learning.centralIdea', claimIds: [claimId] },
+      { path: 'learning.whyItMatters', claimIds: [claimId] },
+      { path: 'learning.oneLineToKeep', claimIds: [secondClaimId] },
+      { path: 'learning.action', claimIds: [secondClaimId] },
+      { path: 'read.story', claimIds: [claimId, secondClaimId] },
+      { path: 'read.playbook', claimIds: [claimId, secondClaimId] },
+      { path: 'visual', claimIds: [claimId, secondClaimId] },
+      { path: 'listen.brief', claimIds: [claimId] },
+      { path: 'listen.discussion', claimIds: [claimId, secondClaimId] },
+      { path: 'quiz', claimIds: [claimId, secondClaimId] },
+    ],
+  };
+}
+
+function materializedStoryPlaybook() {
+  const draft = storyPlaybookDraft();
+  const mediaArtifact = (kind, mediaType) => ({
+    ...artifactReference(kind),
+    artifactId: kind === 'hero' ? '0f8fad5b-d9cb-469f-a165-708677289530'
+      : kind === 'infographic' ? '0f8fad5b-d9cb-469f-a165-708677289531'
+        : kind === 'audio_brief' ? '0f8fad5b-d9cb-469f-a165-708677289532'
+          : '0f8fad5b-d9cb-469f-a165-708677289533',
+    kind,
+    mediaType,
+    inputChecksum: 'b'.repeat(64),
+  });
+  return {
+    ...draft,
+    materialization: 'materialized',
+    hero: {
+      ...draft.hero,
+      asset: mediaArtifact('hero', 'image/webp'),
+      width: 1024,
+      height: 768,
+      focalPoint: { x: 0.54, y: 0.46 },
+      cropSafeArea: { x: 0.12, y: 0.1, width: 0.76, height: 0.8 },
+    },
+    visual: {
+      ...draft.visual,
+      asset: mediaArtifact('infographic', 'image/webp'),
+      width: 1600,
+      height: 2000,
+    },
+    listen: {
+      brief: {
+        ...draft.listen.brief,
+        asset: mediaArtifact('audio_brief', 'audio/mp4'),
+        durationSeconds: 203,
+        transcript: { source: 'final_audio_bytes', text: 'A small buffer can soften a surprise cost.', checksum: 'c'.repeat(64) },
+      },
+      discussion: {
+        ...draft.listen.discussion,
+        asset: mediaArtifact('audio_discussion', 'audio/mp4'),
+        durationSeconds: 481,
+        transcript: { source: 'final_audio_bytes', text: 'Let us examine why starting small can feel difficult.', checksum: 'd'.repeat(64) },
+      },
     },
   };
 }
@@ -218,6 +410,98 @@ test('the lesson payload requires complete claim coverage for every learner-faci
       payload: { ...content.target.payload, claimCoverage: content.target.payload.claimCoverage.slice(1) },
     },
   }), /coverage/i);
+});
+
+test('accepts explicitly versioned legacy Quick Core Deep targets', () => {
+  const content = { schemaVersion: 'knowledge-bits.content.v1', target: validKnowledgeBits().target };
+  assert.equal(knowledgeBitsContentSchema.parse(content).target.schemaVersion, '1.0.0');
+});
+
+test('normalizes pre-version legacy targets to schema 1.0.0', () => {
+  const { schemaVersion: _schemaVersion, ...unversionedTarget } = validKnowledgeBits().target;
+  const parsed = knowledgeBitsContentSchema.parse({
+    schemaVersion: 'knowledge-bits.content.v1',
+    target: unversionedTarget,
+  });
+  assert.equal(parsed.target.schemaVersion, '1.0.0');
+  assert.equal(parsed.target.payload.title, 'Build a rainy day fund');
+});
+
+test('accepts semantic and materialized Story Playbook payloads for schema 1.1.0', () => {
+  const draft = storyPlaybookDraft();
+  const materialized = materializedStoryPlaybook();
+  assert.equal(storyPlaybookDraftSchema.parse(draft).materialization, 'draft');
+  assert.equal(storyPlaybookPayloadSchema.parse(materialized).materialization, 'materialized');
+  assert.equal(knowledgeBitsContentSchema.parse({
+    schemaVersion: 'knowledge-bits.content.v1',
+    target: { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0', payload: draft },
+  }).target.schemaVersion, '1.1.0');
+  assert.equal(knowledgeBitsContentSchema.parse({
+    schemaVersion: 'knowledge-bits.content.v1',
+    target: { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0', payload: materialized },
+  }).target.payload.materialization, 'materialized');
+});
+
+test('keeps the target schema versions structurally separate', () => {
+  const legacy = validKnowledgeBits().target;
+  const story = { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0', payload: storyPlaybookDraft() };
+  assert.throws(() => knowledgeBitsContentSchema.parse({
+    schemaVersion: 'knowledge-bits.content.v1',
+    target: { ...story, schemaVersion: '1.0.0' },
+  }));
+  assert.throws(() => knowledgeBitsContentSchema.parse({
+    schemaVersion: 'knowledge-bits.content.v1',
+    target: { ...legacy, schemaVersion: '1.1.0' },
+  }));
+});
+
+test('requires narrative Story blocks and three to five Playbook steps', () => {
+  const draft = storyPlaybookDraft();
+  assert.throws(() => storyPlaybookDraftSchema.parse({
+    ...draft,
+    read: { ...draft.read, story: { ...draft.read.story, blocks: [] } },
+  }), /blocks/i);
+  assert.throws(() => storyPlaybookDraftSchema.parse({
+    ...draft,
+    read: { ...draft.read, playbook: { ...draft.read.playbook, steps: draft.read.playbook.steps.slice(0, 2) } },
+  }), /steps/i);
+  assert.throws(() => storyPlaybookDraftSchema.parse({
+    ...draft,
+    read: { ...draft.read, playbook: { ...draft.read.playbook, steps: [...draft.read.playbook.steps, ...draft.read.playbook.steps] } },
+  }), /steps/i);
+});
+
+test('requires claim coverage for Story and Playbook learner paths', () => {
+  const draft = storyPlaybookDraft();
+  assert.throws(() => storyPlaybookDraftSchema.parse({
+    ...draft,
+    claimCoverage: draft.claimCoverage.filter((entry) => entry.path !== 'read.story'),
+  }), /read\.story/i);
+  assert.throws(() => storyPlaybookDraftSchema.parse({
+    ...draft,
+    claimCoverage: draft.claimCoverage.filter((entry) => entry.path !== 'read.playbook'),
+  }), /read\.playbook/i);
+});
+
+test('draft media briefs cannot claim final assets or transcripts', () => {
+  const draft = storyPlaybookDraft();
+  assert.throws(() => storyPlaybookDraftSchema.parse({
+    ...draft,
+    listen: {
+      ...draft.listen,
+      brief: { ...draft.listen.brief, transcript: 'This is only a planned script.' },
+    },
+  }));
+  assert.throws(() => storyPlaybookPayloadSchema.parse({
+    ...materializedStoryPlaybook(),
+    listen: {
+      ...materializedStoryPlaybook().listen,
+      brief: {
+        ...materializedStoryPlaybook().listen.brief,
+        transcript: { source: 'planned_script', text: 'A planned script.', checksum: 'c'.repeat(64) },
+      },
+    },
+  }));
 });
 
 test('QA requires the engine-calculated content checksum and explicit blocking findings', () => {

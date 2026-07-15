@@ -7,6 +7,7 @@ import {
   type KnowledgeBitsContent,
   type KnowledgeBitsEvidence,
   type KnowledgeBitsQa,
+  type NugletLessonTarget,
   type NugletLessonV1Payload,
 } from '@knowledge-bits/contracts';
 
@@ -47,7 +48,19 @@ export function calculatePackageChecksum(input: KnowledgeBitsChecksumInput): str
   return createHash('sha256').update(canonicalJson(checksumMaterial)).digest('hex');
 }
 
-export function calculateContentChecksum(content: NugletLessonV1Payload): string {
+export function calculateLegacyContentChecksum(content: NugletLessonV1Payload): string {
+  return createHash('sha256').update(canonicalJson(content)).digest('hex');
+}
+
+export function calculateContentChecksum(content: unknown): string {
+  if (isNugletLessonTarget(content)) {
+    if (content.schemaVersion === '1.0.0') return calculateLegacyContentChecksum(content.payload);
+    return createHash('sha256').update(canonicalJson(content)).digest('hex');
+  }
+
+  if (isBareStoryPlaybookPayload(content)) {
+    throw new TypeError('Schema 1.1.0 content checksum requires the full versioned target envelope');
+  }
   return createHash('sha256').update(canonicalJson(content)).digest('hex');
 }
 
@@ -126,4 +139,21 @@ export function canonicalJson(value: unknown): string {
 function isPlainObject(value: object): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+function isNugletLessonTarget(value: unknown): value is NugletLessonTarget {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && 'kind' in value
+    && 'schemaVersion' in value
+    && 'payload' in value;
+}
+
+function isBareStoryPlaybookPayload(value: unknown): boolean {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && 'contentModel' in value
+    && value.contentModel === 'story-playbook.v1';
 }
