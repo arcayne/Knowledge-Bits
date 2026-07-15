@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
+import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
 import { MediaProviderAdapter, type MediaClient, type MediaKind } from './media.js';
 import type { ProviderExecutionInput, ProviderSupportArtifact } from './types.js';
 import { canonicalJsonBytes } from '../recipes/file-registry.js';
 import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
 
-const checksum = 'a'.repeat(64);
 const otherChecksum = 'b'.repeat(64);
 const requiredKinds = ['hero', 'infographic', 'audio_brief', 'audio_discussion'] as const;
 
@@ -28,7 +29,7 @@ test('media fails closed unless exactly one current-checksum asset exists for ev
 
   const mismatch = providerFor(() => requiredKinds.map((kind) => generated(
     kind,
-    kind === 'audio_discussion' ? otherChecksum : checksum,
+    kind === 'audio_discussion' ? otherChecksum : generationInputChecksum,
   )));
   await assert.rejects(() => mismatch.execute(mediaInput()), /media_input_checksum_mismatch/);
 });
@@ -45,7 +46,8 @@ test('media passes four resolved recipe snapshots and per-run hero direction in 
   assert.equal(result.kind, 'success');
   assert.equal(requests.length, 1);
   assert.deepEqual(requests[0]?.kinds, requiredKinds);
-  assert.equal(requests[0]?.generationInputChecksum, checksum);
+  assert.equal(requests[0]?.generationInputChecksum, generationInputChecksum);
+  assert.notEqual(requests[0]?.generationInputChecksum, semanticChecksum);
   assert.deepEqual(requests[0]?.heroDirection, generationPlan.heroDirection);
   assert.equal(requests[0]?.resolvedRecipes.hero.id, 'nuglet.hero');
   assert.equal(requests[0]?.resolvedRecipes.infographic.id, 'nuglet.visual.infographic');
@@ -64,13 +66,58 @@ test('media preserves measured metadata and recipe support evidence on all four 
     assets: Array<{ kind: MediaKind; generationInputChecksum: string; metadata: Record<string, unknown> }>;
   };
   assert.deepEqual(parsed.assets.map(({ kind }) => kind), requiredKinds);
-  assert.ok(parsed.assets.every((asset) => asset.generationInputChecksum === checksum));
+  assert.ok(parsed.assets.every((asset) => asset.generationInputChecksum === generationInputChecksum));
   assert.ok(parsed.assets.every((asset) => asset.metadata.byteSize === Buffer.from(asset.kind).byteLength));
   assert.equal(result.supportArtifacts?.length, 12);
   assert.deepEqual(
     result.assets?.map((asset) => ({ kind: asset.kind, provenance: asset.provenance })),
-    requiredKinds.map((kind) => ({ kind, provenance: metadataFor(kind) })),
+    requiredKinds.map((kind) => ({
+      kind,
+      provenance: {
+        ...metadataFor(kind),
+        generationExecutions: executionBindingsFor(kind),
+      },
+    })),
   );
+  for (const artifact of result.supportArtifacts ?? []) {
+    assert.match(String(artifact.provenance.outputChecksum), /^sha256:[a-f0-9]{64}$/);
+    assert.ok(requiredKinds.includes(artifact.provenance.outputKind as typeof requiredKinds[number]));
+  }
+});
+
+test('media invalidates stale outputs when generation directions change', async () => {
+  const changedPlan = structuredClone(generationPlan);
+  changedPlan.heroDirection.mustAvoid = [...changedPlan.heroDirection.mustAvoid, 'dense collage'];
+  const requests: Array<Parameters<MediaClient['generate']>[0]> = [];
+  const provider = providerFor((request) => {
+    requests.push(request);
+    return request.kinds.map((kind) => generated(kind, generationInputChecksum));
+  }, changedPlan);
+
+  await assert.rejects(() => provider.execute(mediaInput()), /media_input_checksum_mismatch/);
+  assert.notEqual(requests[0]?.generationInputChecksum, generationInputChecksum);
+});
+
+test('media requires Task 6 hero crop metadata and approved profile checksum', async () => {
+  for (const field of ['focalPoint', 'cropSafeArea', 'styleProfileChecksum'] as const) {
+    const provider = providerFor((request) => request.kinds.map((kind) => {
+      if (kind !== 'hero') return generated(kind);
+      const metadata = { ...metadataFor(kind) };
+      delete metadata[field];
+      return { ...generated(kind), metadata };
+    }));
+    await assert.rejects(
+      () => provider.execute(mediaInput()),
+      field === 'styleProfileChecksum' ? /media_hero_profile_mismatch/ : /media_hero_metadata_invalid/,
+    );
+  }
+
+  const mismatched = providerFor((request) => request.kinds.map((kind) => (
+    kind === 'hero'
+      ? { ...generated(kind), metadata: { ...metadataFor(kind), styleProfileChecksum: `sha256:${'f'.repeat(64)}` } }
+      : generated(kind)
+  )));
+  await assert.rejects(() => mismatched.execute(mediaInput()), /media_hero_profile_mismatch/);
 });
 
 test('media rejects baseline bytes that do not match the immutable descriptor', async () => {
@@ -84,9 +131,6 @@ test('media rejects baseline bytes that do not match the immutable descriptor', 
 });
 
 test('media rejects Brief and Discussion outputs with identical final bytes', async () => {
-  const aliasedPlan = structuredClone(generationPlan);
-  aliasedPlan.mediaBaseline.descriptor.artifacts.audioDiscussion.checksum
-    = aliasedPlan.mediaBaseline.descriptor.artifacts.audioBrief.checksum;
   const provider = providerFor((request) => request.kinds.map((kind) => {
     if (kind !== 'audio_discussion') return generated(kind);
     const bytes = Buffer.from('audio_brief');
@@ -99,7 +143,7 @@ test('media rejects Brief and Discussion outputs with identical final bytes', as
         transcriptAudioChecksum: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
       },
     };
-  }), aliasedPlan);
+  }));
 
   await assert.rejects(() => provider.execute(mediaInput()), /media_audio_roles_aliased/);
 });
@@ -131,19 +175,19 @@ function providerFor(
     context: async () => ({
       passedCheck: true,
       content: candidate,
-      contentChecksum: checksum,
+      contentChecksum: semanticChecksum,
       generationPlan: plan,
       resolvedRecipes,
     }),
   });
 }
 
-function generated(kind: MediaKind, generationInputChecksum = checksum) {
+function generated(kind: MediaKind, inputChecksum = generationInputChecksum) {
   return {
     kind,
     mediaType: kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
     bytes: Buffer.from(kind),
-    generationInputChecksum,
+    generationInputChecksum: inputChecksum,
     metadata: metadataFor(kind),
     supportArtifacts: supportFor(kind),
   };
@@ -159,7 +203,28 @@ function metadataFor(kind: MediaKind): Record<string, unknown> {
       transcriptAudioChecksum: `sha256:${createHash('sha256').update(kind).digest('hex')}`,
       transcriptSource: kind === 'audio_brief' ? 'notebooklm' : 'vertex_gemini',
     }
-    : { byteSize, width: kind === 'hero' ? 1024 : 1536, height: kind === 'hero' ? 768 : 2752 };
+    : kind === 'hero'
+      ? {
+        byteSize,
+        width: 1024,
+        height: 768,
+        focalPoint: { x: 0.5, y: 0.5 },
+        cropSafeArea: { x: 0.125, y: 0.125, width: 0.75, height: 0.75 },
+        styleProfileChecksum: generationPlan.recipes.hero.checksum,
+        referenceChecksums: heroReferenceChecksums,
+      }
+      : { byteSize, width: 1536, height: 2752 };
+}
+
+function executionBindingsFor(kind: MediaKind) {
+  const outputChecksum = `sha256:${createHash('sha256').update(kind).digest('hex')}`;
+  return supportFor(kind)
+    .filter((artifact) => artifact.kind === 'generation.recipe.snapshot')
+    .map((artifact) => ({
+      ...artifact.provenance,
+      outputKind: kind,
+      outputChecksum,
+    }));
 }
 
 function supportFor(kind: MediaKind): ProviderSupportArtifact[] {
@@ -330,14 +395,36 @@ function binding<Id extends NugletGenerationPlan['recipes'][keyof NugletGenerati
   return { id, version: '1.0.0', checksum: `sha256:${digit.repeat(64)}` } as const;
 }
 
-const candidate = {
-  title: 'Return to one task',
-  takeaway: 'A written next step makes returning easier.',
-  action: 'Write one next task and work on it for five minutes.',
-  depths: { quick: 'Quick.', core: 'Core.', deep: 'Deep.' },
-  claims: [],
-  claimCoverage: [],
-} as never;
+const candidate = candidateFixture() as never;
+const semanticChecksum = calculateContentChecksum(candidate);
+const generationInputChecksum = calculateContentChecksum({
+  schemaVersion: 'knowledge-bits.generation-input.v1',
+  semanticTarget: candidate,
+  media: {
+    recipes: {
+      hero: generationPlan.recipes.hero,
+      infographic: generationPlan.recipes.infographic,
+      audioBrief: generationPlan.recipes.audioBrief,
+      audioDiscussion: generationPlan.recipes.audioDiscussion,
+    },
+    heroDirection: generationPlan.heroDirection,
+    mediaBaseline: generationPlan.mediaBaseline,
+  },
+});
+
+function candidateFixture() {
+  const value = JSON.parse(readFileSync(
+    new URL('./fixtures/notebooklm-story-playbook.json', import.meta.url),
+    'utf8',
+  )).answer;
+  for (const claim of value.payload.claims) {
+    claim.citations = claim.citations.map((citation: Record<string, unknown>) => ({
+      ...citation,
+      snapshotArtifactId: '11111111-1111-4111-8111-111111111111',
+    }));
+  }
+  return value;
+}
 
 function mediaInput(): ProviderExecutionInput {
   return {

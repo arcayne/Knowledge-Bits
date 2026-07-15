@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import {
@@ -6,10 +7,11 @@ import {
   type NugletGenerationPlan,
   type StoryPlaybookDraft,
 } from '@knowledge-bits/contracts';
-import { calculateContentChecksum } from '@knowledge-bits/pipeline';
-
 import type { WorkflowArtifact } from '../repositories/workflow-repository.js';
-import { materializeStoryPlaybookTarget } from './nuglet-package-materializer.js';
+import {
+  calculateStoryPlaybookGenerationInputChecksum,
+  materializeStoryPlaybookTarget,
+} from './nuglet-package-materializer.js';
 
 const sourceId = '11111111-1111-4111-8111-111111111111';
 const snapshotArtifactId = '22222222-2222-4222-8222-222222222222';
@@ -19,7 +21,7 @@ const secondClaimId = '33333333-3333-4333-8333-333333333332';
 test('materializes the checked Story Playbook target with immutable media metadata and transcripts', () => {
   const semanticTarget = target();
   const generationPlan = plan();
-  const generationInputChecksum = calculateContentChecksum(semanticTarget);
+  const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
   const mediaArtifacts = assets(generationInputChecksum, generationPlan);
 
   const materialized = materializeStoryPlaybookTarget({
@@ -48,7 +50,10 @@ test('materializes the checked Story Playbook target with immutable media metada
 test('rejects materialization when any required media role is missing', () => {
   const semanticTarget = target();
   const generationPlan = plan();
-  const mediaArtifacts = assets(calculateContentChecksum(semanticTarget), generationPlan);
+  const mediaArtifacts = assets(
+    calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan),
+    generationPlan,
+  );
   const { audio_discussion: _missing, ...incomplete } = mediaArtifacts;
 
   assert.throws(() => materializeStoryPlaybookTarget({
@@ -61,7 +66,7 @@ test('rejects materialization when any required media role is missing', () => {
 test('rejects stale generation input and invalid hero crop metadata', () => {
   const semanticTarget = target();
   const generationPlan = plan();
-  const generationInputChecksum = calculateContentChecksum(semanticTarget);
+  const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
 
   assert.throws(() => materializeStoryPlaybookTarget({
     semanticTarget,
@@ -76,6 +81,61 @@ test('rejects stale generation input and invalid hero crop metadata', () => {
     generationPlan,
     mediaArtifacts: badCrop,
   }), /crop/i);
+});
+
+test('changes the generation input checksum when validated media directions change', () => {
+  const semanticTarget = target();
+  const generationPlan = plan();
+  const changedPlan = structuredClone(generationPlan);
+  changedPlan.heroDirection.mustAvoid = [...changedPlan.heroDirection.mustAvoid, 'dense collage'];
+  const activeChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
+  const changedChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, changedPlan);
+
+  assert.notEqual(changedChecksum, activeChecksum);
+  assert.throws(() => materializeStoryPlaybookTarget({
+    semanticTarget,
+    generationPlan: changedPlan,
+    mediaArtifacts: assets(activeChecksum, generationPlan),
+  }), /generation input checksum/i);
+});
+
+test('requires the selected hero to carry the approved profile checksum', () => {
+  const semanticTarget = target();
+  const generationPlan = plan();
+  const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
+  const missing = assets(generationInputChecksum, generationPlan);
+  delete missing.hero.provenance.styleProfileChecksum;
+  assert.throws(() => materializeStoryPlaybookTarget({
+    semanticTarget,
+    generationPlan,
+    mediaArtifacts: missing,
+  }), /profile checksum/i);
+
+  const mismatched = assets(generationInputChecksum, generationPlan);
+  mismatched.hero.provenance.styleProfileChecksum = `sha256:${'f'.repeat(64)}`;
+  assert.throws(() => materializeStoryPlaybookTarget({
+    semanticTarget,
+    generationPlan,
+    mediaArtifacts: mismatched,
+  }), /profile checksum/i);
+});
+
+test('materializes the exact Task 6 media result metadata contract', () => {
+  const semanticTarget = target();
+  const generationPlan = plan();
+  const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
+  const mediaArtifacts = task6MediaResultArtifacts(generationInputChecksum, generationPlan);
+
+  const materialized = materializeStoryPlaybookTarget({
+    semanticTarget,
+    generationPlan,
+    mediaArtifacts,
+  });
+
+  assert.equal(materialized.payload.materialization, 'materialized');
+  assert.deepEqual(materialized.payload.hero.focalPoint, { x: 0.62, y: 0.44 });
+  assert.deepEqual(materialized.payload.hero.cropSafeArea, { x: 0.12, y: 0.1, width: 0.76, height: 0.8 });
+  assert.equal(materialized.payload.hero.asset.inputChecksum, generationInputChecksum);
 });
 
 function target() {
@@ -298,6 +358,110 @@ function assets(generationInputChecksum: string, generationPlan: NugletGeneratio
       transcript: 'Discussion final transcript.',
       transcriptAudioChecksum: `sha256:${'4'.repeat(64)}`,
       transcriptSource: 'vertex_gemini',
+    }),
+  };
+}
+
+function task6MediaResultArtifacts(
+  generationInputChecksum: string,
+  generationPlan: NugletGenerationPlan,
+) {
+  const task6Bytes = {
+    hero: Buffer.alloc(256, 1),
+    infographic: Buffer.alloc(256, 2),
+    audio_brief: Buffer.alloc(256, 3),
+    audio_discussion: Buffer.alloc(256, 4),
+  } as const;
+  const output = {
+    assets: [
+      {
+        kind: 'hero',
+        mediaType: 'image/webp',
+        bytesBase64: task6Bytes.hero.toString('base64'),
+        generationInputChecksum,
+        metadata: {
+          byteSize: 256,
+          width: 1200,
+          height: 900,
+          focalPoint: { x: 0.62, y: 0.44 },
+          cropSafeArea: { x: 0.12, y: 0.1, width: 0.76, height: 0.8 },
+          styleProfileChecksum: generationPlan.recipes.hero.checksum,
+          referenceChecksums: [`sha256:${'9'.repeat(64)}`, `sha256:${'a'.repeat(64)}`],
+        },
+        support: task6Support(generationPlan.recipes.hero),
+      },
+      {
+        kind: 'infographic',
+        mediaType: 'image/webp',
+        bytesBase64: task6Bytes.infographic.toString('base64'),
+        generationInputChecksum,
+        metadata: { byteSize: 256, width: 1536, height: 2752 },
+        support: task6Support(generationPlan.recipes.infographic),
+      },
+      {
+        kind: 'audio_brief',
+        mediaType: 'audio/mp4',
+        bytesBase64: task6Bytes.audio_brief.toString('base64'),
+        generationInputChecksum,
+        metadata: {
+          byteSize: 256,
+          durationSeconds: 91.25,
+          transcript: 'Brief final transcript.',
+          transcriptAudioChecksum: prefixedBytesChecksum(task6Bytes.audio_brief),
+          transcriptSource: 'notebooklm',
+        },
+        support: task6Support(generationPlan.recipes.audioBrief, 2),
+      },
+      {
+        kind: 'audio_discussion',
+        mediaType: 'audio/mp4',
+        bytesBase64: task6Bytes.audio_discussion.toString('base64'),
+        generationInputChecksum,
+        metadata: {
+          byteSize: 256,
+          durationSeconds: 287.5,
+          transcript: 'Discussion final transcript.',
+          transcriptAudioChecksum: prefixedBytesChecksum(task6Bytes.audio_discussion),
+          transcriptSource: 'vertex_gemini',
+        },
+        support: task6Support(generationPlan.recipes.audioDiscussion, 2),
+      },
+    ],
+  } as const;
+  const expected = assets(generationInputChecksum, generationPlan);
+  return Object.fromEntries(output.assets.map((result) => {
+    const artifact = expected[result.kind];
+    return [result.kind, {
+      ...artifact,
+      checksum: prefixedBytesChecksum(task6Bytes[result.kind]).replace(/^sha256:/, ''),
+      mediaType: result.mediaType,
+      inputChecksum: result.generationInputChecksum,
+      provenance: { provider: 'fixture', ...result.metadata },
+    }];
+  })) as unknown as ReturnType<typeof assets>;
+}
+
+function prefixedBytesChecksum(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+}
+
+function task6Support(
+  recipe: NugletGenerationPlan['recipes'][keyof NugletGenerationPlan['recipes']],
+  count = 1,
+) {
+  return {
+    executions: Array.from({ length: count }, (_, index) => {
+      const prompt = Buffer.from(`Rendered prompt ${index + 1}`);
+      return {
+        model: `fixture-model-${index + 1}`,
+        promptBase64: prompt.toString('base64'),
+        promptChecksum: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
+        provider: 'fixture',
+        recipe,
+        referenceChecksums: recipe.id === 'nuglet.hero'
+          ? [`sha256:${'9'.repeat(64)}`, `sha256:${'a'.repeat(64)}`]
+          : [],
+      };
     }),
   };
 }

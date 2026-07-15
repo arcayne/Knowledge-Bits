@@ -6,6 +6,7 @@ import {
   calculateContentChecksum,
   calculateLegacyContentChecksum,
   calculatePackageChecksum,
+  packageChecksumContentRepresentation,
 } from '../dist/index.js';
 
 const checksum = 'a'.repeat(64);
@@ -355,4 +356,12 @@ test('calculates stable package checksums for canonical schema 1.1.0 content', (
   const second = structuredClone(first);
   assert.equal(calculatePackageChecksum(first), calculatePackageChecksum(second));
   assert.equal(buildKnowledgeBits(first).packageChecksum, buildKnowledgeBits(second).packageChecksum);
+});
+
+test('binds schema 1.1.0 package persistence to the materialized final content checksum', () => {
+  const content = { schemaVersion: 'knowledge-bits.content.v1', target: storyPlaybookTarget() };
+  const representation = packageChecksumContentRepresentation(content);
+
+  assert.equal(representation.contentChecksum, calculateContentChecksum(content.target));
+  assert.deepEqual(representation.content, content);
 });

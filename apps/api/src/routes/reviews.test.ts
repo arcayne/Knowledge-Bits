@@ -246,6 +246,35 @@ test('changes require a comment, bind it to create, and content changes invalida
   assert.equal(changed.approvedChecksum, null);
 });
 
+test('does not select successful media from a prior revision', async () => {
+  const { app, repository, storage } = createTestApp();
+  const { runId, packageChecksum } = await reviewReadyRun(repository, storage, checksumA);
+  const changes = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify({
+      decision: 'request_changes',
+      packageChecksum,
+      comment: 'Change only the approved media direction.',
+    }),
+  });
+  assert.equal(changes.status, 200, await changes.clone().text());
+  assert.equal((await changes.json()).currentRevision, 2);
+
+  const repositoryArtifacts = await repository.listArtifactsForSuccessfulStageJobs(runId, 2);
+  assert.ok(repositoryArtifacts.some((artifact) => artifact.kind === 'hero' && artifact.revision === 1));
+
+  const model = await new ReviewPackageService({ repository, storage }).load(runId);
+  assert.equal(model.currentRevision, 2);
+  assert.equal(model.assets.hero.state, 'missing');
+  assert.equal(model.assets.infographic.state, 'missing');
+  assert.equal(model.assets.audioBrief.state, 'missing');
+  assert.equal(model.assets.audioDiscussion.state, 'missing');
+  assert.ok(!model.package?.artifactInventory.some((artifact) => (
+    ['hero', 'infographic', 'audio_brief', 'audio_discussion'].includes(artifact.kind)
+  )));
+});
+
 test('automatic quality revision carries accepted evidence through package assembly and approval', async () => {
   const { app, repository, storage } = createTestApp();
   const run = await repository.bootstrapRun({

@@ -6,6 +6,7 @@ import type { WorkerEngineClient } from './engine-client.js';
 import {
   ProviderNeedsHumanError,
   ProviderWaitingError,
+  type ProviderBinaryAsset,
   type ProviderExecution,
   type ProviderSupportArtifact,
   type WorkerAction,
@@ -239,7 +240,12 @@ export class WorkerExecutor {
     const rawChecksum = checksum(execution.rawResponse);
     const parsedBytes = canonicalJsonBytes(execution.parsedOutput);
     const parsedChecksum = checksum(parsedBytes);
-    const supportArtifacts = execution.supportArtifacts ?? [];
+    const supportArtifacts = bindGenerationOutputs(
+      job,
+      execution.supportArtifacts ?? [],
+      execution.assets ?? [],
+      parsedChecksum,
+    );
     const generationProvenance = validateGenerationProvenance(
       job,
       provider,
@@ -392,11 +398,23 @@ function readGenerationProvenance(value: Readonly<Record<string, unknown>>): Gen
   const recipeChecksum = requiredChecksum(value.recipeChecksum);
   const promptChecksum = requiredChecksum(value.promptChecksum);
   const model = requiredString(value.model);
+  const outputKind = requiredString(value.outputKind);
+  const outputChecksum = requiredChecksum(value.outputChecksum);
   const referenceChecksums = requiredChecksums(value.referenceChecksums);
-  if (!recipeId || !recipeVersion || !recipeChecksum || !promptChecksum || !model || !referenceChecksums) {
+  if (!recipeId || !recipeVersion || !recipeChecksum || !promptChecksum || !model
+    || !outputKind || !outputChecksum || !referenceChecksums) {
     throw new GenerationProvenanceError('generation_provenance_missing');
   }
-  return { recipeId, recipeVersion, recipeChecksum, promptChecksum, model, referenceChecksums };
+  return {
+    recipeId,
+    recipeVersion,
+    recipeChecksum,
+    promptChecksum,
+    model,
+    outputKind,
+    outputChecksum,
+    referenceChecksums,
+  };
 }
 
 function requiredString(value: unknown): string | undefined {
@@ -418,6 +436,8 @@ function sameGenerationProvenance(left: GenerationProvenance, right: GenerationP
     && left.recipeChecksum === right.recipeChecksum
     && left.promptChecksum === right.promptChecksum
     && left.model === right.model
+    && left.outputKind === right.outputKind
+    && left.outputChecksum === right.outputChecksum
     && sameValue(left.referenceChecksums, right.referenceChecksums);
 }
 
@@ -531,8 +551,41 @@ type GenerationProvenance = Readonly<Record<string, unknown>> & {
   recipeChecksum: string;
   promptChecksum: string;
   model: string;
+  outputKind: string;
+  outputChecksum: string;
   referenceChecksums: readonly string[];
 };
+
+function bindGenerationOutputs(
+  job: JobClaim,
+  artifacts: readonly ProviderSupportArtifact[],
+  assets: readonly ProviderBinaryAsset[],
+  parsedChecksum: string,
+): readonly ProviderSupportArtifact[] {
+  return artifacts.map((artifact) => {
+    const outputKind = requiredString(artifact.provenance.outputKind);
+    const outputChecksum = requiredChecksum(artifact.provenance.outputChecksum);
+    if (outputKind || outputChecksum) {
+      if (!outputKind || !outputChecksum) throw new GenerationProvenanceError('generation_provenance_output_mismatch');
+      const output = assets.find((asset) => asset.kind === outputKind);
+      if (!output || prefixedChecksum(output.body) !== outputChecksum) {
+        throw new GenerationProvenanceError('generation_provenance_output_mismatch');
+      }
+      return artifact;
+    }
+    if (job.stage === 'produce_assets') {
+      throw new GenerationProvenanceError('generation_provenance_output_missing');
+    }
+    return {
+      ...artifact,
+      provenance: {
+        ...artifact.provenance,
+        outputKind: 'parsed_output',
+        outputChecksum: `sha256:${parsedChecksum}`,
+      },
+    };
+  });
+}
 
 function recipeIsBoundToJobPlan(job: JobClaim, provenance: GenerationProvenance): boolean {
   const brief = job.input.brief;

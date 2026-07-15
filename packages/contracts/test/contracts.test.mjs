@@ -804,7 +804,17 @@ test('requires four distinct review assets and complete generation execution lin
       version: '1.0.0',
       checksum: `sha256:${checksum}`,
     },
+    jobId: `50000000-0000-4000-8000-0000000000${index}0`,
+    executionId: `execution-${index}`,
     model: 'fixture-model',
+    outputKind: ['story', 'playbook', 'quiz'].includes(role)
+      ? 'parsed_output'
+      : role === 'audioBrief'
+      ? 'audio_brief'
+      : role === 'audioDiscussion'
+        ? 'audio_discussion'
+        : role,
+    outputChecksum: `sha256:${checksum}`,
     promptChecksum: `sha256:${checksum}`,
     referenceChecksums: [],
     recipeSnapshot: {
@@ -881,6 +891,13 @@ test('requires four distinct review assets and complete generation execution lin
     generationExecutions: {
       ...model.generationExecutions,
       hero: [{ ...model.generationExecutions.hero[0], renderedPrompt: undefined }],
+    },
+  }).success, false);
+  assert.equal(reviewReadModelSchema.safeParse({
+    ...model,
+    generationExecutions: {
+      ...model.generationExecutions,
+      hero: [{ ...model.generationExecutions.hero[0], outputChecksum: undefined }],
     },
   }).success, false);
 });

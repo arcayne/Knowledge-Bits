@@ -61,6 +61,7 @@ test('browser renders the complete approved payload and submits its displayed ch
   assert.equal(await page.getByRole('button', { name: 'Approve' }).count(), 1);
   assert.equal(await page.locator('#generation-provenance').evaluate((element) => element.hasAttribute('open')), false);
   assert.equal(await page.locator('#generation-executions a').count(), 21);
+  assert.match(await page.locator('#generation-executions').textContent() ?? '', /output hero sha256:/i);
   assert.match(await page.locator('#claims').textContent() ?? '', /restart decisions/i);
   assert.equal(await page.locator('#checksum').textContent(), checksum);
   await page.getByRole('button', { name: 'Approve' }).click();
@@ -182,7 +183,17 @@ function generationExecution(role, recipeId, index) {
   return {
     role,
     recipe: { id: recipeId, version: '1.0.0', checksum: `sha256:${checksum}` },
+    jobId: `77777777-7777-4777-8777-00000000000${index}`,
+    executionId: `fixture-execution-${index}`,
     model: 'fixture-model',
+    outputKind: ['story', 'playbook', 'quiz'].includes(role)
+      ? 'parsed_output'
+      : role === 'audioBrief'
+        ? 'audio_brief'
+        : role === 'audioDiscussion'
+          ? 'audio_discussion'
+          : role,
+    outputChecksum: `sha256:${checksum}`,
     promptChecksum: `sha256:${checksum}`,
     referenceChecksums: role === 'hero' ? [`sha256:${checksum}`] : [],
     recipeSnapshot: reference('generation.recipe.snapshot', 1),

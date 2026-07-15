@@ -52,7 +52,9 @@ export class ReviewPackageService {
     const run = await this.dependencies.repository.getRun(runId);
     if (!run) throw new ReviewPackageNotFoundError('Run not found');
     const artifacts = await this.dependencies.repository.listArtifactsForSuccessfulStageJobs(run.id, run.currentRevision);
-    const packageArtifacts = canonicalPackageArtifacts(artifacts);
+    const packageArtifacts = canonicalPackageArtifacts(artifacts.filter((artifact) => (
+      !isReviewAssetKind(artifact.kind) || artifact.revision === run.currentRevision
+    )));
     const assets = assetStates(run.id, packageArtifacts);
     const mediaIssues = REVIEW_ASSETS
       .filter(({ key }) => assets[key].state === 'missing')
@@ -75,10 +77,9 @@ export class ReviewPackageService {
       const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, packageArtifacts, content.target.payload.claims);
       const qa = knowledgeBitsQaSchema.parse(qaOutput);
       const artifactInventory = packageArtifacts.map(toArtifactReference);
-      calculateFinalContentChecksum(content);
       const approvalIssues = [
         ...mediaIssues,
-        ...qaApprovalIssues(qa, assembled.generationInputChecksum),
+        ...qaApprovalIssues(qa, assembled.semanticChecksum),
         ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum),
       ];
       const packageChecksum = calculatePackageChecksum({
@@ -192,7 +193,8 @@ function assembleContent(
 ) {
   if (contentOutput.kind === 'nuglet.lesson.v1' && contentOutput.schemaVersion === '1.1.0') {
     const generationPlan = generationPlanFromBrief(brief);
-    const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(contentOutput);
+    const semanticChecksum = calculateContentChecksum(contentOutput);
+    const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(contentOutput, generationPlan);
     const mediaArtifacts = Object.fromEntries(REVIEW_ASSET_KINDS.map((kind) => [
       kind,
       latestArtifact(artifacts, kind),
@@ -208,7 +210,7 @@ function assembleContent(
     });
     const generationExecutions = assembleGenerationExecutions(artifacts, generationPlan);
     assertHeroReferenceProvenance(generationExecutions.hero);
-    return { content, generationExecutions, generationInputChecksum };
+    return { content, generationExecutions, generationInputChecksum, semanticChecksum };
   }
 
   const content = knowledgeBitsContentSchema.parse({
@@ -219,6 +221,7 @@ function assembleContent(
     content,
     generationExecutions: emptyGenerationExecutions(),
     generationInputChecksum: calculateContentChecksum(content.target.payload),
+    semanticChecksum: calculateContentChecksum(content.target.payload),
   };
 }
 
@@ -229,17 +232,18 @@ function generationPlanFromBrief(brief: Record<string, unknown>): NugletGenerati
 }
 
 const GENERATION_ROLE_BINDINGS = [
-  { role: 'story', recipeKey: 'story', action: 'create_content' },
-  { role: 'playbook', recipeKey: 'playbook', action: 'create_content' },
-  { role: 'quiz', recipeKey: 'challenge', action: 'create_content' },
-  { role: 'hero', recipeKey: 'hero', action: 'produce_assets' },
-  { role: 'infographic', recipeKey: 'infographic', action: 'produce_assets' },
-  { role: 'audioBrief', recipeKey: 'audioBrief', action: 'produce_assets' },
-  { role: 'audioDiscussion', recipeKey: 'audioDiscussion', action: 'produce_assets' },
+  { role: 'story', recipeKey: 'story', action: 'create_content', outputKind: 'parsed_output' },
+  { role: 'playbook', recipeKey: 'playbook', action: 'create_content', outputKind: 'parsed_output' },
+  { role: 'quiz', recipeKey: 'challenge', action: 'create_content', outputKind: 'parsed_output' },
+  { role: 'hero', recipeKey: 'hero', action: 'produce_assets', outputKind: 'hero' },
+  { role: 'infographic', recipeKey: 'infographic', action: 'produce_assets', outputKind: 'infographic' },
+  { role: 'audioBrief', recipeKey: 'audioBrief', action: 'produce_assets', outputKind: 'audio_brief' },
+  { role: 'audioDiscussion', recipeKey: 'audioDiscussion', action: 'produce_assets', outputKind: 'audio_discussion' },
 ] as const satisfies readonly {
   role: ReviewGenerationRole;
   recipeKey: keyof NugletGenerationPlan['recipes'];
   action: string;
+  outputKind: string;
 }[];
 
 export function assembleGenerationExecutions(
@@ -249,15 +253,20 @@ export function assembleGenerationExecutions(
   const result = emptyGenerationExecutions();
   for (const binding of GENERATION_ROLE_BINDINGS) {
     const recipe = generationPlan.recipes[binding.recipeKey];
+    const output = latestArtifactForAction(artifacts, binding.outputKind, binding.action);
+    if (!output || !executorBindingMatches(output)) {
+      throw new ReviewPackageAssemblyError(`${binding.role} selected output execution provenance is missing`);
+    }
     const snapshots = artifacts.filter((artifact) => (
       artifact.kind === 'generation.recipe.snapshot'
       && artifact.action === binding.action
-      && artifact.jobId !== null
       && executorBindingMatches(artifact)
+      && sameExecutorIdentity(artifact, output)
       && provenanceMatchesRecipe(artifact.provenance, recipe)
+      && outputBindingMatches(artifact.provenance, output)
     ));
     if (snapshots.length === 0) {
-      throw new ReviewPackageAssemblyError(`${binding.role} generation provenance is missing a recipe snapshot`);
+      throw new ReviewPackageAssemblyError(`${binding.role} selected output execution has no matching recipe snapshot`);
     }
 
     for (const snapshot of snapshots) {
@@ -270,6 +279,7 @@ export function assembleGenerationExecutions(
         && artifact.jobId === snapshot.jobId
         && artifact.action === binding.action
         && executorBindingMatches(artifact)
+        && sameExecutorIdentity(artifact, output)
         && sameExecutionProvenance(artifact.provenance, execution)
       ));
       if (prompts.length !== 1) {
@@ -284,6 +294,7 @@ export function assembleGenerationExecutions(
         && artifact.jobId === snapshot.jobId
         && artifact.action === binding.action
         && executorBindingMatches(artifact)
+        && sameExecutorIdentity(artifact, output)
         && reportContainsExecution(artifact.provenance, execution)
       ));
       if (reports.length !== 1) {
@@ -291,12 +302,16 @@ export function assembleGenerationExecutions(
       }
       result[binding.role].push({
         role: binding.role,
+        jobId: output.jobId!,
+        executionId: nonEmptyString(output.provenance.idempotencyKey)!,
         recipe: {
           id: execution.recipeId,
           version: execution.recipeVersion,
           checksum: execution.recipeChecksum,
         },
         model: execution.model,
+        outputKind: execution.outputKind,
+        outputChecksum: execution.outputChecksum,
         promptChecksum: execution.promptChecksum,
         referenceChecksums: [...execution.referenceChecksums],
         recipeSnapshot: toArtifactReference(snapshot) as ReviewGenerationExecution['recipeSnapshot'],
@@ -314,6 +329,8 @@ interface GenerationExecutionProvenance {
   recipeChecksum: string;
   promptChecksum: string;
   model: string;
+  outputKind: string;
+  outputChecksum: string;
   referenceChecksums: readonly string[];
 }
 
@@ -326,11 +343,23 @@ function readExecutionProvenance(
   const recipeChecksum = prefixedChecksum(value.recipeChecksum);
   const promptChecksum = prefixedChecksum(value.promptChecksum);
   const model = nonEmptyString(value.model);
+  const outputKind = nonEmptyString(value.outputKind);
+  const outputChecksum = prefixedChecksum(value.outputChecksum);
   const referenceChecksums = prefixedChecksumList(value.referenceChecksums);
-  if (!recipeId || !recipeVersion || !recipeChecksum || !promptChecksum || !model || !referenceChecksums) {
+  if (!recipeId || !recipeVersion || !recipeChecksum || !promptChecksum || !model
+    || !outputKind || !outputChecksum || !referenceChecksums) {
     throw new ReviewPackageAssemblyError(`${role} generation provenance is incomplete`);
   }
-  return { recipeId, recipeVersion, recipeChecksum, promptChecksum, model, referenceChecksums };
+  return {
+    recipeId,
+    recipeVersion,
+    recipeChecksum,
+    promptChecksum,
+    model,
+    outputKind,
+    outputChecksum,
+    referenceChecksums,
+  };
 }
 
 function provenanceMatchesRecipe(
@@ -346,7 +375,23 @@ function executorBindingMatches(artifact: WorkflowArtifact): boolean {
   return artifact.jobId !== null
     && artifact.action !== null
     && artifact.provenance.jobId === artifact.jobId
-    && artifact.provenance.action === artifact.action;
+    && artifact.provenance.action === artifact.action
+    && Boolean(nonEmptyString(artifact.provenance.idempotencyKey));
+}
+
+function sameExecutorIdentity(left: WorkflowArtifact, right: WorkflowArtifact): boolean {
+  return left.jobId === right.jobId
+    && left.action === right.action
+    && left.provenance.idempotencyKey === right.provenance.idempotencyKey
+    && left.provenance.provider === right.provenance.provider;
+}
+
+function outputBindingMatches(
+  provenance: Record<string, unknown>,
+  output: WorkflowArtifact,
+): boolean {
+  return provenance.outputKind === output.kind
+    && provenance.outputChecksum === `sha256:${output.checksum}`;
 }
 
 function sameExecutionProvenance(
@@ -391,12 +436,6 @@ function emptyGenerationExecutions(): ReviewGenerationExecutions {
   };
 }
 
-function calculateFinalContentChecksum(content: ReturnType<typeof knowledgeBitsContentSchema.parse>): string {
-  return content.target.schemaVersion === '1.1.0'
-    ? calculateContentChecksum(content.target)
-    : calculateContentChecksum(content.target.payload);
-}
-
 function requiredParsedArtifact(
   artifacts: readonly WorkflowArtifact[],
   action: string,
@@ -411,6 +450,14 @@ function requiredParsedArtifact(
 
 function latestArtifact(artifacts: readonly WorkflowArtifact[], kind: string): WorkflowArtifact | undefined {
   return [...artifacts].reverse().find((artifact) => artifact.kind === kind);
+}
+
+function latestArtifactForAction(
+  artifacts: readonly WorkflowArtifact[],
+  kind: string,
+  action: string,
+): WorkflowArtifact | undefined {
+  return [...artifacts].reverse().find((artifact) => artifact.kind === kind && artifact.action === action);
 }
 
 function canonicalPackageArtifacts(artifacts: readonly WorkflowArtifact[]): WorkflowArtifact[] {

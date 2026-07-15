@@ -334,10 +334,24 @@ test('accepts exactly one immutable artifact pair for each material recipe promp
   const secondRecipe = Buffer.from('{"id":"nuglet.visual.infographic","version":"1.0.0"}\n');
   const secondPrompt = Buffer.from('Create the infographic.');
   const pairs = [[firstRecipe, firstPrompt], [secondRecipe, secondPrompt]] as const;
+  const outputs = [
+    { kind: 'hero', body: Buffer.from('hero-output') },
+    { kind: 'infographic', body: Buffer.from('infographic-output') },
+  ] as const;
   const provider = providerFor('produce_assets', {
     ...successOutput(),
-    supportArtifacts: pairs.flatMap(([recipeBody, promptBody]) => {
-      const provenance = generationProvenance(recipeBody, promptBody);
+    assets: outputs.map((output) => ({
+      ...output,
+      mediaType: 'image/webp',
+      inputChecksum: null,
+    })),
+    supportArtifacts: pairs.flatMap(([recipeBody, promptBody], index) => {
+      const output = outputs[index]!;
+      const provenance = {
+        ...generationProvenance(recipeBody, promptBody),
+        outputKind: output.kind,
+        outputChecksum: prefixedChecksum(output.body),
+      };
       return [{
         kind: 'generation.recipe.snapshot' as const,
         mediaType: 'application/json' as const,
@@ -366,6 +380,8 @@ test('accepts exactly one immutable artifact pair for each material recipe promp
     'generation.prompt.rendered',
     'generation.recipe.snapshot',
     'generation.prompt.rendered',
+    'hero',
+    'infographic',
     'raw_response',
     'parsed_output',
     'generation.execution.report',

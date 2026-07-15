@@ -241,7 +241,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
       for (const execution of executions) {
         const item = document.createElement('li');
         const summary = document.createElement('p');
-        summary.textContent = `${execution.recipe.id}@${execution.recipe.version}; ${execution.model}; prompt ${execution.promptChecksum}; references ${execution.referenceChecksums.join(', ') || 'none'}`;
+        summary.textContent = `${execution.recipe.id}@${execution.recipe.version}; ${execution.model}; execution ${execution.executionId}; output ${execution.outputKind} ${execution.outputChecksum}; prompt ${execution.promptChecksum}; references ${execution.referenceChecksums.join(', ') || 'none'}`;
         item.append(summary);
         for (const [label, artifact] of [
           ['Recipe snapshot', execution.recipeSnapshot],

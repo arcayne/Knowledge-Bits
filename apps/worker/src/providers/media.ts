@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 
 import type { ContentCandidate } from '../checks/deterministic.js';
 import type { NugletGenerationPlan, NugletMediaBaseline } from '@knowledge-bits/contracts';
+import {
+  calculateContentChecksum,
+  calculateNugletGenerationInputChecksum,
+} from '@knowledge-bits/pipeline';
 import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
 
 import {
@@ -73,15 +77,20 @@ export class MediaProviderAdapter implements MediaProvider {
     if (input.action !== 'produce_assets') throw new ProviderNeedsHumanError(`media_unsupported_action:${input.action}`);
     const context = await this.options.context(input);
     if (!context.passedCheck) throw new ProviderNeedsHumanError('media_check_required');
-    if (!/^[a-f0-9]{64}$/.test(context.contentChecksum)) {
+    if (!/^[a-f0-9]{64}$/.test(context.contentChecksum)
+      || context.contentChecksum !== calculateContentChecksum(context.content)) {
       throw new ProviderNeedsHumanError('media_content_checksum_invalid');
     }
     const kinds = this.options.kinds ?? REQUIRED_MEDIA_KINDS;
     assertExactRequiredKinds(kinds);
     const generation = requiredMediaGenerationContext(context.generationPlan, context.resolvedRecipes);
+    const generationInputChecksum = calculateNugletGenerationInputChecksum({
+      semanticTarget: context.content,
+      generationPlan: generation.plan,
+    });
     const generated = await this.options.client.generate({
       content: context.content,
-      generationInputChecksum: context.contentChecksum,
+      generationInputChecksum,
       kinds,
       idempotencyKey: input.idempotencyKey,
       heroDirection: generation.plan.heroDirection,
@@ -94,13 +103,14 @@ export class MediaProviderAdapter implements MediaProvider {
     if (generated.length !== kinds.length || kinds.some((kind) => generated.filter((asset) => asset.kind === kind).length !== 1)) {
       throw new ProviderNeedsHumanError('media_assets_incomplete');
     }
-    if (generated.some((asset) => asset.generationInputChecksum !== context.contentChecksum)) {
+    if (generated.some((asset) => asset.generationInputChecksum !== generationInputChecksum)) {
       throw new ProviderNeedsHumanError('media_input_checksum_mismatch');
     }
-    for (const asset of generated) validateGeneratedMedia(asset, generation.recipes, generation.plan.mediaBaseline);
-    assertDistinctAudioBytes(generated);
+    const boundGenerated = generated.map(bindGeneratedOutput);
+    assertDistinctAudioBytes(boundGenerated);
+    for (const asset of boundGenerated) validateGeneratedMedia(asset, generation.recipes, generation.plan.mediaBaseline);
 
-    const assets = generated.map((asset) => ({
+    const assets = boundGenerated.map((asset) => ({
       byteSize: asset.bytes.byteLength,
       checksum: createHash('sha256').update(asset.bytes).digest('hex'),
       generationInputChecksum: asset.generationInputChecksum,
@@ -110,20 +120,20 @@ export class MediaProviderAdapter implements MediaProvider {
     }));
     return {
       kind: 'success',
-      inputChecksum: context.contentChecksum,
+      inputChecksum: generationInputChecksum,
       rawResponse: Buffer.from(JSON.stringify(assets)),
       parsedOutput: { assets },
-      assets: generated.map((asset) => ({
+      assets: boundGenerated.map((asset) => ({
         kind: asset.kind,
         mediaType: asset.mediaType,
         body: asset.bytes,
         inputChecksum: asset.generationInputChecksum,
         provenance: asset.metadata,
       })),
-      supportArtifacts: generated.flatMap((asset) => asset.supportArtifacts),
+      supportArtifacts: boundGenerated.flatMap((asset) => asset.supportArtifacts),
       executionReport: {
-        assetInputChecksum: context.contentChecksum,
-        assetKinds: generated.map(({ kind }) => kind),
+        assetInputChecksum: generationInputChecksum,
+        assetKinds: boundGenerated.map(({ kind }) => kind),
         provider: this.name,
       },
     };
@@ -178,6 +188,19 @@ function validateGeneratedMedia(asset: GeneratedMedia, recipes: MediaRecipes, ba
     if (asset.kind === 'hero' && (width < 1024 || height < 768 || width * 3 !== height * 4)) {
       throw new ProviderNeedsHumanError('media_hero_dimensions_invalid');
     }
+    if (asset.kind === 'hero') {
+      const recipe = recipes.hero;
+      if (!normalizedPoint(asset.metadata.focalPoint)
+        || !normalizedCrop(asset.metadata.cropSafeArea)) {
+        throw new ProviderNeedsHumanError('media_hero_metadata_invalid');
+      }
+      if (asset.metadata.styleProfileChecksum !== recipe.checksum) {
+        throw new ProviderNeedsHumanError('media_hero_profile_mismatch');
+      }
+      if (JSON.stringify(asset.metadata.referenceChecksums) !== JSON.stringify(heroReferenceChecksums(recipe))) {
+        throw new ProviderNeedsHumanError('media_hero_metadata_invalid');
+      }
+    }
   } else {
     const durationSeconds = asset.metadata.durationSeconds;
     const transcript = asset.metadata.transcript;
@@ -195,6 +218,28 @@ function validateGeneratedMedia(asset: GeneratedMedia, recipes: MediaRecipes, ba
     throw new ProviderNeedsHumanError('media_baseline_checksum_mismatch');
   }
   validateSupportArtifacts(asset, recipeForKind(recipes, asset.kind), baselineArtifact);
+}
+
+function bindGeneratedOutput(asset: GeneratedMedia): GeneratedMedia {
+  const outputChecksum = prefixedChecksum(asset.bytes);
+  const supportArtifacts = asset.supportArtifacts.map((artifact) => ({
+    ...artifact,
+    provenance: {
+      ...artifact.provenance,
+      outputKind: asset.kind,
+      outputChecksum,
+    },
+  }));
+  return {
+    ...asset,
+    metadata: {
+      ...asset.metadata,
+      generationExecutions: supportArtifacts
+        .filter((artifact) => artifact.kind === 'generation.recipe.snapshot')
+        .map((artifact) => artifact.provenance),
+    },
+    supportArtifacts,
+  };
 }
 
 function validateSupportArtifacts(
@@ -308,6 +353,28 @@ export function recipeForKind(recipes: MediaRecipes, kind: MediaKind): ResolvedR
 
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function normalizedPoint(value: unknown): boolean {
+  return isRecord(value) && normalizedNumber(value.x) && normalizedNumber(value.y);
+}
+
+function normalizedCrop(value: unknown): boolean {
+  return isRecord(value)
+    && normalizedNumber(value.x)
+    && normalizedNumber(value.y)
+    && positiveNormalizedNumber(value.width)
+    && positiveNormalizedNumber(value.height)
+    && value.x + value.width <= 1
+    && value.y + value.height <= 1;
+}
+
+function normalizedNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function positiveNormalizedNumber(value: unknown): value is number {
+  return normalizedNumber(value) && value > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

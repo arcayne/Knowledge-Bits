@@ -172,6 +172,47 @@ test('blocks 1.1.0 provenance assembly when a recipe prompt or current execution
   );
 });
 
+test('binds selected outputs to complete evidence from the same execution', () => {
+  const missing = generationProvenanceFixture();
+  for (const artifact of missing.artifacts) {
+    if (artifact.provenance.recipeId === missing.plan.recipes.hero.id) {
+      delete artifact.provenance.outputChecksum;
+    }
+    if (Array.isArray(artifact.provenance.generationExecutions)) {
+      artifact.provenance.generationExecutions = artifact.provenance.generationExecutions.map((execution) => (
+        isFixtureRecord(execution) && execution.recipeId === missing.plan.recipes.hero.id
+          ? Object.fromEntries(Object.entries(execution).filter(([key]) => key !== 'outputChecksum'))
+          : execution
+      ));
+    }
+  }
+  assert.throws(
+    () => assembleGenerationExecutions(missing.artifacts, missing.plan),
+    /hero.*output|hero.*provenance/i,
+  );
+
+  const mismatch = generationProvenanceFixture();
+  const heroPrompt = mismatch.artifacts.find((artifact) => (
+    artifact.kind === 'generation.prompt.rendered'
+    && artifact.provenance.recipeId === mismatch.plan.recipes.hero.id
+  ));
+  assert.ok(heroPrompt);
+  heroPrompt.provenance.outputChecksum = `sha256:${'f'.repeat(64)}`;
+  assert.throws(
+    () => assembleGenerationExecutions(mismatch.artifacts, mismatch.plan),
+    /hero.*output|hero.*provenance/i,
+  );
+
+  const foreign = generationProvenanceFixture();
+  const selectedHero = foreign.artifacts.find((artifact) => artifact.kind === 'hero');
+  assert.ok(selectedHero);
+  selectedHero.provenance.idempotencyKey = 'foreign-execution';
+  assert.throws(
+    () => assembleGenerationExecutions(foreign.artifacts, foreign.plan),
+    /hero.*execution/i,
+  );
+});
+
 test('blocks approval for failed QA, blocking editorial findings, or stale asset inputs', async () => {
   for (const options of [
     { qaPassed: false },
@@ -494,19 +535,24 @@ function generationProvenanceFixture(
   const artifacts: WorkflowArtifact[] = [];
   const createJobId = '70000000-0000-4000-8000-000000000001';
   const mediaJobId = '70000000-0000-4000-8000-000000000002';
+  const contentOutput = addSelectedOutput(artifacts, 'parsed_output', createJobId, 'create_content', 'e');
+  const heroOutput = addSelectedOutput(artifacts, 'hero', mediaJobId, 'produce_assets', '1');
+  const infographicOutput = addSelectedOutput(artifacts, 'infographic', mediaJobId, 'produce_assets', '2');
+  const audioBriefOutput = addSelectedOutput(artifacts, 'audio_brief', mediaJobId, 'produce_assets', '3');
+  const audioDiscussionOutput = addSelectedOutput(artifacts, 'audio_discussion', mediaJobId, 'produce_assets', '4');
   const createExecutions = [recipes.story, recipes.playbook, recipes.challenge].map((recipe) => (
-    addExecutionPair(artifacts, recipe, createJobId, 'create_content', 'a')
+    addExecutionPair(artifacts, recipe, createJobId, 'create_content', 'a', contentOutput)
   ));
   const mediaExecutions = [
-    addExecutionPair(artifacts, recipes.hero, mediaJobId, 'produce_assets', 'a', [
+    addExecutionPair(artifacts, recipes.hero, mediaJobId, 'produce_assets', 'a', heroOutput, [
       `sha256:${'9'.repeat(64)}`,
       `sha256:${'a'.repeat(64)}`,
     ]),
-    addExecutionPair(artifacts, recipes.infographic, mediaJobId, 'produce_assets', 'a'),
-    addExecutionPair(artifacts, recipes.audioBrief, mediaJobId, 'produce_assets', 'a'),
-    addExecutionPair(artifacts, recipes.audioBrief, mediaJobId, 'produce_assets', 'b'),
-    addExecutionPair(artifacts, recipes.audioDiscussion, mediaJobId, 'produce_assets', 'a'),
-    addExecutionPair(artifacts, recipes.audioDiscussion, mediaJobId, 'produce_assets', 'b'),
+    addExecutionPair(artifacts, recipes.infographic, mediaJobId, 'produce_assets', 'a', infographicOutput),
+    addExecutionPair(artifacts, recipes.audioBrief, mediaJobId, 'produce_assets', 'a', audioBriefOutput),
+    addExecutionPair(artifacts, recipes.audioBrief, mediaJobId, 'produce_assets', 'b', audioBriefOutput),
+    addExecutionPair(artifacts, recipes.audioDiscussion, mediaJobId, 'produce_assets', 'a', audioDiscussionOutput),
+    addExecutionPair(artifacts, recipes.audioDiscussion, mediaJobId, 'produce_assets', 'b', audioDiscussionOutput),
   ];
   artifacts.push(
     workflowArtifact({
@@ -533,6 +579,7 @@ function addExecutionPair(
   jobId: string,
   action: string,
   promptDigit: string,
+  output: WorkflowArtifact,
   referenceChecksums: string[] = [],
 ) {
   const provenance = {
@@ -541,6 +588,8 @@ function addExecutionPair(
     recipeChecksum: recipe.checksum,
     promptChecksum: `sha256:${promptDigit.repeat(64)}`,
     model: 'fixture-model',
+    outputKind: output.kind,
+    outputChecksum: `sha256:${output.checksum}`,
     referenceChecksums,
   };
   artifacts.push(
@@ -560,6 +609,24 @@ function addExecutionPair(
     }),
   );
   return provenance;
+}
+
+function addSelectedOutput(
+  artifacts: WorkflowArtifact[],
+  kind: string,
+  jobId: string,
+  action: string,
+  checksumDigit: string,
+): WorkflowArtifact {
+  const output = workflowArtifact({
+    kind,
+    jobId,
+    action,
+    checksum: checksumDigit.repeat(64),
+    provenance: {},
+  });
+  artifacts.push(output);
+  return output;
 }
 
 function workflowArtifact(input: {
@@ -582,6 +649,7 @@ function workflowArtifact(input: {
     provenance: {
       action: input.action,
       jobId: input.jobId,
+      idempotencyKey: `execution:${input.jobId}`,
       provider: 'fixture',
       ...input.provenance,
     },
@@ -594,6 +662,10 @@ function workflowArtifact(input: {
 }
 
 let provenanceArtifactCounter = 1;
+
+function isFixtureRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 function contentOutput(): NugletLessonV1Payload {
   const citation = {

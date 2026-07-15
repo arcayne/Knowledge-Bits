@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import {
   knowledgeBitsContentSchema,
   knowledgeBitsSchema,
+  nugletGenerationInputSchema,
+  nugletGenerationPlanSchema,
   type ArtifactReference,
   type KnowledgeBits,
   type KnowledgeBitsContent,
@@ -10,6 +12,8 @@ import {
   type KnowledgeBitsQa,
   type NugletLessonTarget,
   type NugletLessonV1Payload,
+  type NugletGenerationInput,
+  type NugletGenerationPlan,
 } from '@knowledge-bits/contracts';
 
 type JsonPrimitive = boolean | null | number | string;
@@ -55,10 +59,46 @@ export function packageChecksumContentRepresentation(content: KnowledgeBitsConte
     content.target.kind !== 'nuglet.lesson.v1'
     || !('schemaVersion' in content.target)
     || content.target.schemaVersion !== '1.0.0'
-  ) return content;
+  ) {
+    if ('schemaVersion' in content.target && content.target.schemaVersion === '1.1.0') {
+      return {
+        content,
+        contentChecksum: calculateContentChecksum(content.target),
+      };
+    }
+    return content;
+  }
 
   const { schemaVersion: _schemaVersion, ...legacyTarget } = content.target;
   return { ...content, target: legacyTarget };
+}
+
+export function canonicalNugletGenerationInput(input: {
+  semanticTarget: unknown;
+  generationPlan: NugletGenerationPlan;
+}): NugletGenerationInput {
+  const generationPlan = nugletGenerationPlanSchema.parse(input.generationPlan);
+  return nugletGenerationInputSchema.parse({
+    schemaVersion: 'knowledge-bits.generation-input.v1',
+    semanticTarget: input.semanticTarget,
+    media: {
+      recipes: {
+        hero: generationPlan.recipes.hero,
+        infographic: generationPlan.recipes.infographic,
+        audioBrief: generationPlan.recipes.audioBrief,
+        audioDiscussion: generationPlan.recipes.audioDiscussion,
+      },
+      heroDirection: generationPlan.heroDirection,
+      mediaBaseline: generationPlan.mediaBaseline,
+    },
+  });
+}
+
+export function calculateNugletGenerationInputChecksum(input: {
+  semanticTarget: unknown;
+  generationPlan: NugletGenerationPlan;
+}): string {
+  return createHash('sha256').update(canonicalJson(canonicalNugletGenerationInput(input))).digest('hex');
 }
 
 export function calculateLegacyContentChecksum(content: NugletLessonV1Payload): string {

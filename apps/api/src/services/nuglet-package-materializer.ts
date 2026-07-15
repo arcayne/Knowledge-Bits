@@ -9,7 +9,7 @@ import {
   type NugletGenerationPlan,
   type NugletLessonTarget,
 } from '@knowledge-bits/contracts';
-import { calculateContentChecksum } from '@knowledge-bits/pipeline';
+import { calculateNugletGenerationInputChecksum } from '@knowledge-bits/pipeline';
 
 import type { WorkflowArtifact } from '../repositories/workflow-repository.js';
 
@@ -24,9 +24,14 @@ export type NugletReviewMediaKind = typeof NUGLET_REVIEW_MEDIA_KINDS[number];
 export type NugletReviewMediaArtifacts = Partial<Record<NugletReviewMediaKind, WorkflowArtifact>>;
 export type StoryPlaybookTarget = Extract<NugletLessonTarget, { schemaVersion: '1.1.0' }>;
 
-export function calculateStoryPlaybookGenerationInputChecksum(semanticTarget: unknown): string {
-  const target = parseSemanticTarget(semanticTarget);
-  return calculateContentChecksum(target);
+export function calculateStoryPlaybookGenerationInputChecksum(
+  semanticTarget: unknown,
+  generationPlan: NugletGenerationPlan,
+): string {
+  return calculateNugletGenerationInputChecksum({
+    semanticTarget: parseSemanticTarget(semanticTarget),
+    generationPlan: nugletGenerationPlanSchema.parse(generationPlan),
+  });
 }
 
 export function materializeStoryPlaybookTarget(input: {
@@ -36,7 +41,7 @@ export function materializeStoryPlaybookTarget(input: {
 }): StoryPlaybookTarget {
   const semanticTarget = parseSemanticTarget(input.semanticTarget);
   const generationPlan = nugletGenerationPlanSchema.parse(input.generationPlan);
-  const generationInputChecksum = calculateContentChecksum(semanticTarget);
+  const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
   const hero = requiredMedia(input.mediaArtifacts, 'hero', generationInputChecksum, 'image/');
   const infographic = requiredMedia(input.mediaArtifacts, 'infographic', generationInputChecksum, 'image/');
   const audioBrief = requiredMedia(input.mediaArtifacts, 'audio_brief', generationInputChecksum, 'audio/');
@@ -141,6 +146,9 @@ function heroMetadataFor(
     || mediaBrief.metaphor !== generationPlan.heroDirection.metaphor
     || mediaBrief.compositionFamily !== generationPlan.heroDirection.compositionFamily) {
     throw new TypeError('Hero semantic brief does not match the approved hero direction');
+  }
+  if (artifact.provenance.styleProfileChecksum !== generationPlan.recipes.hero.checksum) {
+    throw new TypeError('Hero profile checksum does not match the approved hero profile');
   }
   const focalPoint = normalizedPoint(artifact.provenance.focalPoint, 'Hero focal point');
   const cropSafeArea = normalizedCrop(artifact.provenance.cropSafeArea);

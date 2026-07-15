@@ -88,10 +88,7 @@ export const nugletMediaBaselineSchema = z.object({
   }).strict(),
 }).strict();
 
-export const nugletGenerationPlanSchema = z.object({
-  contentKind: z.literal('nuglet.lesson.v1'),
-  schemaVersion: z.literal('1.1.0'),
-  recipes: z.object({
+const nugletGenerationRecipesSchema = z.object({
     story: generationRecipeBindingSchema('nuglet.lesson.story'),
     playbook: generationRecipeBindingSchema('nuglet.lesson.playbook'),
     challenge: generationRecipeBindingSchema('nuglet.challenge'),
@@ -100,14 +97,21 @@ export const nugletGenerationPlanSchema = z.object({
     audioDiscussion: generationRecipeBindingSchema('nuglet.audio.discussion'),
     hero: generationRecipeBindingSchema('nuglet.hero'),
     editorialQa: generationRecipeBindingSchema('nuglet.qa.editorial'),
-  }).strict(),
-  heroDirection: z.object({
+  }).strict();
+
+const nugletHeroDirectionSchema = z.object({
     concept: z.string().trim().min(1),
     metaphor: z.string().trim().min(1),
     compositionFamily: z.literal('asymmetrical-story'),
     mustInclude: z.array(z.string().trim().min(1)),
     mustAvoid: z.array(z.string().trim().min(1)),
-  }).strict(),
+  }).strict();
+
+export const nugletGenerationPlanSchema = z.object({
+  contentKind: z.literal('nuglet.lesson.v1'),
+  schemaVersion: z.literal('1.1.0'),
+  recipes: nugletGenerationRecipesSchema,
+  heroDirection: nugletHeroDirectionSchema,
   mediaBaseline: nugletMediaBaselineSchema,
 }).strict().superRefine((plan, context) => {
   const expected = [
@@ -764,6 +768,25 @@ export const storyPlaybookDraftSchema = z.object({
   }).strict(),
 }).strict().superRefine(validateStoryPlaybookClaims);
 
+export const nugletGenerationInputSchema = z.object({
+  schemaVersion: z.literal('knowledge-bits.generation-input.v1'),
+  semanticTarget: z.object({
+    kind: z.literal('nuglet.lesson.v1'),
+    schemaVersion: z.literal('1.1.0'),
+    payload: storyPlaybookDraftSchema,
+  }).strict(),
+  media: z.object({
+    recipes: nugletGenerationRecipesSchema.pick({
+      hero: true,
+      infographic: true,
+      audioBrief: true,
+      audioDiscussion: true,
+    }),
+    heroDirection: nugletHeroDirectionSchema,
+    mediaBaseline: nugletMediaBaselineSchema,
+  }).strict(),
+}).strict();
+
 const pointSchema = z.object({
   x: z.number().min(0).max(1),
   y: z.number().min(0).max(1),
@@ -933,6 +956,7 @@ export const knowledgeBitsSchema = z.object({
 
 export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
 export type NugletGenerationPlan = z.infer<typeof nugletGenerationPlanSchema>;
+export type NugletGenerationInput = z.infer<typeof nugletGenerationInputSchema>;
 type LegacyUnversionedNugletLessonTarget = Omit<z.infer<typeof legacyNugletLessonTargetSchema>, 'schemaVersion'>;
 export type KnowledgeBitsContent = z.infer<typeof knowledgeBitsContentSchema> | {
   schemaVersion: 'knowledge-bits.content.v1';
@@ -985,7 +1009,11 @@ export const reviewGenerationRoleSchema = z.enum([
 export const reviewGenerationExecutionSchema = z.object({
   role: reviewGenerationRoleSchema,
   recipe: genericGenerationRecipeBindingSchema,
+  jobId: z.string().uuid(),
+  executionId: z.string().trim().min(1),
   model: z.string().trim().min(1),
+  outputKind: z.string().trim().min(1),
+  outputChecksum: generationRecipeChecksumSchema,
   promptChecksum: generationRecipeChecksumSchema,
   referenceChecksums: z.array(generationRecipeChecksumSchema),
   recipeSnapshot: artifactReferenceSchema.extend({
