@@ -829,13 +829,15 @@ export const storyPlaybookDraftSchema = z.object({
   }).strict(),
 }).strict().superRefine(validateStoryPlaybookClaims);
 
+export const storyPlaybookDraftTargetSchema = z.object({
+  kind: z.literal('nuglet.lesson.v1'),
+  schemaVersion: z.literal('1.1.0'),
+  payload: storyPlaybookDraftSchema,
+}).strict();
+
 export const nugletGenerationInputSchema = z.object({
   schemaVersion: z.literal('knowledge-bits.generation-input.v1'),
-  semanticTarget: z.object({
-    kind: z.literal('nuglet.lesson.v1'),
-    schemaVersion: z.literal('1.1.0'),
-    payload: storyPlaybookDraftSchema,
-  }).strict(),
+  semanticTarget: storyPlaybookDraftTargetSchema,
   media: z.object({
     recipes: nugletGenerationRecipesSchema.pick({
       hero: true,

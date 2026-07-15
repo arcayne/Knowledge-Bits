@@ -760,6 +760,7 @@ test('requires a non-empty canonical terminology list for Story Playbook drafts'
 
 test('exports the versioned Story Playbook draft contract descriptor and terminology normalization', () => {
   assert.equal('storyPlaybookDraftContractDescriptor' in contracts, true);
+  assert.equal('storyPlaybookDraftTargetSchema' in contracts, true);
   assert.equal('normalizeNugletTerminologyTerm' in contracts, true);
   const descriptor = contracts.storyPlaybookDraftContractDescriptor;
   assert.equal(descriptor.descriptorVersion, 'nuglet.lesson.story-playbook-draft.contract.v1');
@@ -786,6 +787,21 @@ test('exports the versioned Story Playbook draft contract descriptor and termino
     'quiz',
   ]);
   assert.equal(contracts.normalizeNugletTerminologyTerm('  Rainy-day\tFUND  '), 'rainy day fund');
+});
+
+test('validates the exact strict Story Playbook draft target without claim coverage coercion', () => {
+  const target = { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0', payload: storyPlaybookDraft() };
+  const schema = contracts.storyPlaybookDraftTargetSchema;
+
+  assert.equal(schema.safeParse(target).success, true);
+  assert.equal(schema.safeParse({ ...target, unexpected: true }).success, false);
+  assert.equal(schema.safeParse({
+    ...target,
+    payload: {
+      ...target.payload,
+      claimCoverage: Object.fromEntries(target.payload.claimCoverage.map(({ path, claimIds }) => [path, claimIds])),
+    },
+  }).success, false);
 });
 
 test('keeps the target schema versions structurally separate', () => {

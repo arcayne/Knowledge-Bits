@@ -251,7 +251,7 @@ test('repairs a structurally invalid direct Story and Playbook answer once and r
   assert.match(repairPrompt, /prior answer was structurally invalid/i);
   assert.match(repairPrompt, /\$\.kind: Expected "nuglet\.lesson\.v1"/);
   assert.match(repairPrompt, /\$\.schemaVersion: Expected "1\.1\.0"/);
-  assert.match(repairPrompt, /\$\.payload\.contentModel: Invalid literal value, expected "story-playbook\.v1"\./);
+  assert.match(repairPrompt, /\$\.payload: Expected the required value type\./);
   assert.match(repairPrompt, /"kind": "nuglet\.lesson\.v1"/);
   assert.match(repairPrompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2))));
   assert.match(repairPrompt, /preserve grounded meaning and accepted citations/i);
@@ -265,6 +265,143 @@ test('repairs a structurally invalid direct Story and Playbook answer once and r
     [originalPrompt, originalPrompt, originalPrompt, repairPrompt, repairPrompt, repairPrompt],
   );
   assert.equal(Buffer.from(result.rawResponse).toString('utf8'), await fixture('notebooklm-story-playbook.json'));
+});
+
+test('does not expose an invalid enum secret in the semantic repair prompt or support artifacts', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const secret = 'provider-secret-value-DO-NOT-PERSIST';
+  const invalidAnswer = await mutateStoryPlaybookAnswer((answer) => {
+    answer.payload.hero.accessibilityPurpose = secret;
+  });
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const repairPrompt = String(calls[2]?.args[3]);
+  assert.match(repairPrompt, /\$\.payload\.hero\.accessibilityPurpose: Expected one of the allowed values\./);
+  assert.equal(repairPrompt.includes(secret), false);
+  assert.equal(renderedPromptArtifacts(result).some((prompt) => prompt.includes(secret)), false);
+});
+
+test('bounds semantic issues without exposing many oversized unknown keys in prompts or support artifacts', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const unknownKeyPrefix = 'provider-controlled-huge-key-';
+  const invalidAnswer = await mutateStoryPlaybookAnswer((answer) => {
+    for (let index = 0; index < 100; index += 1) {
+      answer.payload[`${unknownKeyPrefix}${index}-${'x'.repeat(1_000)}`] = true;
+    }
+    const claims = answer.payload.claims as Array<Record<string, unknown>>;
+    answer.payload.claims = Array.from({ length: 100 }, (_, index) => ({
+      ...claims[0],
+      claimId: `${unknownKeyPrefix}claim-${index}`,
+    }));
+  });
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const repairPrompt = String(calls[2]?.args[3]);
+  const issueSection = repairPrompt.split('Validation issues:\n')[1]?.split('\nExact required root envelope:')[0] ?? '';
+  assert.ok(issueSection.split('\n').filter((line) => line.startsWith('- ')).length <= 20);
+  assert.ok(issueSection.length <= 2_000);
+  assert.equal(repairPrompt.includes(unknownKeyPrefix), false);
+  assert.equal(renderedPromptArtifacts(result).some((prompt) => prompt.includes(unknownKeyPrefix)), false);
+});
+
+test('semantically repairs extra root keys and object-shaped claim coverage', async (context) => {
+  const cases = [
+    {
+      name: 'extra root key',
+      mutate(answer: StoryPlaybookAnswer) {
+        answer.unexpected = 'not allowed';
+      },
+    },
+    {
+      name: 'object-shaped claim coverage',
+      mutate(answer: StoryPlaybookAnswer) {
+        answer.payload.claimCoverage = Object.fromEntries(
+          (answer.payload.claimCoverage as Array<{ path: string; claimIds: string[] }>).map(({ path, claimIds }) => [path, claimIds]),
+        );
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    await context.test(testCase.name, async () => {
+      const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+      const invalidAnswer = await mutateStoryPlaybookAnswer(testCase.mutate);
+      const provider = storyPlaybookProvider(calls, generationRecipes(), [
+        { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+        { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+      ]);
+
+      const result = await provider.execute(input('create_content'));
+
+      assert.equal(result.kind, 'success');
+      assert.equal(calls.length, 3);
+    });
+  }
+});
+
+test('rejects extra root keys and object-shaped claim coverage after semantic repair', async (context) => {
+  const cases = [
+    {
+      name: 'extra root key',
+      mutate(answer: StoryPlaybookAnswer) {
+        answer.unexpected = 'not allowed';
+      },
+    },
+    {
+      name: 'object-shaped claim coverage',
+      mutate(answer: StoryPlaybookAnswer) {
+        answer.payload.claimCoverage = Object.fromEntries(
+          (answer.payload.claimCoverage as Array<{ path: string; claimIds: string[] }>).map(({ path, claimIds }) => [path, claimIds]),
+        );
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    await context.test(testCase.name, async () => {
+      const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+      const invalidAnswer = await mutateStoryPlaybookAnswer(testCase.mutate);
+      const provider = storyPlaybookProvider(calls, generationRecipes(), [
+        { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+        { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+      ]);
+
+      await assert.rejects(
+        () => provider.execute(input('create_content')),
+        (error: unknown) => error instanceof Error
+          && error.message === 'notebooklm_content_invalid'
+          && 'needsHumanKind' in error
+          && error.needsHumanKind === 'quality',
+      );
+      assert.equal(calls.length, 3);
+    });
+  }
+});
+
+test('does not issue a fourth query when the one semantic repair response is malformed', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: await directStoryPlaybookFailure(), stderr: '', exitCode: 0 },
+    { stdout: 'not json', stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  await assert.rejects(() => provider.execute(input('create_content')), /notebooklm_malformed_output/);
+  assert.equal(calls.length, 3);
 });
 
 test('rejects a second structurally invalid Story and Playbook answer as a typed quality issue', async () => {
@@ -633,6 +770,25 @@ async function directStoryPlaybookFailure(): Promise<string> {
       },
     },
   });
+}
+
+type StoryPlaybookAnswer = {
+  [key: string]: unknown;
+  payload: Record<string, unknown> & {
+    hero: Record<string, unknown>;
+    claimCoverage: unknown;
+  };
+};
+
+async function mutateStoryPlaybookAnswer(mutate: (answer: StoryPlaybookAnswer) => void): Promise<string> {
+  const response = JSON.parse(await fixture('notebooklm-story-playbook.json')) as { answer: StoryPlaybookAnswer };
+  mutate(response.answer);
+  return JSON.stringify(response);
+}
+
+function renderedPromptArtifacts(result: { supportArtifacts?: ReadonlyArray<{ kind: string; body: Uint8Array }> }): string[] {
+  return result.supportArtifacts?.filter(({ kind }) => kind === 'generation.prompt.rendered')
+    .map(({ body }) => Buffer.from(body).toString('utf8')) ?? [];
 }
 
 async function fixture(name: string): Promise<string> {

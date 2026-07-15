@@ -73,3 +73,67 @@ contract/provider tests. No Zod schema was loosened. No claim IDs, payload
 wrappers, strings, or accessibility values are normalized or locally coerced
 by the semantic repair path. No transport waits, timeouts, or cooldown rules
 were changed.
+
+## Blocker Repair, 2026-07-15
+
+### Status
+
+All three review blockers are repaired.
+
+### Changes
+
+- Replaced raw Zod messages with allowlisted path segments and fixed messages
+  selected by safe path or issue code. Semantic diagnostics are capped at 20
+  issues and 2,000 rendered characters, including list markers and separators.
+- Added the strict `storyPlaybookDraftTargetSchema` for the exact
+  `{kind,schemaVersion,payload}` root. Schema 1.1.0 validation no longer
+  normalizes `claimCoverage`; it only enriches citation snapshot artifact IDs
+  from accepted evidence before strict validation.
+- Parsed the one semantic repair response directly. Malformed JSON or an
+  invalid provider envelope now raises `notebooklm_malformed_output` without a
+  fourth provider call.
+- Added provider tests for secret enum values, many oversized unknown keys,
+  issue count and character bounds, support artifact redaction, extra root
+  keys, object-shaped `claimCoverage` before and after repair, and malformed
+  semantic output with an unused fourth response.
+
+### TDD Evidence
+
+Tests were added before the blocker repairs. This command used Node 24.18.0:
+
+```bash
+PATH="/Users/dearkane/.nvm/versions/node/v24.18.0/bin:$PATH" pnpm --filter @knowledge-bits/contracts test
+PATH="/Users/dearkane/.nvm/versions/node/v24.18.0/bin:$PATH" pnpm --filter @knowledge-bits/worker exec tsx --test src/providers/notebooklm.test.ts
+```
+
+Initial result: contract tests reported 30 passing and 2 failing. Provider
+tests reported 18 passing and 9 failing. The failures reproduced the missing
+strict target export, secret and oversized-key disclosure, acceptance of extra
+root keys and object-shaped `claimCoverage`, and the fourth-query path.
+
+### Final Verification
+
+All commands ran with this Node selection:
+
+```bash
+export PATH="/Users/dearkane/.nvm/versions/node/v24.18.0/bin:$PATH"
+node --version
+pnpm --filter @knowledge-bits/contracts build
+pnpm --filter @knowledge-bits/contracts test
+pnpm --filter @knowledge-bits/worker exec tsx --test src/providers/notebooklm.test.ts
+pnpm --filter @knowledge-bits/worker typecheck
+git diff --check
+```
+
+Exact results:
+
+- `node --version`: `v24.18.0`.
+- Contracts build: passed, exit 0.
+- Contract tests: 32 passed, 0 failed.
+- Focused NotebookLM provider tests: 27 passed, 0 failed.
+- Worker typecheck: passed, exit 0.
+- `git diff --check`: passed with no output, exit 0.
+
+### Concerns
+
+None.

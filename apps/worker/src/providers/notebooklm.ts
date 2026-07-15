@@ -11,7 +11,7 @@ import type { VerifiedResearchEvidence } from '../checks/source-verifier.js';
 import {
   nugletLessonV1PayloadSchema,
   storyPlaybookDraftContractDescriptor,
-  storyPlaybookDraftSchema,
+  storyPlaybookDraftTargetSchema,
   type NugletGenerationPlan,
 } from '@knowledge-bits/contracts';
 import { renderPromptSections } from '../recipes/file-registry.js';
@@ -117,10 +117,11 @@ export class NotebookLmProvider implements ContentProvider {
       if (issues.length > 0) {
         const semanticRepairPrompt = renderStoryPlaybookSemanticRepairPrompt(prompt, issues);
         const semanticRepairResponse = await this.query(context.notebookId, semanticRepairPrompt, input.signal);
-        const repaired = await this.parseOrRepair(context.notebookId, semanticRepairPrompt, semanticRepairResponse, input.signal);
+        const repaired = parseStructuredResponse(semanticRepairResponse.stdout);
+        if (!repaired) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
         parsed = {
           ...repaired,
-          prompts: [...parsed.prompts, ...repaired.prompts],
+          prompts: [...parsed.prompts, semanticRepairPrompt],
         };
         validateCitations(parsed.answer, context.evidence);
         if (storyPlaybookSemanticIssues(parsed.answer, context.evidence).length > 0) {
@@ -363,17 +364,11 @@ function parseCreateOutput(
   if (!evidence) throw new ProviderNeedsHumanError('notebooklm_create_evidence_missing');
   const snapshotsBySource = new Map(evidence.sources.map((source) => [source.sourceId, source.snapshotArtifactId]));
   if (generationPlan?.schemaVersion === '1.1.0') {
-    const payload = isRecord(answer.payload) ? answer.payload : {};
-    const claims = attachSnapshotArtifacts(payload.claims, snapshotsBySource);
-    const parsed = storyPlaybookDraftSchema.safeParse({
-      ...payload,
-      claims,
-      claimCoverage: normalizeClaimCoverage(payload.claimCoverage),
-    });
-    if (answer.kind !== 'nuglet.lesson.v1' || answer.schemaVersion !== '1.1.0' || !parsed.success) {
+    const parsed = storyPlaybookDraftTargetSchema.safeParse(attachStoryPlaybookSnapshotArtifacts(answer, snapshotsBySource));
+    if (!parsed.success) {
       throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
     }
-    return { kind: 'nuglet.lesson.v1' as const, schemaVersion: '1.1.0' as const, payload: parsed.data };
+    return parsed.data;
   }
 
   const claims = attachSnapshotArtifacts(answer.claims, snapshotsBySource);
@@ -384,30 +379,53 @@ function parseCreateOutput(
 }
 
 const MAX_SEMANTIC_REPAIR_ISSUES = 20;
+const MAX_SEMANTIC_REPAIR_ISSUE_CHARS = 2_000;
+
+const SAFE_SEMANTIC_PATH_SEGMENTS = new Set([
+  'kind', 'schemaVersion', 'payload', 'title', 'contentModel', 'materialization',
+  'identity', 'locale', 'topic', 'label', 'categoryId', 'tags', 'deck', 'slugSuggestion',
+  'learning', 'centralIdea', 'whyItMatters', 'oneLineToKeep', 'terminology', 'term', 'definition',
+  'action', 'instruction', 'hero', 'altText', 'accessibilityPurpose', 'mediaBrief', 'concept',
+  'metaphor', 'compositionFamily', 'read', 'story', 'playbook', 'estimatedMinutes', 'blocks',
+  'type', 'text', 'claimRefs', 'principle', 'steps', 'id', 'body', 'example', 'watchOuts',
+  'visual', 'textEquivalent', 'objective', 'structure', 'listen', 'brief', 'discussion',
+  'editorialBrief', 'tone', 'keyPoints', 'quiz', 'questions', 'prompt', 'options', 'correctOptionId',
+  'rationale', 'reviewConcept', 'publicSources', 'evidenceSourceId', 'publisher', 'claims', 'claimId',
+  'statement', 'citations', 'sourceId', 'excerpt', 'snapshotArtifactId', 'claimCoverage', 'path', 'claimIds',
+]);
+
+const SAFE_SEMANTIC_MESSAGES_BY_PATH: Readonly<Record<string, string>> = {
+  '$.kind': 'Expected "nuglet.lesson.v1".',
+  '$.schemaVersion': 'Expected "1.1.0".',
+  '$.payload.contentModel': 'Expected "story-playbook.v1".',
+  '$.payload.materialization': 'Expected "draft".',
+  '$.payload.hero.accessibilityPurpose': 'Expected one of the allowed values.',
+};
+
+const SAFE_SEMANTIC_MESSAGES_BY_CODE: Readonly<Record<string, string>> = {
+  invalid_type: 'Expected the required value type.',
+  invalid_literal: 'Expected the required constant value.',
+  invalid_enum_value: 'Expected one of the allowed values.',
+  unrecognized_keys: 'Remove fields that are not part of the contract.',
+  invalid_union: 'Expected a value matching one allowed contract shape.',
+  invalid_union_discriminator: 'Expected a valid contract discriminator.',
+  invalid_arguments: 'Expected valid contract arguments.',
+  invalid_return_type: 'Expected a valid contract result.',
+  invalid_date: 'Expected a valid date.',
+  invalid_string: 'Expected a value in the required string format.',
+  too_small: 'Expected the required minimum length or count.',
+  too_big: 'Expected no more than the allowed maximum.',
+  invalid_intersection_types: 'Expected compatible contract values.',
+  not_multiple_of: 'Expected a permitted numeric multiple.',
+  not_finite: 'Expected a finite number.',
+  custom: 'Value violates a contract relationship.',
+};
 
 function storyPlaybookSemanticIssues(answer: Record<string, unknown>, evidence: EvidenceManifest | undefined): string[] {
   if (!evidence) return ['$.payload: Accepted research evidence is required.'];
-  const issues: string[] = [];
-  if (answer.kind !== 'nuglet.lesson.v1') {
-    issues.push('$.kind: Expected "nuglet.lesson.v1".');
-  }
-  if (answer.schemaVersion !== '1.1.0') {
-    issues.push('$.schemaVersion: Expected "1.1.0".');
-  }
-
   const snapshotsBySource = new Map(evidence.sources.map((source) => [source.sourceId, source.snapshotArtifactId]));
-  const payload = isRecord(answer.payload) ? answer.payload : {};
-  const parsed = storyPlaybookDraftSchema.safeParse({
-    ...payload,
-    claims: attachSnapshotArtifacts(payload.claims, snapshotsBySource),
-    claimCoverage: normalizeClaimCoverage(payload.claimCoverage),
-  });
-  if (!parsed.success) {
-    issues.push(...parsed.error.issues.map((issue) => (
-      `${zodIssuePath(['payload', ...issue.path])}: ${issue.message}.`
-    )));
-  }
-  return issues.slice(0, MAX_SEMANTIC_REPAIR_ISSUES);
+  const parsed = storyPlaybookDraftTargetSchema.safeParse(attachStoryPlaybookSnapshotArtifacts(answer, snapshotsBySource));
+  return parsed.success ? [] : safeSemanticIssues(parsed.error.issues);
 }
 
 function renderStoryPlaybookSemanticRepairPrompt(originalPrompt: string, issues: readonly string[]): string {
@@ -423,10 +441,52 @@ function renderStoryPlaybookSemanticRepairPrompt(originalPrompt: string, issues:
   ].join('\n');
 }
 
-function zodIssuePath(path: readonly (string | number)[]): string {
-  return path.reduce<string>((result, part) => (
-    typeof part === 'number' ? `${result}[${part}]` : `${result}.${part}`
-  ), '$');
+function safeSemanticIssues(issues: ReadonlyArray<{ code: string; path: readonly (string | number)[] }>): string[] {
+  const rendered: string[] = [];
+  let renderedChars = 0;
+  for (const issue of issues) {
+    if (rendered.length >= MAX_SEMANTIC_REPAIR_ISSUES) break;
+    const path = safeZodIssuePath(issue.path);
+    const message = SAFE_SEMANTIC_MESSAGES_BY_PATH[path]
+      ?? SAFE_SEMANTIC_MESSAGES_BY_CODE[issue.code]
+      ?? 'Value does not satisfy the contract.';
+    const line = `${path}: ${message}`;
+    const nextChars = renderedChars + 2 + line.length + (rendered.length > 0 ? 1 : 0);
+    if (nextChars > MAX_SEMANTIC_REPAIR_ISSUE_CHARS) break;
+    rendered.push(line);
+    renderedChars = nextChars;
+  }
+  return rendered;
+}
+
+function safeZodIssuePath(path: readonly (string | number)[]): string {
+  let rendered = '$';
+  for (const part of path) {
+    if (typeof part === 'number') {
+      rendered += '[]';
+      continue;
+    }
+    if (!SAFE_SEMANTIC_PATH_SEGMENTS.has(part)) {
+      rendered += '.[field]';
+      break;
+    }
+    rendered += `.${part}`;
+  }
+  return rendered;
+}
+
+function attachStoryPlaybookSnapshotArtifacts(
+  answer: Record<string, unknown>,
+  snapshotsBySource: ReadonlyMap<string, string>,
+): Record<string, unknown> {
+  if (!isRecord(answer.payload)) return answer;
+  return {
+    ...answer,
+    payload: {
+      ...answer.payload,
+      claims: attachSnapshotArtifacts(answer.payload.claims, snapshotsBySource),
+    },
+  };
 }
 
 function attachSnapshotArtifacts(value: unknown, snapshotsBySource: ReadonlyMap<string, string>): unknown {
