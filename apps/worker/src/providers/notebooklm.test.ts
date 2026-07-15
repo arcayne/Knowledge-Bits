@@ -129,6 +129,7 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
   assert.match(prompt, /"acceptedSourceIds":\s*\[\s*"11111111-1111-4111-8111-111111111111"/);
   assert.match(prompt, /"audience": "busy knowledge workers"/);
   assert.match(prompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2))));
+  assertCrossFormatRequirements(prompt);
   assert.doesNotMatch(prompt, /Required payload shape:/);
   assert.doesNotMatch(prompt, /The Story must contain/);
   assert.doesNotMatch(prompt, /Approved hero direction/);
@@ -280,6 +281,7 @@ test('repairs a structurally invalid direct Story and Playbook answer once and r
   assert.match(repairPrompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2))));
   assert.equal(countOccurrences(repairPrompt, JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), 1);
   assert.match(repairPrompt, /preserve grounded meaning and accepted citations/i);
+  assertCrossFormatRequirements(repairPrompt);
   assert.doesNotMatch(repairPrompt, /direct-unwrapped-story-playbook/);
   assert.doesNotMatch(repairPrompt, /source snapshot text/i);
   assert.deepEqual((result.executionReport as { renderedPrompts: string[] }).renderedPrompts, [originalPrompt, repairPrompt]);
@@ -290,6 +292,78 @@ test('repairs a structurally invalid direct Story and Playbook answer once and r
     [originalPrompt, originalPrompt, originalPrompt, repairPrompt, repairPrompt, repairPrompt],
   );
   assert.equal(Buffer.from(result.rawResponse).toString('utf8'), await fixture('notebooklm-story-playbook.json'));
+});
+
+test('repairs a schema-valid Story and Playbook answer that fails deterministic checks', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const invalidAnswer = await deterministicInvalidStoryPlaybookAnswer();
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.equal(calls.length, 3);
+  const repairPrompt = String(calls[2]?.args[3]);
+  assert.match(repairPrompt, /Deterministic findings:/);
+  assert.match(repairPrompt, /cross-format-consistency/);
+  assertCrossFormatRequirements(repairPrompt);
+  assert.deepEqual(calls[2]?.args.slice(-3), [
+    '--conversation-id', 'conversation_fixture_story_playbook', '--json',
+  ]);
+  assert.deepEqual(
+    (result.executionReport as { renderedPrompts: string[] }).renderedPrompts,
+    [String(calls[1]?.args[3]), repairPrompt],
+  );
+});
+
+test('rejects a repaired answer that remains deterministic-invalid without a fourth query', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const invalidAnswer = await deterministicInvalidStoryPlaybookAnswer();
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  await assert.rejects(
+    () => provider.execute(input('create_content')),
+    (error: unknown) => error instanceof Error
+      && error.message === 'notebooklm_content_invalid'
+      && 'needsHumanKind' in error
+      && error.needsHumanKind === 'quality',
+  );
+  assert.equal(calls.length, 3);
+});
+
+test('sanitizes deterministic findings without candidate values or source excerpts', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const candidateSecret = 'provider-candidate-secret-DO-NOT-PERSIST';
+  const sourceExcerpt = 'A defined next action lowers restart friction.';
+  const invalidAnswer = await mutateStoryPlaybookAnswer((answer) => {
+    const read = answer.payload.read as {
+      story: { blocks: Array<{ text: string }> };
+    };
+    read.story.blocks[0]!.text += ` Placeholder ${candidateSecret}`;
+  });
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const repairPrompt = String(calls[2]?.args[3]);
+  assert.match(repairPrompt, /\$\.deterministic\.placeholder:/);
+  assert.equal(repairPrompt.includes(candidateSecret), false);
+  assert.equal(repairPrompt.includes(sourceExcerpt), false);
+  assert.equal(renderedPromptArtifacts(result).some((prompt) => prompt.includes(candidateSecret)), false);
+  assert.equal(renderedPromptArtifacts(result).some((prompt) => prompt.includes(sourceExcerpt)), false);
 });
 
 test('does not expose an invalid enum secret in the semantic repair prompt or support artifacts', async () => {
@@ -961,6 +1035,15 @@ function malformedAnswerEnvelope(conversationId: string): string {
   return JSON.stringify({ conversation_id: conversationId, answer: 'not json' });
 }
 
+async function deterministicInvalidStoryPlaybookAnswer(): Promise<string> {
+  return mutateStoryPlaybookAnswer((answer) => {
+    const read = answer.payload.read as {
+      playbook: { action: string };
+    };
+    read.playbook.action = 'Choose a different valid action.';
+  });
+}
+
 type StoryPlaybookAnswer = {
   [key: string]: unknown;
   payload: Record<string, unknown> & {
@@ -1134,4 +1217,13 @@ function escapeRegExp(value: string): string {
 
 function countOccurrences(value: string, needle: string): number {
   return value.split(needle).length - 1;
+}
+
+function assertCrossFormatRequirements(prompt: string): void {
+  assert.match(prompt, /read\.story and read\.playbook must each contain the exact text of learning\.centralIdea\./);
+  assert.match(prompt, /read\.story and read\.playbook must each contain the exact text of learning\.oneLineToKeep\./);
+  assert.match(prompt, /read\.story and read\.playbook must each contain the exact text of learning\.action\.instruction\./);
+  assert.match(prompt, /read\.story and read\.playbook must each contain every learning\.terminology term exactly\./);
+  assert.match(prompt, /read\.playbook\.action must equal learning\.action\.instruction exactly\./);
+  assert.match(prompt, /Story and Playbook must remain distinct and must not be normalized duplicates\./);
 }

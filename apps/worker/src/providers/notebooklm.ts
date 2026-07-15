@@ -6,7 +6,12 @@ import {
   NOTEBOOKLM_RESEARCH_PROMPT_VERSION,
   renderNotebookLmResearchPrompt,
 } from '../prompts/notebooklm-research.v1.js';
-import type { EvidenceManifest, GroundedClaim } from '../checks/deterministic.js';
+import {
+  runDeterministicChecks,
+  type DeterministicFinding,
+  type EvidenceManifest,
+  type GroundedClaim,
+} from '../checks/deterministic.js';
 import type { VerifiedResearchEvidence } from '../checks/source-verifier.js';
 import {
   nugletLessonV1PayloadSchema,
@@ -31,6 +36,15 @@ export const DEFAULT_NOTEBOOKLM_TIMEOUT_MS = 180_000;
 export const NOTEBOOKLM_RECIPE_CREATE_PROMPT_VERSION = 'notebooklm-recipe-create.v1';
 const DEFAULT_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS = 60;
 const MAX_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS = 3_600;
+const STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS = [
+  'Cross-format requirements:',
+  '- read.story and read.playbook must each contain the exact text of learning.centralIdea.',
+  '- read.story and read.playbook must each contain the exact text of learning.oneLineToKeep.',
+  '- read.story and read.playbook must each contain the exact text of learning.action.instruction.',
+  '- read.story and read.playbook must each contain every learning.terminology term exactly.',
+  '- read.playbook.action must equal learning.action.instruction exactly.',
+  '- Story and Playbook must remain distinct and must not be normalized duplicates.',
+].join('\n');
 
 export interface PromptInputs {
   topic: string;
@@ -116,7 +130,7 @@ export class NotebookLmProvider implements ContentProvider {
     validateCitations(parsed.answer, input.action === 'create_content' ? context.evidence : undefined);
     if (recipeExecution) {
       const issues = storyPlaybookSemanticIssues(parsed.answer, context.evidence);
-      if (issues.length > 0) {
+      if (hasStoryPlaybookSemanticIssues(issues)) {
         const semanticRepairPrompt = renderStoryPlaybookSemanticRepairPrompt(issues);
         const semanticRepairResponse = await this.query(
           context.notebookId,
@@ -131,7 +145,7 @@ export class NotebookLmProvider implements ContentProvider {
           prompts: [...parsed.prompts, semanticRepairPrompt],
         };
         validateCitations(parsed.answer, context.evidence);
-        if (storyPlaybookSemanticIssues(parsed.answer, context.evidence).length > 0) {
+        if (hasStoryPlaybookSemanticIssues(storyPlaybookSemanticIssues(parsed.answer, context.evidence))) {
           throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
         }
       }
@@ -369,6 +383,7 @@ function renderRecipeCreatePrompt(
   };
   return renderPromptSections([
     'Return one response encoded as a strict JSON object with no markdown fences.',
+    STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS,
     `Named inputs:\n${JSON.stringify(promptInputs, null, 2)}`,
     `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)}`,
     ...recipes.map((recipe) => [
@@ -462,23 +477,85 @@ const SAFE_SEMANTIC_MESSAGES_BY_CODE: Readonly<Record<string, string>> = {
   custom: 'Value violates a contract relationship.',
 };
 
-function storyPlaybookSemanticIssues(answer: Record<string, unknown>, evidence: EvidenceManifest | undefined): string[] {
-  if (!evidence) return ['$.payload: Accepted research evidence is required.'];
-  const snapshotsBySource = new Map(evidence.sources.map((source) => [source.sourceId, source.snapshotArtifactId]));
-  const parsed = storyPlaybookDraftTargetSchema.safeParse(attachStoryPlaybookSnapshotArtifacts(answer, snapshotsBySource));
-  return parsed.success ? [] : safeSemanticIssues(parsed.error.issues);
+const SAFE_DETERMINISTIC_MESSAGES_BY_CODE: Readonly<Record<DeterministicFinding['code'], string>> = {
+  placeholder: 'Remove placeholders and internal metadata labels from learner-facing content.',
+  'duplicate-depth': 'Keep each learner depth distinct.',
+  'story-integrity': 'Include the required narrative arc and evidence-bound factual block.',
+  'playbook-structure': 'Include the required principle, steps, example, watch-outs, and shared action.',
+  'cross-format-consistency': 'Apply every cross-format requirement below while keeping Story and Playbook distinct.',
+  'challenge-shape': 'Return exactly three valid application questions.',
+  'citation-source': 'Bind every factual claim to accepted evidence.',
+  'citation-excerpt': 'Give every citation a non-empty excerpt.',
+  'content-shape': 'Supply every required learner-facing field.',
+  'claim-inventory': 'Supply at least one supported claim.',
+  'claim-coverage': 'Give every learner path and nested factual reference valid claim coverage.',
+};
+
+interface StoryPlaybookSemanticIssues {
+  validation: readonly string[];
+  deterministic: readonly string[];
 }
 
-function renderStoryPlaybookSemanticRepairPrompt(issues: readonly string[]): string {
+function storyPlaybookSemanticIssues(
+  answer: Record<string, unknown>,
+  evidence: EvidenceManifest | undefined,
+): StoryPlaybookSemanticIssues {
+  if (!evidence) {
+    return {
+      validation: ['$.payload: Accepted research evidence is required.'],
+      deterministic: [],
+    };
+  }
+  const snapshotsBySource = new Map(evidence.sources.map((source) => [source.sourceId, source.snapshotArtifactId]));
+  const parsed = storyPlaybookDraftTargetSchema.safeParse(attachStoryPlaybookSnapshotArtifacts(answer, snapshotsBySource));
+  if (!parsed.success) {
+    return {
+      validation: safeSemanticIssues(parsed.error.issues),
+      deterministic: [],
+    };
+  }
+  return {
+    validation: [],
+    deterministic: safeDeterministicIssues(runDeterministicChecks({
+      candidate: parsed.data,
+      evidence,
+    }).findings),
+  };
+}
+
+function hasStoryPlaybookSemanticIssues(issues: StoryPlaybookSemanticIssues): boolean {
+  return issues.validation.length > 0 || issues.deterministic.length > 0;
+}
+
+function renderStoryPlaybookSemanticRepairPrompt(issues: StoryPlaybookSemanticIssues): string {
   return [
     'The prior answer was structurally invalid. Preserve grounded meaning and accepted citations while correcting only the strict output contract.',
     'Return one strict JSON object with no markdown fences.',
     'Validation issues:',
-    ...issues.map((issue) => `- ${issue}`),
+    ...(issues.validation.length > 0 ? issues.validation : ['None.']).map((issue) => `- ${issue}`),
     'Exact required root envelope:',
     '{ kind: "nuglet.lesson.v1", schemaVersion: "1.1.0", payload: { ... } }',
+    'Deterministic findings:',
+    ...(issues.deterministic.length > 0 ? issues.deterministic : ['None.']).map((issue) => `- ${issue}`),
+    STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS,
     `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)}`,
   ].join('\n');
+}
+
+function safeDeterministicIssues(findings: readonly DeterministicFinding[]): string[] {
+  const rendered: string[] = [];
+  const seen = new Set<DeterministicFinding['code']>();
+  let renderedChars = 0;
+  for (const { code } of findings) {
+    if (seen.has(code) || rendered.length >= MAX_SEMANTIC_REPAIR_ISSUES) continue;
+    const line = `$.deterministic.${code}: ${SAFE_DETERMINISTIC_MESSAGES_BY_CODE[code]}`;
+    const nextChars = renderedChars + 2 + line.length + (rendered.length > 0 ? 1 : 0);
+    if (nextChars > MAX_SEMANTIC_REPAIR_ISSUE_CHARS) break;
+    seen.add(code);
+    rendered.push(line);
+    renderedChars = nextChars;
+  }
+  return rendered;
 }
 
 function safeSemanticIssues(issues: ReadonlyArray<{ code: string; path: readonly (string | number)[] }>): string[] {
