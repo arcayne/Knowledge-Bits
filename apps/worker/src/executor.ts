@@ -240,9 +240,12 @@ export class WorkerExecutor {
     const parsedBytes = canonicalJsonBytes(execution.parsedOutput);
     const parsedChecksum = checksum(parsedBytes);
     const supportArtifacts = execution.supportArtifacts ?? [];
-    const generationProvenance = supportArtifacts.length > 0
-      ? validateGenerationProvenance(job, provider, supportArtifacts)
-      : undefined;
+    const generationProvenance = validateGenerationProvenance(
+      job,
+      provider,
+      supportArtifacts,
+      carriesNugletGenerationPlan(job),
+    );
     const artifacts: ExecutionArtifact[] = [
       ...supportArtifacts
         .filter((artifact) => artifact.kind !== 'generation.execution.report')
@@ -251,10 +254,7 @@ export class WorkerExecutor {
           body: artifact.body,
           mediaType: artifact.mediaType,
           inputChecksum: artifact.inputChecksum,
-          provenance: {
-            ...sanitizeProvenance(artifact.provenance),
-            ...generationProvenance,
-          },
+          provenance: sanitizeProvenance(artifact.provenance),
         })),
       ...(execution.assets ?? []).map((asset) => ({
         kind: asset.kind,
@@ -339,31 +339,56 @@ function validateGenerationProvenance(
   job: JobClaim,
   provider: string,
   artifacts: readonly ProviderSupportArtifact[],
-): GenerationProvenance {
-  const recipeSnapshots = artifacts.filter(({ kind }) => kind === 'generation.recipe.snapshot');
-  const prompts = artifacts.filter(({ kind }) => kind === 'generation.prompt.rendered');
-  if (recipeSnapshots.length !== 1 || prompts.length !== 1) {
+  required: boolean,
+): Readonly<Record<string, unknown>> | undefined {
+  const evidenceArtifacts = artifacts.filter(({ kind }) => kind !== 'generation.execution.report');
+  if (evidenceArtifacts.length === 0) {
+    if (!required) return undefined;
     throw new GenerationProvenanceError('generation_provenance_missing');
   }
-
-  const provenance = artifacts.map(({ provenance: candidate }) => readGenerationProvenance(candidate));
-  const expected = provenance[0]!;
-  if (provenance.some((candidate) => !sameGenerationProvenance(candidate, expected))) {
-    throw new GenerationProvenanceError('generation_provenance_conflict');
-  }
   const executorProvenance = executorProvenanceFor(job, provider);
-  for (const { provenance: candidate } of artifacts) {
+  const groups = new Map<string, Array<{ artifact: ProviderSupportArtifact; provenance: GenerationProvenance }>>();
+  for (const artifact of evidenceArtifacts) {
+    const candidate = artifact.provenance;
     for (const [key, value] of Object.entries(executorProvenance)) {
       if (candidate[key] !== undefined && !sameValue(candidate[key], value)) {
         throw new GenerationProvenanceError('generation_provenance_conflict');
       }
     }
+    const provenance = readGenerationProvenance(candidate);
+    const key = [
+      provenance.recipeId,
+      provenance.recipeVersion,
+      provenance.recipeChecksum,
+      provenance.promptChecksum,
+    ].join('\0');
+    const group = groups.get(key) ?? [];
+    group.push({ artifact, provenance });
+    groups.set(key, group);
   }
-  if (expected.recipeChecksum !== prefixedChecksum(recipeSnapshots[0]!.body)
-    || expected.promptChecksum !== prefixedChecksum(prompts[0]!.body)) {
-    throw new GenerationProvenanceError('generation_provenance_checksum_mismatch');
+
+  const executions: GenerationProvenance[] = [];
+  for (const group of groups.values()) {
+    const recipeSnapshots = group.filter(({ artifact }) => artifact.kind === 'generation.recipe.snapshot');
+    const prompts = group.filter(({ artifact }) => artifact.kind === 'generation.prompt.rendered');
+    if (recipeSnapshots.length !== 1 || prompts.length !== 1) {
+      throw new GenerationProvenanceError('generation_provenance_missing');
+    }
+    const expected = group[0]!.provenance;
+    if (group.some(({ provenance }) => !sameGenerationProvenance(provenance, expected))) {
+      throw new GenerationProvenanceError('generation_provenance_conflict');
+    }
+    if (required && !recipeIsBoundToJobPlan(job, expected)) {
+      throw new GenerationProvenanceError('generation_provenance_recipe_mismatch');
+    }
+    if (expected.recipeChecksum !== prefixedChecksum(recipeSnapshots[0]!.artifact.body)
+      || expected.promptChecksum !== prefixedChecksum(prompts[0]!.artifact.body)) {
+      throw new GenerationProvenanceError('generation_provenance_checksum_mismatch');
+    }
+    executions.push(expected);
   }
-  return expected;
+  if (executions.length === 1) return executions[0];
+  return { generationExecutions: executions };
 }
 
 function readGenerationProvenance(value: Readonly<Record<string, unknown>>): GenerationProvenance {
@@ -463,15 +488,31 @@ function redactValue(value: unknown, secrets: readonly string[], seen: WeakSet<o
 }
 
 function redactString(value: string, secrets: readonly string[]): string {
-  const withoutEnvironmentSecrets = secrets.reduce((safe, secret) => safe.replaceAll(secret, '[REDACTED]'), value);
+  const safeUrls: string[] = [];
+  const withoutCredentialUrls = value.replace(URL_PATTERN, (candidate) => {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.username || parsed.password) return '[REDACTED_URL]';
+      const token = `__SAFE_URL_${safeUrls.length}__`;
+      safeUrls.push(candidate);
+      return token;
+    } catch {
+      return candidate;
+    }
+  });
+  const withoutEnvironmentSecrets = secrets.reduce(
+    (safe, secret) => safe.replaceAll(secret, '[REDACTED]'),
+    withoutCredentialUrls,
+  );
   const withoutCredentialLiterals = withoutEnvironmentSecrets
     .replace(/\b(?:bearer|basic|token)\s+[A-Za-z0-9._~+\/=:-]{8,}\b/gi, '[REDACTED]')
     .replace(/\b(?:sk|pk|rk|api)[_-][A-Za-z0-9_-]{8,}\b/gi, '[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
     .replace(/\b(?:api.?key|credential|password|secret|token)\s*[=:]\s*[^\s,;]+/gi, '[REDACTED]');
-  return withoutCredentialLiterals
+  const withoutPaths = withoutCredentialLiterals
     .replace(/file:\/\/[^\s"'`<>{}\[\]()]+/gi, '[REDACTED_PATH]')
-    .replace(/(^|[\s([{"'=,;:])(?:~[\\/][^\s"'`<>{}\[\]()]+|[A-Za-z]:[\\/][^\s"'`<>{}\[\]()]+|\/(?!\/)[^\s"'`<>{}\[\]()]+)/g, '$1[REDACTED_PATH]');
+    .replace(/~[\\/][^\s"'`<>{}\[\]()]+|[A-Za-z]:[\\/][^\s"'`<>{}\[\]()]+|(?<![A-Za-z0-9._-])\/(?!\/)[^\s"'`<>{}\[\]()]+/g, '[REDACTED_PATH]');
+  return safeUrls.reduce((safe, url, index) => safe.replaceAll(`__SAFE_URL_${index}__`, url), withoutPaths);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -479,6 +520,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const SENSITIVE_KEY = /(?:access.?key|api.?key|authorization|auth(?:entication)?|bearer|client.?secret|connection.?string|cookie|credential|dsn|keyfile|oauth|pass(?:word|phrase)|private.?key|secret|session|signature|signing.?key|token)/i;
+const URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>{}\[\]()]+/gi;
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY.test(key);
@@ -501,6 +543,24 @@ type GenerationProvenance = Readonly<Record<string, unknown>> & {
   model: string;
   referenceChecksums: readonly string[];
 };
+
+function carriesNugletGenerationPlan(job: JobClaim): boolean {
+  const brief = job.input.brief;
+  if (!isRecord(brief)) return false;
+  const plan = brief.generationPlan;
+  return isRecord(plan) && plan.contentKind === 'nuglet.lesson.v1';
+}
+
+function recipeIsBoundToJobPlan(job: JobClaim, provenance: GenerationProvenance): boolean {
+  const brief = job.input.brief;
+  if (!isRecord(brief) || !isRecord(brief.generationPlan) || !isRecord(brief.generationPlan.recipes)) return false;
+  return Object.values(brief.generationPlan.recipes).some((binding) => (
+    isRecord(binding)
+    && binding.id === provenance.recipeId
+    && binding.version === provenance.recipeVersion
+    && binding.checksum === provenance.recipeChecksum
+  ));
+}
 
 interface ExecutionArtifact {
   kind: string;

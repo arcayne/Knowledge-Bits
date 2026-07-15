@@ -25,6 +25,7 @@ import {
   type WorkerProvider,
 } from './providers/types.js';
 import { FileRecipeRegistry } from './recipes/file-registry.js';
+import type { ResolvedNugletRecipes } from './recipes/types.js';
 
 type NotebookContextResolver = (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
 type PiContextResolver = (input: ProviderExecutionInput) => Promise<{
@@ -32,16 +33,18 @@ type PiContextResolver = (input: ProviderExecutionInput) => Promise<{
   evidence: EvidenceManifest;
   rubric: string;
   generationPlan?: NugletGenerationPlan;
+  resolvedRecipes?: Partial<ResolvedNugletRecipes>;
 }>;
 type MediaContextResolver = (input: ProviderExecutionInput) => Promise<{
   passedCheck: boolean;
   content: ContentCandidate;
   contentChecksum: string;
   generationPlan?: NugletGenerationPlan;
-}>;
+  resolvedRecipes?: Partial<ResolvedNugletRecipes>;
+}>; 
 
 export interface TrustedRecipeBindingVerifier {
-  verify(plan: NugletGenerationPlan): boolean | Promise<boolean>;
+  resolvePlan(plan: NugletGenerationPlan): ResolvedNugletRecipes | Promise<ResolvedNugletRecipes>;
 }
 
 export interface ProviderRuntime {
@@ -85,12 +88,14 @@ export function composeWorkerProviders(options: {
       ? new PiEditorialProvider({
         client: runtime.piClient,
         context: trustedContextResolver(runtime.piContext, runtime.recipeBindingVerifier),
+        model: configuredValue(env, 'PI_MODEL'),
       })
       : new UnavailableProvider('pi', ['check_content']),
     runtime.mediaClient && runtime.mediaContext
       ? new MediaProviderAdapter({
         client: runtime.mediaClient,
         context: trustedContextResolver(runtime.mediaContext, runtime.recipeBindingVerifier),
+        model: configuredValue(env, 'MEDIA_GENERATION_MODEL') ?? 'media-command',
       })
       : new UnavailableProvider('media', ['produce_assets'], runtime.configurationIssues?.media),
   ];
@@ -151,30 +156,30 @@ export class LeaseScopedJobContextResolver {
 
   async notebook(input: ProviderExecutionInput): Promise<NotebookLmContext> {
     const brief = jobBrief(input);
-    const generationPlan = await validatedGenerationPlan(brief, this.recipeBindingVerifier);
+    const generation = await validatedGenerationPlan(brief, this.recipeBindingVerifier);
     const notebookId = notebookIdFromJob(input);
     const research = input.action === 'create_content' ? await this.verifiedResearch(input) : undefined;
     return {
       notebookId,
       sourceUrls: research?.sourceUrls ?? stringArray(brief.sourceUrls),
       topic: stringValue(brief.title) ?? stringValue(brief.topic) ?? stringValue(brief.objective) ?? 'Knowledge Bits lesson',
-      ...(generationPlan ? { generationPlan } : {}),
+      ...(generation ? { generationPlan: generation.plan, resolvedRecipes: generation.recipes } : {}),
       ...(research ? { evidence: research.evidence } : {}),
     };
   }
 
   async pi(input: ProviderExecutionInput) {
-    const generationPlan = await validatedGenerationPlan(jobBrief(input), this.recipeBindingVerifier);
+    const generation = await validatedGenerationPlan(jobBrief(input), this.recipeBindingVerifier);
     return {
       candidate: await this.content(input),
       evidence: await this.evidence(input),
       rubric: 'Reject unsupported claims, harmful guidance, source leakage, generic filler, and unusable lesson structure.',
-      ...(generationPlan ? { generationPlan } : {}),
+      ...(generation ? { generationPlan: generation.plan, resolvedRecipes: generation.recipes } : {}),
     };
   }
 
   async media(input: ProviderExecutionInput) {
-    const generationPlan = await validatedGenerationPlan(jobBrief(input), this.recipeBindingVerifier);
+    const generation = await validatedGenerationPlan(jobBrief(input), this.recipeBindingVerifier);
     const content = await this.content(input);
     const qa = knowledgeBitsQaSchema.parse(await this.readJsonDependency(input, 'check_content', 'parsed_output'));
     const contentChecksum = calculateContentChecksum(content);
@@ -184,7 +189,7 @@ export class LeaseScopedJobContextResolver {
         && !qa.editorial.findings.some((finding) => finding.blocking),
       content,
       contentChecksum,
-      ...(generationPlan ? { generationPlan } : {}),
+      ...(generation ? { generationPlan: generation.plan, resolvedRecipes: generation.recipes } : {}),
     };
   }
 
@@ -276,6 +281,7 @@ export class LocalPiSdkClient implements PiSdkClient {
     candidate: ContentCandidate;
     evidence: EvidenceManifest;
     rubric: string;
+    renderedPrompt: string;
     idempotencyKey: string;
     signal: AbortSignal;
   }): Promise<unknown> {
@@ -286,7 +292,7 @@ export class LocalPiSdkClient implements PiSdkClient {
         provider: this.options.provider,
         model: this.options.model,
         systemPrompt: 'Return one strict JSON object with summary and findings. Each finding must be exactly {code: string, severity: critical|major|minor, message: string}. Use an empty findings array when there is no issue. Do not rewrite content or request tools.',
-        userPrompt: JSON.stringify({ candidate: input.candidate, evidence: input.evidence, rubric: input.rubric }),
+        userPrompt: input.renderedPrompt,
         sessionId: input.idempotencyKey,
         signal,
       });
@@ -346,13 +352,14 @@ export class LocalMediaCommandClient implements MediaClient {
     content: ContentCandidate;
     inputChecksum: string;
     kinds: readonly MediaKind[];
+    renderedPrompt: string;
     idempotencyKey: string;
     signal: AbortSignal;
   }) {
     const result = await this.options.process.run({
       command: this.options.command,
       args: this.options.args ?? [],
-      stdin: JSON.stringify(input),
+      stdin: input.renderedPrompt,
       timeoutMs: this.options.timeoutMs ?? 120_000,
       signal: input.signal,
     });
@@ -504,7 +511,7 @@ function jobBrief(input: ProviderExecutionInput): Record<string, unknown> {
 async function validatedGenerationPlan(
   brief: Record<string, unknown>,
   verifier: TrustedRecipeBindingVerifier | undefined,
-): Promise<NugletGenerationPlan | undefined> {
+): Promise<{ plan: NugletGenerationPlan; recipes: ResolvedNugletRecipes } | undefined> {
   const value = brief.generationPlan;
   if (value === undefined) {
     if (brief.contentKind === 'nuglet.lesson.v1') {
@@ -522,26 +529,39 @@ async function validatedGenerationPlan(
   const parsed = nugletGenerationPlanSchema.safeParse(value);
   if (!parsed.success) throw new ProviderNeedsHumanError('generation_plan_invalid');
   if (!verifier) throw new ProviderNeedsHumanError('generation_recipe_verifier_unconfigured');
-  let matches: boolean;
+  let recipes: ResolvedNugletRecipes;
   try {
-    matches = await verifier.verify(parsed.data);
+    recipes = await verifier.resolvePlan(parsed.data);
   } catch (error) {
     if (error instanceof ProviderNeedsHumanError) throw error;
     throw new ProviderNeedsHumanError('generation_recipe_verification_failed');
   }
-  if (!matches) throw new ProviderNeedsHumanError('generation_recipe_binding_mismatch');
-  return parsed.data;
+  if (!resolvedRecipesMatchPlan(parsed.data, recipes)) {
+    throw new ProviderNeedsHumanError('generation_recipe_binding_mismatch');
+  }
+  return { plan: parsed.data, recipes };
 }
 
-function trustedContextResolver<T extends { generationPlan?: NugletGenerationPlan }>(
+function trustedContextResolver<T extends { generationPlan?: NugletGenerationPlan; resolvedRecipes?: Partial<ResolvedNugletRecipes> }>(
   resolver: (input: ProviderExecutionInput) => Promise<T>,
   verifier: TrustedRecipeBindingVerifier | undefined,
 ): (input: ProviderExecutionInput) => Promise<T> {
   return async (input) => {
-    const generationPlan = await validatedGenerationPlan(jobBrief(input), verifier);
+    const generation = await validatedGenerationPlan(jobBrief(input), verifier);
     const context = await resolver(input);
-    return generationPlan ? { ...context, generationPlan } : context;
+    return generation
+      ? { ...context, generationPlan: generation.plan, resolvedRecipes: generation.recipes }
+      : context;
   };
+}
+
+function resolvedRecipesMatchPlan(plan: NugletGenerationPlan, recipes: ResolvedNugletRecipes): boolean {
+  return Object.entries(plan.recipes).every(([role, binding]) => {
+    const recipe = recipes[role as keyof ResolvedNugletRecipes];
+    return recipe?.id === binding.id
+      && recipe.version === binding.version
+      && recipe.checksum === binding.checksum;
+  });
 }
 
 function parseMediaAsset(value: unknown): {

@@ -303,6 +303,101 @@ test('uploads immutable recipe and prompt support artifacts during a non-media s
   }
 });
 
+test('rejects omitted or empty generation support artifacts for a Nuglet generation job', async (context) => {
+  for (const supportArtifacts of [undefined, []] as const) {
+    await context.test(supportArtifacts === undefined ? 'omitted support artifacts' : 'empty support artifacts', async () => {
+      const client = new FakeEngineClient();
+      const provider = providerFor('collect_sources', {
+        ...successOutput(),
+        ...(supportArtifacts === undefined ? {} : { supportArtifacts }),
+      });
+      const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+      await executor.execute(nugletJob('research'));
+
+      assert.equal(client.completedArtifacts.length, 0);
+      assert.equal(client.results[0]?.result.state, 'needs_human');
+      assert.equal(client.results[0]?.result.error, 'generation_provenance_missing');
+    });
+  }
+});
+
+test('accepts exactly one immutable artifact pair for each material recipe prompt execution', async () => {
+  const client = new FakeEngineClient();
+  const firstRecipe = Buffer.from('{"id":"nuglet.hero","version":"1.0.0"}\n');
+  const firstPrompt = Buffer.from('Create the hero.');
+  const secondRecipe = Buffer.from('{"id":"nuglet.visual.infographic","version":"1.0.0"}\n');
+  const secondPrompt = Buffer.from('Create the infographic.');
+  const pairs = [[firstRecipe, firstPrompt], [secondRecipe, secondPrompt]] as const;
+  const provider = providerFor('produce_assets', {
+    ...successOutput(),
+    supportArtifacts: pairs.flatMap(([recipeBody, promptBody]) => {
+      const provenance = generationProvenance(recipeBody, promptBody);
+      return [{
+        kind: 'generation.recipe.snapshot' as const,
+        mediaType: 'application/json' as const,
+        body: recipeBody,
+        inputChecksum: null,
+        provenance,
+      }, {
+        kind: 'generation.prompt.rendered' as const,
+        mediaType: 'text/plain' as const,
+        body: promptBody,
+        inputChecksum: checksum(recipeBody),
+        provenance,
+      }];
+    }),
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(nugletJob('produce_assets', {
+    hero: prefixedChecksum(firstRecipe),
+    infographic: prefixedChecksum(secondRecipe),
+  }));
+
+  assert.equal(client.results[0]?.result.state, 'done');
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+    'raw_response',
+    'parsed_output',
+    'generation.execution.report',
+  ]);
+  const report = client.completedArtifacts.at(-1)?.provenance.generationExecutions;
+  assert.equal(Array.isArray(report) ? report.length : 0, 2);
+});
+
+test('rejects valid artifact bytes when their recipe identity is not bound to the claimed plan', async () => {
+  const client = new FakeEngineClient();
+  const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Create the Story.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const provider = providerFor('collect_sources', {
+    ...successOutput(),
+    supportArtifacts: [{
+      kind: 'generation.recipe.snapshot',
+      mediaType: 'application/json',
+      body: recipeBody,
+      inputChecksum: null,
+      provenance,
+    }, {
+      kind: 'generation.prompt.rendered',
+      mediaType: 'text/plain',
+      body: promptBody,
+      inputChecksum: checksum(recipeBody),
+      provenance,
+    }],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(nugletJob('research'));
+
+  assert.equal(client.completedArtifacts.length, 0);
+  assert.equal(client.results[0]?.result.error, 'generation_provenance_recipe_mismatch');
+});
+
 test('rejects missing, conflicting, and body-mismatched generation provenance before uploading artifacts', async (context) => {
   const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
   const promptBody = Buffer.from('Create the Story.');
@@ -445,7 +540,11 @@ test('removes credentials, path fields, and embedded absolute paths from generat
         cwd: '/srv/knowledge-bits',
         loadedFrom: '/opt/worker/config.json',
         filename: '/workspace/recipe.json',
-        error: `Could not load:/mnt/recipes/manifest.json with token=${credential}`,
+        error: [
+          `Could not load:/mnt/recipes/manifest.json with token=${credential}`,
+          'connect postgresql://worker:supersecret@db.internal/app',
+          'open `/srv/recipes/manifest.json` or </opt/worker/config.json>',
+        ].join('; '),
         safeSetting: 'kept',
       },
     });
@@ -467,6 +566,10 @@ test('removes credentials, path fields, and embedded absolute paths from generat
     assert.equal(report.includes('/opt/worker/config.json'), false);
     assert.equal(report.includes('/workspace/recipe.json'), false);
     assert.equal(report.includes('/mnt/recipes/manifest.json'), false);
+    assert.equal(report.includes('supersecret'), false);
+    assert.equal(report.includes('postgresql://worker:'), false);
+    assert.equal(report.includes('`/srv/recipes/manifest.json`'), false);
+    assert.equal(report.includes('</opt/worker/config.json>'), false);
     assert.equal(report.includes(credential), false);
     assert.match(report, /safeSetting/);
     const recipeProvenance = JSON.stringify(client.completedArtifacts.find(
@@ -632,6 +735,50 @@ function job(
   };
 }
 
+function nugletJob(
+  stage: JobClaim['stage'],
+  checksums: Partial<Record<
+    'story' | 'playbook' | 'challenge' | 'infographic' | 'audioBrief' | 'audioDiscussion' | 'hero' | 'editorialQa',
+    string
+  >> = {},
+): JobClaim {
+  const claimed = job(stage);
+  const recipe = (role: keyof typeof checksums, id: string) => ({
+    id,
+    version: '1.0.0',
+    checksum: checksums[role] ?? `sha256:${'a'.repeat(64)}`,
+  });
+  return {
+    ...claimed,
+    input: {
+      ...claimed.input,
+      brief: {
+        generationPlan: {
+          contentKind: 'nuglet.lesson.v1',
+          schemaVersion: '1.1.0',
+          recipes: {
+            story: recipe('story', 'nuglet.lesson.story'),
+            playbook: recipe('playbook', 'nuglet.lesson.playbook'),
+            challenge: recipe('challenge', 'nuglet.challenge'),
+            infographic: recipe('infographic', 'nuglet.visual.infographic'),
+            audioBrief: recipe('audioBrief', 'nuglet.audio.brief'),
+            audioDiscussion: recipe('audioDiscussion', 'nuglet.audio.discussion'),
+            hero: recipe('hero', 'nuglet.hero'),
+            editorialQa: recipe('editorialQa', 'nuglet.qa.editorial'),
+          },
+          heroDirection: {
+            concept: 'A clear path',
+            metaphor: 'One marked step',
+            compositionFamily: 'asymmetrical-story',
+            mustInclude: ['one focal object'],
+            mustAvoid: ['rigid symmetry'],
+          },
+        },
+      },
+    },
+  };
+}
+
 function successOutput(): Extract<ProviderExecution, { kind: 'success' }> {
   return {
     kind: 'success',
@@ -768,9 +915,10 @@ function prefixedChecksum(bytes: Uint8Array): string {
 }
 
 function generationProvenance(recipeBody: Uint8Array, promptBody: Uint8Array) {
+  const recipe = JSON.parse(Buffer.from(recipeBody).toString('utf8')) as { id?: unknown; version?: unknown };
   return {
-    recipeId: 'nuglet.lesson.story',
-    recipeVersion: '1.0.0',
+    recipeId: typeof recipe.id === 'string' ? recipe.id : 'nuglet.lesson.story',
+    recipeVersion: typeof recipe.version === 'string' ? recipe.version : '1.0.0',
     recipeChecksum: prefixedChecksum(recipeBody),
     promptChecksum: prefixedChecksum(promptBody),
     model: 'fixture-model',

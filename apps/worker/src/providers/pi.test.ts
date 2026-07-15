@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { PiEditorialProvider, type PiSdkClient } from './pi.js';
 import type { ProviderExecutionInput } from './types.js';
+import { canonicalJsonBytes } from '../recipes/file-registry.js';
 
 test('Pi receives only review context and execution controls and records editorial provenance', async () => {
   let request: Record<string, unknown> | undefined;
@@ -20,12 +22,53 @@ test('Pi receives only review context and execution controls and records editori
   const result = await provider.execute(input());
 
   assert.equal(result.kind, 'success');
-  assert.deepEqual(Object.keys(request ?? {}).sort(), ['candidate', 'evidence', 'idempotencyKey', 'rubric', 'signal']);
+  assert.deepEqual(Object.keys(request ?? {}).sort(), [
+    'candidate', 'evidence', 'idempotencyKey', 'renderedPrompt', 'rubric', 'signal',
+  ]);
   if (result.kind !== 'success') return;
   const report = result.executionReport as { promptVersion: string; provider: string; renderedPrompt: string };
   assert.equal(report.promptVersion, 'editorial-check.v1');
   assert.equal(report.provider, 'pi');
   assert.match(report.renderedPrompt, /Check source faithfulness/);
+});
+
+test('sends the trusted editorial recipe in the exact Pi prompt and emits one immutable artifact pair', async () => {
+  let request: Record<string, unknown> | undefined;
+  const editorialRecipe = resolvedRecipe('nuglet.qa.editorial', {
+    id: 'nuglet.qa.editorial',
+    version: '1.0.0',
+    status: 'approved',
+    rubric: ['Reject unsupported claims.'],
+  });
+  const provider = new PiEditorialProvider({
+    model: 'pi-test-model',
+    client: {
+      async check(input) {
+        request = input as unknown as Record<string, unknown>;
+        return JSON.parse(await readFile(new URL('./fixtures/pi-editorial.json', import.meta.url), 'utf8'));
+      },
+    },
+    context: async () => ({
+      candidate,
+      evidence,
+      rubric: 'Check source faithfulness and practical value.',
+      generationPlan: {} as never,
+      resolvedRecipes: { editorialQa: editorialRecipe },
+    }),
+  });
+
+  const result = await provider.execute(input());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const renderedPrompt = String(request?.renderedPrompt);
+  assert.match(renderedPrompt, /Reject unsupported claims/);
+  assert.deepEqual(result.supportArtifacts?.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+  ]);
+  assert.deepEqual(result.supportArtifacts?.[0]?.body, editorialRecipe.canonicalBytes);
+  assert.equal(Buffer.from(result.supportArtifacts?.[1]?.body ?? []).toString('utf8'), renderedPrompt);
 });
 
 test('Pi blocks critical and unsupported-claim findings without a rewrite or scheduling interface', async () => {
@@ -104,5 +147,16 @@ function input(): ProviderExecutionInput {
       input: { brief: {}, dependencies: [] },
     },
     signal: new AbortController().signal,
+  };
+}
+
+function resolvedRecipe(id: string, value: Record<string, unknown>) {
+  const canonicalBytes = canonicalJsonBytes(value);
+  return {
+    id,
+    version: '1.0.0',
+    checksum: `sha256:${createHash('sha256').update(canonicalBytes).digest('hex')}`,
+    canonicalBytes,
+    value,
   };
 }

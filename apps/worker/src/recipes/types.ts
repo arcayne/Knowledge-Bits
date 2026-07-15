@@ -15,7 +15,14 @@ export interface ResolvedRecipe {
   value: Readonly<Record<string, unknown>>;
 }
 
+export type NugletRecipeRole = keyof NugletGenerationPlan['recipes'];
+
+export type ResolvedNugletRecipes = Readonly<{
+  [Role in NugletRecipeRole]: ResolvedRecipe;
+}>;
+
 export interface RecipeRegistry {
   resolve(binding: RecipeBinding): ResolvedRecipe;
+  resolvePlan(plan: NugletGenerationPlan): ResolvedNugletRecipes;
   verify(plan: NugletGenerationPlan): boolean;
 }

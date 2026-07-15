@@ -13,6 +13,7 @@ import {
   type TrustedRecipeBindingVerifier,
 } from './runtime.js';
 import type { WorkerEngineClient } from './engine-client.js';
+import type { ResolvedNugletRecipes } from './recipes/types.js';
 
 test('uses fixtures only when fixture mode is explicitly selected', () => {
   const production = composeWorkerProviders({ env: {} });
@@ -200,6 +201,9 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   assert.deepEqual(notebook.generationPlan, generationPlan);
   assert.deepEqual(pi.generationPlan, generationPlan);
   assert.deepEqual(media.generationPlan, generationPlan);
+  assert.equal(notebook.resolvedRecipes?.story?.id, generationPlan.recipes.story.id);
+  assert.equal(pi.resolvedRecipes?.editorialQa?.id, generationPlan.recipes.editorialQa.id);
+  assert.equal(media.resolvedRecipes?.hero?.id, generationPlan.recipes.hero.id);
 });
 
 test('rejects missing or invalid Nuglet generation plans before reading provider dependencies', async () => {
@@ -331,7 +335,14 @@ test('executes editorial inference through the local Pi SDK adapter with an abor
     },
   });
   const signal = new AbortController().signal;
-  const result = await client.check({ candidate, evidence, rubric: 'Check it.', idempotencyKey: 'stable-key', signal });
+  const result = await client.check({
+    candidate,
+    evidence,
+    rubric: 'Check it.',
+    renderedPrompt: 'Rendered editorial prompt',
+    idempotencyKey: 'stable-key',
+    signal,
+  });
 
   assert.deepEqual(result, { summary: 'Ready.', findings: [] });
   assert.equal(observed?.sessionId, 'stable-key');
@@ -361,6 +372,12 @@ test('executes media generation through one bounded local command adapter', asyn
     content: candidate,
     inputChecksum,
     kinds: ['hero'],
+    renderedPrompt: JSON.stringify({
+      content: candidate,
+      inputChecksum,
+      kinds: ['hero'],
+      idempotencyKey: 'stable-media-key',
+    }),
     idempotencyKey: 'stable-media-key',
     signal: new AbortController().signal,
   });
@@ -484,13 +501,21 @@ function contextClient(bodies: Map<string, Uint8Array>): WorkerEngineClient {
 }
 
 function acceptingRecipeVerifier(): TrustedRecipeBindingVerifier {
-  return { verify: () => true };
+  return { resolvePlan: (plan) => resolvedRecipesFor(plan) };
 }
 
 function exactRecipeVerifier(trusted: typeof generationPlan): TrustedRecipeBindingVerifier {
   return {
-    verify(candidatePlan) {
-      return JSON.stringify(candidatePlan.recipes) === JSON.stringify(trusted.recipes);
+    resolvePlan() {
+      return resolvedRecipesFor(trusted);
     },
   };
+}
+
+function resolvedRecipesFor(plan: typeof generationPlan) {
+  return Object.fromEntries(Object.entries(plan.recipes).map(([role, binding]) => [role, {
+    ...binding,
+    canonicalBytes: Buffer.from(JSON.stringify(binding)),
+    value: binding,
+  }])) as unknown as ResolvedNugletRecipes;
 }

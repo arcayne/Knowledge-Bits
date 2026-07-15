@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { NotebookLmProvider, type NotebookLmProcess } from './notebooklm.js';
 import type { ProviderExecutionInput } from './types.js';
+import { canonicalJsonBytes } from '../recipes/file-registry.js';
 
 const sourceId = '11111111-1111-4111-8111-111111111111';
 
@@ -49,6 +51,43 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
   const output = result.parsedOutput as { acceptedSources: Array<{ sourceId: string }> };
   assert.equal(output.acceptedSources[0]?.sourceId, sourceId);
   assert.equal(result.assets?.[0]?.kind, 'source_snapshot');
+});
+
+test('sends trusted recipe bytes in the exact NotebookLM prompt and emits one immutable artifact pair', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const storyRecipe = resolvedRecipe('nuglet.lesson.story', {
+    id: 'nuglet.lesson.story',
+    version: '1.0.0',
+    status: 'approved',
+    instructions: ['Keep the research grounded.'],
+  });
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: 'returning to focused work',
+      generationPlan: generationPlanFor(storyRecipe),
+      resolvedRecipes: { story: storyRecipe },
+    }),
+  });
+
+  const result = await provider.execute(input('collect_sources'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const prompt = String(calls[1]?.args[3]);
+  assert.match(prompt, /Keep the research grounded/);
+  assert.deepEqual(result.supportArtifacts?.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+  ]);
+  assert.deepEqual(result.supportArtifacts?.[0]?.body, storyRecipe.canonicalBytes);
+  assert.equal(Buffer.from(result.supportArtifacts?.[1]?.body ?? []).toString('utf8'), prompt);
 });
 
 test('accepts the NotebookLM CLI snake_case envelope and verifies run sources when citations have no URLs', async () => {
@@ -362,3 +401,39 @@ const fakeSourceVerifier = {
     };
   },
 };
+
+function resolvedRecipe(id: string, value: Record<string, unknown>) {
+  const canonicalBytes = canonicalJsonBytes(value);
+  return {
+    id,
+    version: '1.0.0',
+    checksum: `sha256:${createHash('sha256').update(canonicalBytes).digest('hex')}`,
+    canonicalBytes,
+    value,
+  };
+}
+
+function generationPlanFor(story: ReturnType<typeof resolvedRecipe>) {
+  const binding = (id: string) => ({ id, version: '1.0.0', checksum: story.checksum });
+  return {
+    contentKind: 'nuglet.lesson.v1' as const,
+    schemaVersion: '1.1.0' as const,
+    recipes: {
+      story: { id: 'nuglet.lesson.story' as const, version: '1.0.0', checksum: story.checksum },
+      playbook: binding('nuglet.lesson.playbook'),
+      challenge: binding('nuglet.challenge'),
+      infographic: binding('nuglet.visual.infographic'),
+      audioBrief: binding('nuglet.audio.brief'),
+      audioDiscussion: binding('nuglet.audio.discussion'),
+      hero: binding('nuglet.hero'),
+      editorialQa: binding('nuglet.qa.editorial'),
+    },
+    heroDirection: {
+      concept: 'A clear path',
+      metaphor: 'One marked step',
+      compositionFamily: 'asymmetrical-story' as const,
+      mustInclude: ['one focal object'],
+      mustAvoid: ['rigid symmetry'],
+    },
+  };
+}

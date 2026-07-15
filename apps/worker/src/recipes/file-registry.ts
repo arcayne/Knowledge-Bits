@@ -4,7 +4,13 @@ import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
 
-import type { RecipeBinding, RecipeRegistry, ResolvedRecipe } from './types.js';
+import type {
+  NugletRecipeRole,
+  RecipeBinding,
+  RecipeRegistry,
+  ResolvedNugletRecipes,
+  ResolvedRecipe,
+} from './types.js';
 
 interface RecipeManifestEntry {
   id: string;
@@ -68,14 +74,19 @@ export class FileRecipeRegistry implements RecipeRegistry {
 
   verify(plan: NugletGenerationPlan): boolean {
     try {
-      return Object.values(plan.recipes).every((binding) => {
-        this.resolve({ contentKind: plan.contentKind, ...binding });
-        return true;
-      });
+      this.resolvePlan(plan);
+      return true;
     } catch (error) {
       if (error instanceof RecipeRegistryError) return false;
       throw error;
     }
+  }
+
+  resolvePlan(plan: NugletGenerationPlan): ResolvedNugletRecipes {
+    return Object.fromEntries(Object.entries(plan.recipes).map(([role, binding]) => [
+      role,
+      this.resolve({ contentKind: plan.contentKind, ...binding }),
+    ])) as ResolvedNugletRecipes & Record<NugletRecipeRole, ResolvedRecipe>;
   }
 }
 
