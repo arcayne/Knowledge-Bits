@@ -589,9 +589,17 @@ test('removes credentials, path fields, and embedded absolute paths from generat
           'https://api.example.test/run?token=query-credential-12345',
           'https://api.example.test/run#access_token=fragment-credential-12345',
           'https://worker:query-credential-12345@api.example.test/run',
+          'https://worker:ipv6-password@[2001:db8::1]/run',
+          'https://api.example.test/run?value=sk_live_query%5Fcredential_12345',
+          'https://api.example.test/run#value=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturepart',
           'file:///Users/name/My%20Project/private.json',
+          'file:///Users/name/My (Secret Project) [draft]/private.json',
           'open "\\\\server\\share\\My Project\\private.json"',
           'open <\\\\?\\C:\\Build Output\\private.json>',
+          'open [\\\\server\\share\\My (Secret) [draft]\\private.json]',
+          'open <\\\\?\\C:\\Build Output\\My (Secret) [draft]\\private.json>',
+          'open "D:\\Build Output\\My (Secret) [draft]\\private.json"',
+          'open C:\\Build\\My(Secret)[draft]\\private.json',
         ],
         safeSetting: 'kept',
       },
@@ -625,9 +633,17 @@ test('removes credentials, path fields, and embedded absolute paths from generat
     assert.equal(report.includes(credential), false);
     assert.equal(report.includes('query-credential-12345'), false);
     assert.equal(report.includes('fragment-credential-12345'), false);
+    assert.equal(report.includes('ipv6-password'), false);
+    assert.equal(report.includes('2001:db8::1'), false);
+    assert.equal(report.includes('sk_live_query%5Fcredential_12345'), false);
+    assert.equal(report.includes('sk_live_query_credential_12345'), false);
+    assert.equal(report.includes('eyJhbGciOiJIUzI1NiJ9'), false);
     assert.equal(report.includes('My%20Project/private.json'), false);
+    assert.equal(report.includes('Secret Project'), false);
     assert.equal(report.includes('server\\share\\My Project\\private.json'), false);
     assert.equal(report.includes('Build Output\\private.json'), false);
+    assert.equal(report.includes('My (Secret) [draft]\\private.json'), false);
+    assert.equal(report.includes('Build\\My(Secret)[draft]\\private.json'), false);
     assert.match(report, /endpoint/);
     assert.match(report, /safeSetting/);
     const recipeProvenance = JSON.stringify(client.completedArtifacts.find(

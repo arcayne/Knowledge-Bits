@@ -4,6 +4,36 @@
 
 Implemented file-backed Nuglet recipe verification and immutable generation provenance without activating product-specific recipe semantics. The worker resolves trusted recipe bindings by canonical checksum, normalizes rendered prompt bytes, keeps execution evidence separate from learner media, sanitizes reports and provenance, and uploads the three versioned generation artifact kinds under the active worker lease when a provider returns them.
 
+## Fifth Repair Follow-up
+
+Resolved the remaining Important redaction finding with a fail-closed report sanitizer.
+
+### Changes
+
+- Removed URL shielding and restoration. Execution reports now redact every hierarchical absolute URL before credential and path filters run, including `http`, `https`, `file`, and other scheme-based URLs.
+- Extended embedded path redaction to retain no suffix when unquoted POSIX, UNC, extended Windows, or drive paths include parentheses or square brackets. Delimiter-wrapped paths continue to redact as one value.
+- Kept recipe-plan binding, provider sequencing, support-artifact compatibility, and learner-media restrictions unchanged.
+
+### Regression coverage
+
+- Added neutral-key `endpoint` cases for IPv6 userinfo, encoded neutral query values with API-key-shaped credentials, and neutral fragment values with JWT-shaped credentials.
+- Added a `file:` URL with raw spaces, parentheses, and square brackets.
+- Added UNC, extended Windows, and drive-path cases containing spaces, parentheses, and square brackets, plus an unquoted drive path with delimiter characters.
+
+### Verification
+
+- Focused recipe, executor, runtime, provider, checks, and configuration tests: 72 passed.
+- Full worker suite: 80 passed.
+- Worker build: passed.
+- API repository and artifact-route compatibility tests: 41 passed.
+- Forbidden-credential scan: passed for 142 tracked files.
+- Workspace typechecks: all 5 participating projects passed.
+- `git diff --check`: passed before this report update; rerun in final verification.
+
+### Concerns
+
+- Tests ran on Node `v26.5.0`, while the workspace declares `>=24 <25`. Pnpm emitted the existing engine warning and TSX emitted the existing `module.register()` deprecation warning.
+
 ## Fourth Repair Follow-up
 
 Resolved both Important findings from the final fresh review.

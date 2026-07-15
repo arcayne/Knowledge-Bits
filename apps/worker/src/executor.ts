@@ -483,17 +483,10 @@ function redactValue(value: unknown, secrets: readonly string[], seen: WeakSet<o
 }
 
 function redactString(value: string, secrets: readonly string[]): string {
-  const safeUrls: string[] = [];
-  const withoutUnsafeUrls = value.replace(URL_PATTERN, (candidate) => {
-    const replacement = sanitizeUrl(candidate, secrets);
-    if (replacement) return replacement;
-    const token = `__SAFE_URL_${safeUrls.length}__`;
-    safeUrls.push(candidate);
-    return token;
-  });
+  const withoutUrls = value.replace(ABSOLUTE_URL_PATTERN, '[REDACTED_URL]');
   const withoutEnvironmentSecrets = secrets.reduce(
     (safe, secret) => safe.replaceAll(secret, '[REDACTED]'),
-    withoutUnsafeUrls,
+    withoutUrls,
   );
   const withoutCredentialLiterals = withoutEnvironmentSecrets
     .replace(/\b(?:bearer|basic|token)\s+[A-Za-z0-9._~+\/=:-]{8,}\b/gi, '[REDACTED]')
@@ -505,40 +498,10 @@ function redactString(value: string, secrets: readonly string[]): string {
     .replace(/'((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^'\r\n]+)'/gi, "'[REDACTED_PATH]'")
     .replace(/`((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^`\r\n]+)`/gi, '`[REDACTED_PATH]`')
     .replace(/<((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^>\r\n]+)>/gi, '<[REDACTED_PATH]>')
-    .replace(/(?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|(?<![A-Za-z0-9._-])\/(?!\/))[^\s"'`<>{}\[\]()]+/g, '[REDACTED_PATH]');
-  return safeUrls.reduce((safe, url, index) => safe.replaceAll(`__SAFE_URL_${index}__`, url), withoutPaths);
-}
-
-function sanitizeUrl(candidate: string, secrets: readonly string[]): string | undefined {
-  if (/^file:/i.test(candidate) || containsSecret(candidate, secrets)) return '[REDACTED_URL]';
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.username || parsed.password || hasCredentialParameter(parsed.searchParams)) {
-      return '[REDACTED_URL]';
-    }
-    const fragment = parsed.hash.slice(1);
-    if (fragment && hasCredentialParameter(new URLSearchParams(fragment))) return '[REDACTED_URL]';
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
-function containsSecret(value: string, secrets: readonly string[]): boolean {
-  const decoded = safelyDecodeUrl(value);
-  return secrets.some((secret) => value.includes(secret) || decoded.includes(secret));
-}
-
-function safelyDecodeUrl(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function hasCredentialParameter(parameters: URLSearchParams): boolean {
-  return Array.from(parameters.keys()).some((key) => isSensitiveKey(key));
+    .replace(/\[((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^\r\n]*)\]/gi, '[REDACTED_PATH]')
+    .replace(/\(((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^\r\n]*)\)/gi, '([REDACTED_PATH])')
+    .replace(/(?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|(?<![A-Za-z0-9._-])\/(?!\/))[^\s"'`<>{}]+/g, '[REDACTED_PATH]');
+  return withoutPaths;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -546,7 +509,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const SENSITIVE_KEY = /(?:access.?key|api.?key|authorization|auth(?:entication)?|bearer|client.?secret|connection.?string|cookie|credential|dsn|keyfile|oauth|pass(?:word|phrase)|private.?key|secret|session|signature|signing.?key|token)/i;
-const URL_PATTERN = /(?:[a-z][a-z0-9+.-]*:\/\/|file:)[^\s"'`<>{}\[\]()]+/gi;
+const ABSOLUTE_URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/{1,}[^\r\n"'`<>]*/gi;
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY.test(key);
