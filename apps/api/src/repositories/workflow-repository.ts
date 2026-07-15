@@ -36,7 +36,14 @@ const ACTION_BY_STAGE: Readonly<Record<Exclude<WorkflowStage, 'human_review'>, s
   produce_assets: 'produce_assets',
   deliver: 'deliver_package',
 };
-const AUDIT_ARTIFACT_KINDS = new Set(['raw_response', 'parsed_output', 'execution_report']);
+const AUDIT_ARTIFACT_KINDS = new Set([
+  'raw_response',
+  'parsed_output',
+  'execution_report',
+  'generation.recipe.snapshot',
+  'generation.prompt.rendered',
+  'generation.execution.report',
+]);
 
 export interface WorkflowRun {
   id: string;
@@ -1193,7 +1200,14 @@ export class PrismaWorkflowStore implements WorkflowStore {
               AND "Job"."action" = 'collect_sources'
             )
             OR (
-              ${input.kind} IN ('raw_response', 'parsed_output', 'execution_report')
+              ${input.kind} IN (
+                'raw_response',
+                'parsed_output',
+                'execution_report',
+                'generation.recipe.snapshot',
+                'generation.prompt.rendered',
+                'generation.execution.report'
+              )
               AND (
                 ("Job"."stage" = 'research' AND "Job"."action" = 'collect_sources')
                 OR ("Job"."stage" = 'create' AND "Job"."action" = 'create_content')

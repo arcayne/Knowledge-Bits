@@ -107,12 +107,13 @@ export class WorkerExecutor {
         return;
       }
 
+      const safeProviderReport = redactExecutionReport(execution.executionReport);
       const reportBytes = canonicalJsonBytes({
         action,
         jobId: job.jobId,
         packageId: job.packageId,
         provider: provider.name,
-        providerReport: execution.executionReport,
+        providerReport: safeProviderReport,
         idempotencyKey: operationIdempotencyKey(job, action),
       });
       const outputChecksum = checksum(reportBytes);
@@ -218,7 +219,17 @@ export class WorkerExecutor {
     const rawChecksum = checksum(execution.rawResponse);
     const parsedBytes = canonicalJsonBytes(execution.parsedOutput);
     const parsedChecksum = checksum(parsedBytes);
+    const generationProvenance = executionProvenance(job, provider, execution);
     const artifacts: ExecutionArtifact[] = [
+      ...(execution.supportArtifacts ?? [])
+        .filter((artifact) => artifact.kind !== 'generation.execution.report')
+        .map((artifact) => ({
+          kind: artifact.kind,
+          body: artifact.body,
+          mediaType: artifact.mediaType,
+          inputChecksum: artifact.inputChecksum,
+          provenance: sanitizeProvenance({ ...generationProvenance, ...artifact.provenance }),
+        })),
       ...(execution.assets ?? []).map((asset) => ({
         kind: asset.kind,
         body: asset.body,
@@ -228,7 +239,12 @@ export class WorkerExecutor {
       })),
       { kind: 'raw_response', body: execution.rawResponse, inputChecksum: execution.inputChecksum ?? null },
       { kind: 'parsed_output', body: parsedBytes, inputChecksum: rawChecksum },
-      { kind: 'execution_report', body: reportBytes, inputChecksum: parsedChecksum },
+      {
+        kind: 'generation.execution.report',
+        body: reportBytes,
+        inputChecksum: parsedChecksum,
+        provenance: sanitizeProvenance(generationProvenance),
+      },
     ];
 
     for (const artifact of artifacts) {
@@ -258,7 +274,9 @@ export class WorkerExecutor {
           action: actionForStage(job.stage),
           idempotencyKey: operationIdempotencyKey(job, actionForStage(job.stage)!),
           jobId: job.jobId,
-          ...artifact.provenance,
+          provider,
+          attempt: job.attempt,
+          ...sanitizeProvenance(artifact.provenance ?? {}),
         },
       };
       await this.options.client.completeArtifact(completion, signal);
@@ -296,6 +314,90 @@ export class WorkerExecutor {
     };
     await this.reportTypedResult(job, execution, signal);
   }
+}
+
+function executionProvenance(
+  job: JobClaim,
+  provider: string,
+  execution: Extract<ProviderExecution, { kind: 'success' }>,
+): Readonly<Record<string, unknown>> {
+  const evidence = execution.supportArtifacts?.map(({ provenance }) => provenance) ?? [];
+  const report = isRecord(execution.executionReport) ? execution.executionReport : {};
+  return {
+    recipeId: firstProvenanceValue(evidence, 'recipeId') ?? null,
+    recipeVersion: firstProvenanceValue(evidence, 'recipeVersion') ?? null,
+    recipeChecksum: firstProvenanceValue(evidence, 'recipeChecksum') ?? null,
+    promptChecksum: firstProvenanceValue(evidence, 'promptChecksum') ?? null,
+    provider,
+    model: firstProvenanceValue(evidence, 'model') ?? safeString(report.model) ?? 'unknown',
+    attempt: job.attempt,
+    referenceChecksums: firstProvenanceValue(evidence, 'referenceChecksums') ?? [],
+  };
+}
+
+function firstProvenanceValue(
+  provenance: readonly Readonly<Record<string, unknown>>[],
+  key: string,
+): unknown {
+  return provenance.find((candidate) => candidate[key] !== undefined)?.[key];
+}
+
+function safeString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function redactExecutionReport(value: unknown): unknown {
+  const secretValues = Object.entries(process.env)
+    .filter(([key, item]) => SENSITIVE_KEY.test(key) && typeof item === 'string' && item.length >= 8)
+    .map(([, item]) => item as string);
+  return redactValue(value, secretValues, new WeakSet<object>());
+}
+
+function sanitizeProvenance(value: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  const sanitized = redactExecutionReport(value);
+  return isRecord(sanitized) ? sanitized : {};
+}
+
+function redactValue(value: unknown, secrets: readonly string[], seen: WeakSet<object>): unknown {
+  if (typeof value === 'string') {
+    if (looksLikeAbsolutePath(value)) return '[REDACTED_PATH]';
+    return secrets.reduce((safe, secret) => safe.replaceAll(secret, '[REDACTED]'), value);
+  }
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return '[REDACTED_CYCLE]';
+    seen.add(value);
+    return value.map((item) => redactValue(item, secrets, seen));
+  }
+  if (isRecord(value)) {
+    if (seen.has(value)) return '[REDACTED_CYCLE]';
+    seen.add(value);
+    return Object.fromEntries(Object.entries(value).flatMap(([key, item]) => (
+      isSensitiveKey(key) || isPathKey(key)
+        ? []
+        : [[key, redactValue(item, secrets, seen)]]
+    )));
+  }
+  return null;
+}
+
+function looksLikeAbsolutePath(value: string): boolean {
+  return /^(?:file:\/\/|~(?:[\\/]|$)|[A-Za-z]:[\\/]|\/(?:Users|home|private|tmp|var)(?:[\\/]|$))/i.test(value.trim());
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const SENSITIVE_KEY = /(?:api.?key|authorization|bearer|cookie|credential|password|private.?key|secret|token)/i;
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEY.test(key);
+}
+
+function isPathKey(key: string): boolean {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return ['path', 'root', 'directory', 'dir'].some((suffix) => normalized.endsWith(suffix));
 }
 
 interface ExecutionArtifact {

@@ -8,6 +8,7 @@ import {
 } from '@knowledge-bits/contracts';
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
+import { parseProductRecipeRoots } from './config.js';
 import type { ContentCandidate, EvidenceManifest } from './checks/deterministic.js';
 import { DeterministicSourceVerifier } from './checks/source-verifier.js';
 import type { WorkerEngineClient } from './engine-client.js';
@@ -23,6 +24,7 @@ import {
   type WorkerAction,
   type WorkerProvider,
 } from './providers/types.js';
+import { FileRecipeRegistry } from './recipes/file-registry.js';
 
 type NotebookContextResolver = (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
 type PiContextResolver = (input: ProviderExecutionInput) => Promise<{
@@ -100,7 +102,11 @@ function configuredRuntime(
   request: typeof fetch,
 ): ProviderRuntime {
   if (!engineClient) return {};
-  const contexts = new LeaseScopedJobContextResolver(engineClient);
+  const recipeRoots = parseProductRecipeRoots(env.PRODUCT_RECIPE_ROOTS);
+  const recipeBindingVerifier = Object.keys(recipeRoots).length
+    ? new FileRecipeRegistry(recipeRoots)
+    : undefined;
+  const contexts = new LeaseScopedJobContextResolver(engineClient, recipeBindingVerifier);
   const trustedHosts = commaSeparated(env.NOTEBOOKLM_TRUSTED_SOURCE_HOSTS);
   const piProvider = configuredValue(env, 'PI_PROVIDER');
   const piModel = configuredValue(env, 'PI_MODEL');
@@ -115,6 +121,7 @@ function configuredRuntime(
   }
 
   return {
+    ...(recipeBindingVerifier ? { recipeBindingVerifier } : {}),
     ...(mediaConfigurationIssue ? { configurationIssues: { media: mediaConfigurationIssue } } : {}),
     ...(trustedHosts.length ? {
       notebookProcess: new SpawnNotebookLmProcess(),

@@ -200,6 +200,35 @@ test(
       jobId: auditJob.id,
       runId: auditRunId,
       revision: 2,
+      kind: 'execution_report',
+    }), true);
+    assert.equal(await repository.hasActiveArtifactLease({
+      workerId: 'audit-worker',
+      jobId: auditJob.id,
+      runId: auditRunId,
+      revision: 2,
+      kind: 'generation.recipe.snapshot',
+    }), true);
+    const generationArtifact = await repository.recordArtifactForActiveLease({
+      workerId: 'audit-worker',
+      jobId: auditJob.id,
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      runId: auditRunId,
+      revision: 2,
+      kind: 'generation.execution.report',
+      mediaType: 'application/json',
+      checksum,
+      storageKey: 'integration/artifacts/generation-execution-report.json',
+      byteSize: 128,
+      provenance: { provider: 'integration' },
+      inputChecksum: checksum,
+    });
+    assert.equal(generationArtifact.kind, 'generation.execution.report');
+    assert.equal(await repository.hasActiveArtifactLease({
+      workerId: 'audit-worker',
+      jobId: auditJob.id,
+      runId: auditRunId,
+      revision: 2,
       kind: 'evidence',
     }), false);
 

@@ -250,22 +250,30 @@ test('permits audit artifacts for each automated lease but keeps other artifacts
     const job = await fixture.queueArtifactJob(nonProducer);
     await claimArtifactJob(fixture.app, nonProducer.token);
 
-    const preparedResponse = await prepareArtifact(
-      fixture.app,
-      job.id,
-      { kind: 'raw_response' },
-      nonProducer.token,
-    );
-    assert.equal(preparedResponse.status, 201, await preparedResponse.clone().text());
-    const prepared = await preparedResponse.json() as { artifactId: string; storageKey: string };
-    fixture.storage.objects.set(prepared.storageKey, { checksum, byteSize: 42, mediaType: 'application/json' });
+    for (const kind of [
+      'raw_response',
+      'execution_report',
+      'generation.recipe.snapshot',
+      'generation.prompt.rendered',
+      'generation.execution.report',
+    ]) {
+      const preparedResponse = await prepareArtifact(
+        fixture.app,
+        job.id,
+        { kind },
+        nonProducer.token,
+      );
+      assert.equal(preparedResponse.status, 201, `${kind}: ${await preparedResponse.clone().text()}`);
+      const prepared = await preparedResponse.json() as { artifactId: string; storageKey: string };
+      fixture.storage.objects.set(prepared.storageKey, { checksum, byteSize: 42, mediaType: 'application/json' });
 
-    const completed = await fixture.app.request('/artifacts/complete', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${nonProducer.token}` },
-      body: JSON.stringify({ ...completionBody(job.id, prepared), kind: 'raw_response' }),
-    });
-    assert.equal(completed.status, 201, await completed.clone().text());
+      const completed = await fixture.app.request('/artifacts/complete', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${nonProducer.token}` },
+        body: JSON.stringify({ ...completionBody(job.id, prepared), kind }),
+      });
+      assert.equal(completed.status, 201, `${kind}: ${await completed.clone().text()}`);
+    }
 
     const nonAuditArtifact = await prepareArtifact(fixture.app, job.id, {}, nonProducer.token);
     assert.equal(nonAuditArtifact.status, 409, `${nonProducer.action} prepared a non-audit artifact`);

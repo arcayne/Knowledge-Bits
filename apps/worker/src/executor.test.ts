@@ -182,7 +182,7 @@ test('uploads raw response, parsed output, and execution report before a success
   assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
     'raw_response',
     'parsed_output',
-    'execution_report',
+    'generation.execution.report',
   ]);
   assert.equal(client.results.length, 1);
   assert.equal(client.results[0]?.result.state, 'done');
@@ -215,7 +215,7 @@ test('uploads generated media bytes with their media metadata and content checks
     'audio',
     'raw_response',
     'parsed_output',
-    'execution_report',
+    'generation.execution.report',
   ]);
   assert.deepEqual(client.uploadedArtifacts.slice(0, 3).map(({ body }) => Buffer.from(body)), [hero, infographic, audio]);
   assert.deepEqual(client.completedArtifacts.slice(0, 3).map(({ mediaType }) => mediaType), [
@@ -246,9 +246,144 @@ test('uploads the audit artifact triplet before reporting a non-asset success', 
   assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
     'raw_response',
     'parsed_output',
-    'execution_report',
+    'generation.execution.report',
   ]);
   assert.equal(client.events.at(-1), 'report:done');
+});
+
+test('uploads immutable recipe and prompt support artifacts during a non-media stage', async () => {
+  const client = new FakeEngineClient();
+  const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Create the Story.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const provider = providerFor('collect_sources', {
+    ...successOutput(),
+    supportArtifacts: [
+      {
+        kind: 'generation.recipe.snapshot',
+        mediaType: 'application/json',
+        body: recipeBody,
+        inputChecksum: null,
+        provenance,
+      },
+      {
+        kind: 'generation.prompt.rendered',
+        mediaType: 'text/plain',
+        body: promptBody,
+        inputChecksum: prefixedChecksum(recipeBody),
+        provenance,
+      },
+    ],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('research'));
+
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+    'raw_response',
+    'parsed_output',
+    'generation.execution.report',
+  ]);
+  for (const artifact of client.completedArtifacts.filter(({ kind }) => kind.startsWith('generation.'))) {
+    assert.deepEqual(
+      Object.keys(artifact.provenance).filter((key) => [
+        'recipeId', 'recipeVersion', 'recipeChecksum', 'promptChecksum',
+        'provider', 'model', 'attempt', 'referenceChecksums',
+      ].includes(key)).sort(),
+      ['attempt', 'model', 'promptChecksum', 'provider', 'recipeChecksum', 'recipeId', 'recipeVersion', 'referenceChecksums'],
+    );
+  }
+});
+
+test('keeps learner media stage-restricted while allowing research source snapshots', async () => {
+  const blockedClient = new FakeEngineClient();
+  const blockedProvider = providerFor('create_content', {
+    ...successOutput(),
+    assets: [{
+      kind: 'hero',
+      mediaType: 'image/webp',
+      body: Buffer.from('not-allowed'),
+      inputChecksum: null,
+    }],
+  });
+  const blockedExecutor = new WorkerExecutor({ client: blockedClient, providers: [blockedProvider], now: () => new Date(now) });
+
+  await blockedExecutor.execute(job('create'));
+
+  assert.equal(blockedClient.results[0]?.result.state, 'needs_human');
+  assert.equal(blockedClient.results[0]?.result.error, 'provider_assets_not_allowed_for_stage');
+  assert.equal(blockedClient.completedArtifacts.length, 0);
+
+  const researchClient = new FakeEngineClient();
+  const researchProvider = providerFor('collect_sources', {
+    ...successOutput(),
+    assets: [{
+      kind: 'source_snapshot',
+      mediaType: 'text/html',
+      body: Buffer.from('<main>source</main>'),
+      inputChecksum: null,
+    }],
+  });
+  const researchExecutor = new WorkerExecutor({ client: researchClient, providers: [researchProvider], now: () => new Date(now) });
+
+  await researchExecutor.execute(job('research'));
+
+  assert.equal(researchClient.completedArtifacts[0]?.kind, 'source_snapshot');
+  assert.equal(researchClient.results[0]?.result.state, 'done');
+});
+
+test('removes credentials, environment secrets, and absolute paths from generation execution reports', async () => {
+  const secret = 'task-four-secret-value';
+  const previous = process.env.TASK_FOUR_SECRET;
+  process.env.TASK_FOUR_SECRET = secret;
+  try {
+    const client = new FakeEngineClient();
+    const provider = providerFor('collect_sources', {
+      ...successOutput(),
+      supportArtifacts: [{
+        kind: 'generation.recipe.snapshot',
+        mediaType: 'application/json',
+        body: Buffer.from('{"id":"safe"}\n'),
+        inputChecksum: null,
+        provenance: {
+          ...generationProvenance(Buffer.from('recipe'), Buffer.from('prompt')),
+          secretToken: secret,
+          localPath: '/Users/private/recipes',
+        },
+      }],
+      executionReport: {
+        model: 'provider-model',
+        apiKey: secret,
+        nested: { authorization: `Bearer ${secret}` },
+        recipeRoot: '/Users/private/recipes',
+        safeSetting: 'kept',
+      },
+    });
+    const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+    await executor.execute(job('research'));
+
+    const reportIndex = client.completedArtifacts.findIndex(({ kind }) => kind === 'generation.execution.report');
+    const report = Buffer.from(client.uploadedArtifacts[reportIndex]!.body).toString('utf8');
+    assert.equal(report.includes(secret), false);
+    assert.equal(report.includes('/Users/private/recipes'), false);
+    assert.equal(report.includes('apiKey'), false);
+    assert.equal(report.includes('authorization'), false);
+    assert.equal(report.includes('recipeRoot'), false);
+    assert.match(report, /safeSetting/);
+    const recipeProvenance = JSON.stringify(client.completedArtifacts.find(
+      ({ kind }) => kind === 'generation.recipe.snapshot',
+    )?.provenance);
+    assert.equal(recipeProvenance.includes(secret), false);
+    assert.equal(recipeProvenance.includes('/Users/private/recipes'), false);
+    assert.equal(recipeProvenance.includes('secretToken'), false);
+    assert.equal(recipeProvenance.includes('localPath'), false);
+  } finally {
+    if (previous === undefined) delete process.env.TASK_FOUR_SECRET;
+    else process.env.TASK_FOUR_SECRET = previous;
+  }
 });
 
 test('uses the claimed revision for audit artifacts instead of an executor default', async () => {
@@ -527,4 +662,19 @@ function deferred<T>() {
 
 function checksum(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function prefixedChecksum(bytes: Uint8Array): string {
+  return `sha256:${checksum(bytes)}`;
+}
+
+function generationProvenance(recipeBody: Uint8Array, promptBody: Uint8Array) {
+  return {
+    recipeId: 'nuglet.lesson.story',
+    recipeVersion: '1.0.0',
+    recipeChecksum: prefixedChecksum(recipeBody),
+    promptChecksum: prefixedChecksum(promptBody),
+    model: 'fixture-model',
+    referenceChecksums: ['sha256:'.concat('b'.repeat(64))],
+  };
 }
