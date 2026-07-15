@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  knowledgeBitsContentSchema,
   knowledgeBitsSchema,
   type ArtifactReference,
   type KnowledgeBits,
@@ -37,7 +38,7 @@ export function calculatePackageChecksum(input: KnowledgeBitsChecksumInput): str
   const checksumMaterial = {
     adapterVersion: input.adapterVersion,
     assetInventory: input.assetInventory,
-    content: input.content,
+    content: packageChecksumContentRepresentation(input.content),
     evidence: input.evidence,
     qa: input.qa,
     locale: input.locale,
@@ -46,6 +47,18 @@ export function calculatePackageChecksum(input: KnowledgeBitsChecksumInput): str
   };
 
   return createHash('sha256').update(canonicalJson(checksumMaterial)).digest('hex');
+}
+
+export function packageChecksumContentRepresentation(content: KnowledgeBitsContent): unknown {
+  if (!isPlainObject(content) || !isPlainObject(content.target)) return content;
+  if (
+    content.target.kind !== 'nuglet.lesson.v1'
+    || !('schemaVersion' in content.target)
+    || content.target.schemaVersion !== '1.0.0'
+  ) return content;
+
+  const { schemaVersion: _schemaVersion, ...legacyTarget } = content.target;
+  return { ...content, target: legacyTarget };
 }
 
 export function calculateLegacyContentChecksum(content: NugletLessonV1Payload): string {
@@ -65,7 +78,8 @@ export function calculateContentChecksum(content: unknown): string {
 }
 
 export function buildKnowledgeBits(input: BuildKnowledgeBitsInput): KnowledgeBits {
-  const packageChecksum = calculatePackageChecksum(input);
+  const content = knowledgeBitsContentSchema.parse(input.content);
+  const packageChecksum = calculatePackageChecksum({ ...input, content });
   const approval = input.approval ?? {
     status: 'unapproved' as const,
     reviewerId: null,
@@ -81,7 +95,7 @@ export function buildKnowledgeBits(input: BuildKnowledgeBitsInput): KnowledgeBit
     locale: input.locale,
     owner: input.owner,
     riskClass: input.riskClass,
-    target: input.content.target,
+    target: content.target,
     surfaces: input.surfaces,
     evidence: input.evidence,
     qa: input.qa,

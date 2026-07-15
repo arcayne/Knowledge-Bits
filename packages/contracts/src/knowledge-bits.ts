@@ -361,6 +361,12 @@ function validateStoryPlaybookClaims(
   value: {
     claims: z.infer<typeof claimSchema>[];
     claimCoverage: z.infer<typeof storyPlaybookClaimCoverageSchema>;
+    read: {
+      story: z.infer<typeof storySchema>;
+      playbook: z.infer<typeof playbookSchema>;
+    };
+    visual: z.infer<typeof visualBriefSchema>;
+    quiz: { questions: z.infer<typeof quizQuestionSchema>[] };
   },
   context: z.RefinementCtx,
 ): void {
@@ -393,6 +399,54 @@ function validateStoryPlaybookClaims(
       }
     });
   });
+
+  const nestedReferences = [
+    ...value.read.story.blocks.flatMap((block, blockIndex) => block.claimRefs.map((claimId, claimIndex) => ({
+      claimId,
+      coveragePath: 'read.story' as const,
+      issuePath: ['read', 'story', 'blocks', blockIndex, 'claimRefs', claimIndex],
+    }))),
+    ...value.read.playbook.steps.flatMap((step, stepIndex) => step.claimRefs.map((claimId, claimIndex) => ({
+      claimId,
+      coveragePath: 'read.playbook' as const,
+      issuePath: ['read', 'playbook', 'steps', stepIndex, 'claimRefs', claimIndex],
+    }))),
+    ...value.read.playbook.example.claimRefs.map((claimId, claimIndex) => ({
+      claimId,
+      coveragePath: 'read.playbook' as const,
+      issuePath: ['read', 'playbook', 'example', 'claimRefs', claimIndex],
+    })),
+    ...value.visual.claimRefs.map((claimId, claimIndex) => ({
+      claimId,
+      coveragePath: 'visual' as const,
+      issuePath: ['visual', 'claimRefs', claimIndex],
+    })),
+    ...value.quiz.questions.flatMap((question, questionIndex) => question.claimRefs.map((claimId, claimIndex) => ({
+      claimId,
+      coveragePath: 'quiz' as const,
+      issuePath: ['quiz', 'questions', questionIndex, 'claimRefs', claimIndex],
+    }))),
+  ];
+  const coverageByPath = new Map(value.claimCoverage.map((entry) => [entry.path, new Set(entry.claimIds)]));
+
+  nestedReferences.forEach(({ claimId, coveragePath, issuePath }) => {
+    if (!claimIds.has(claimId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Nested claim reference must resolve to a declared claim',
+        path: issuePath,
+      });
+      return;
+    }
+
+    if (!coverageByPath.get(coveragePath)?.has(claimId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Nested claim reference must appear in learner path coverage for ${coveragePath}`,
+        path: issuePath,
+      });
+    }
+  });
 }
 
 export const storyPlaybookDraftSchema = z.object({
@@ -417,19 +471,37 @@ const transcriptSchema = z.object({
   checksum: checksumSchema,
 }).strict();
 
-const finalAudioSchema = z.object({
-  editorialBrief: audioEditorialBriefSchema.shape.editorialBrief,
-  asset: artifactReferenceSchema,
-  durationSeconds: z.number().positive(),
-  transcript: transcriptSchema,
-}).strict();
+const imageMediaTypeSchema = z.string().regex(/^image\/.+$/);
+const audioMediaTypeSchema = z.string().regex(/^audio\/.+$/);
+
+const heroArtifactReferenceSchema = artifactReferenceSchema.extend({
+  kind: z.literal('hero'),
+  mediaType: imageMediaTypeSchema,
+});
+
+const infographicArtifactReferenceSchema = artifactReferenceSchema.extend({
+  kind: z.literal('infographic'),
+  mediaType: imageMediaTypeSchema,
+});
+
+function finalAudioSchema(kind: 'audio_brief' | 'audio_discussion') {
+  return z.object({
+    editorialBrief: audioEditorialBriefSchema.shape.editorialBrief,
+    asset: artifactReferenceSchema.extend({
+      kind: z.literal(kind),
+      mediaType: audioMediaTypeSchema,
+    }),
+    durationSeconds: z.number().positive(),
+    transcript: transcriptSchema,
+  }).strict();
+}
 
 export const storyPlaybookPayloadSchema = z.object({
   ...storyPlaybookBaseShape,
   materialization: z.literal('materialized'),
   hero: z.object({
     ...heroBriefSchema.shape,
-    asset: artifactReferenceSchema,
+    asset: heroArtifactReferenceSchema,
     width: z.number().int().positive(),
     height: z.number().int().positive(),
     focalPoint: pointSchema,
@@ -442,13 +514,13 @@ export const storyPlaybookPayloadSchema = z.object({
   }).strict(),
   visual: z.object({
     ...visualBriefSchema.shape,
-    asset: artifactReferenceSchema,
+    asset: infographicArtifactReferenceSchema,
     width: z.number().int().positive(),
     height: z.number().int().positive(),
   }).strict(),
   listen: z.object({
-    brief: finalAudioSchema,
-    discussion: finalAudioSchema,
+    brief: finalAudioSchema('audio_brief'),
+    discussion: finalAudioSchema('audio_discussion'),
   }).strict(),
 }).strict().superRefine(validateStoryPlaybookClaims);
 

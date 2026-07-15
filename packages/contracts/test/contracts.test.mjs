@@ -483,6 +483,81 @@ test('requires claim coverage for Story and Playbook learner paths', () => {
   }), /read\.playbook/i);
 });
 
+test('requires every nested Story Playbook visual and quiz claim reference to be declared', () => {
+  const undeclaredClaimId = '0f8fad5b-d9cb-469f-a165-708677289599';
+  const cases = [
+    (draft) => {
+      draft.read.story.blocks[0].claimRefs = [undeclaredClaimId];
+    },
+    (draft) => {
+      draft.read.playbook.steps[0].claimRefs = [undeclaredClaimId];
+    },
+    (draft) => {
+      draft.read.playbook.example.claimRefs = [undeclaredClaimId];
+    },
+    (draft) => {
+      draft.visual.claimRefs = [undeclaredClaimId];
+    },
+    (draft) => {
+      draft.quiz.questions[0].claimRefs = [undeclaredClaimId];
+    },
+  ];
+
+  for (const mutate of cases) {
+    const draft = storyPlaybookDraft();
+    mutate(draft);
+    assert.throws(() => storyPlaybookDraftSchema.parse(draft), /declared claim/i);
+  }
+});
+
+test('requires nested claim references to appear in their learner path coverage', () => {
+  const cases = [
+    ['read.story', (draft) => {
+      draft.read.story.blocks[0].claimRefs = [draft.claims[1].claimId];
+    }],
+    ['read.playbook', (draft) => {
+      draft.read.playbook.steps[0].claimRefs = [draft.claims[1].claimId];
+    }],
+    ['read.playbook', (draft) => {
+      draft.read.playbook.example.claimRefs = [draft.claims[1].claimId];
+    }],
+    ['visual', (draft) => {
+      draft.visual.claimRefs = [draft.claims[1].claimId];
+    }],
+    ['quiz', (draft) => {
+      draft.quiz.questions[0].claimRefs = [draft.claims[1].claimId];
+    }],
+  ];
+
+  for (const [path, mutate] of cases) {
+    const draft = storyPlaybookDraft();
+    mutate(draft);
+    draft.claimCoverage = draft.claimCoverage.map((entry) => (
+      entry.path === path ? { ...entry, claimIds: [draft.claims[0].claimId] } : entry
+    ));
+    assert.throws(() => storyPlaybookDraftSchema.parse(draft), /learner path coverage/i);
+  }
+});
+
+test('materialized media references enforce artifact kind and media type roles', () => {
+  const cases = [
+    (payload) => { payload.hero.asset.kind = 'infographic'; },
+    (payload) => { payload.hero.asset.mediaType = 'application/json'; },
+    (payload) => { payload.visual.asset.kind = 'hero'; },
+    (payload) => { payload.visual.asset.mediaType = 'application/json'; },
+    (payload) => { payload.listen.brief.asset.kind = 'audio_discussion'; },
+    (payload) => { payload.listen.brief.asset.mediaType = 'application/json'; },
+    (payload) => { payload.listen.discussion.asset.kind = 'audio_brief'; },
+    (payload) => { payload.listen.discussion.asset.mediaType = 'application/json'; },
+  ];
+
+  for (const mutate of cases) {
+    const payload = materializedStoryPlaybook();
+    mutate(payload);
+    assert.throws(() => storyPlaybookPayloadSchema.parse(payload));
+  }
+});
+
 test('draft media briefs cannot claim final assets or transcripts', () => {
   const draft = storyPlaybookDraft();
   assert.throws(() => storyPlaybookDraftSchema.parse({

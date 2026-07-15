@@ -259,6 +259,33 @@ test('builds a contract-valid unapproved package', () => {
   });
 });
 
+test('normalizes pre-version legacy targets without package checksum drift', () => {
+  const legacyInput = input();
+  const { schemaVersion: _schemaVersion, ...unversionedTarget } = legacyInput.content.target;
+  const compatibleInput = {
+    ...legacyInput,
+    content: {
+      ...legacyInput.content,
+      target: unversionedTarget,
+    },
+  };
+
+  const result = buildKnowledgeBits(compatibleInput);
+  const normalizedInput = {
+    ...compatibleInput,
+    content: {
+      ...compatibleInput.content,
+      target: result.target,
+    },
+  };
+  const rebuilt = buildKnowledgeBits(normalizedInput);
+
+  assert.equal(result.target.schemaVersion, '1.0.0');
+  assert.equal(result.packageChecksum, calculatePackageChecksum(compatibleInput));
+  assert.equal(result.packageChecksum, calculatePackageChecksum(normalizedInput));
+  assert.equal(result.packageChecksum, rebuilt.packageChecksum);
+});
+
 test('excludes approval status from the package checksum', () => {
   const base = input();
   const unapproved = buildKnowledgeBits(base);
