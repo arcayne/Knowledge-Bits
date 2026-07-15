@@ -488,7 +488,8 @@ function reviewStageFixtures(): Record<
     produce_assets: [
       { kind: 'hero', mediaType: 'image/webp', body: 'hero', inputChecksum: contentChecksum },
       { kind: 'infographic', mediaType: 'image/webp', body: 'infographic', inputChecksum: contentChecksum },
-      { kind: 'audio', mediaType: 'audio/mpeg', body: 'audio', inputChecksum: contentChecksum },
+      { kind: 'audio_brief', mediaType: 'audio/mp4', body: 'brief audio', inputChecksum: contentChecksum },
+      { kind: 'audio_discussion', mediaType: 'audio/mp4', body: 'discussion audio', inputChecksum: contentChecksum },
     ],
   };
 }
@@ -517,7 +518,8 @@ async function finishRevisionFromCreate(
   await recordClaimArtifacts(repository, storage, assets, 'asset-worker', [
     { kind: 'hero', mediaType: 'image/webp', body: 'revised hero', inputChecksum: contentChecksum },
     { kind: 'infographic', mediaType: 'image/webp', body: 'revised infographic', inputChecksum: contentChecksum },
-    { kind: 'audio', mediaType: 'audio/mpeg', body: 'revised audio', inputChecksum: contentChecksum },
+    { kind: 'audio_brief', mediaType: 'audio/mp4', body: 'revised brief audio', inputChecksum: contentChecksum },
+    { kind: 'audio_discussion', mediaType: 'audio/mp4', body: 'revised discussion audio', inputChecksum: contentChecksum },
   ]);
   await completeClaim(repository, assets, 'asset-worker');
 }

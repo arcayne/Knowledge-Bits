@@ -967,10 +967,59 @@ export const reviewPackageVersionSchema = z.object({
 
 export type ReviewPackageVersion = z.infer<typeof reviewPackageVersionSchema>;
 
-const reviewAssetSchema = z.discriminatedUnion('state', [
+export const reviewAssetSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('missing'), artifactId: z.null(), mediaType: z.null(), previewPath: z.null() }).strict(),
   z.object({ state: z.literal('available'), artifactId: z.string().uuid(), mediaType: z.string().min(1), previewPath: z.string().min(1) }).strict(),
 ]);
+
+export const reviewGenerationRoleSchema = z.enum([
+  'story',
+  'playbook',
+  'quiz',
+  'hero',
+  'infographic',
+  'audioBrief',
+  'audioDiscussion',
+]);
+
+export const reviewGenerationExecutionSchema = z.object({
+  role: reviewGenerationRoleSchema,
+  recipe: genericGenerationRecipeBindingSchema,
+  model: z.string().trim().min(1),
+  promptChecksum: generationRecipeChecksumSchema,
+  referenceChecksums: z.array(generationRecipeChecksumSchema),
+  recipeSnapshot: artifactReferenceSchema.extend({
+    kind: z.literal('generation.recipe.snapshot'),
+  }),
+  renderedPrompt: artifactReferenceSchema.extend({
+    kind: z.literal('generation.prompt.rendered'),
+  }),
+  executionReport: artifactReferenceSchema.extend({
+    kind: z.literal('generation.execution.report'),
+  }),
+}).strict();
+
+export const reviewGenerationExecutionsSchema = z.object({
+  story: z.array(reviewGenerationExecutionSchema),
+  playbook: z.array(reviewGenerationExecutionSchema),
+  quiz: z.array(reviewGenerationExecutionSchema),
+  hero: z.array(reviewGenerationExecutionSchema),
+  infographic: z.array(reviewGenerationExecutionSchema),
+  audioBrief: z.array(reviewGenerationExecutionSchema),
+  audioDiscussion: z.array(reviewGenerationExecutionSchema),
+}).strict().superRefine((executions, context) => {
+  for (const role of reviewGenerationRoleSchema.options) {
+    executions[role].forEach((execution, index) => {
+      if (execution.role !== role) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Generation execution role must match its review summary key',
+          path: [role, index, 'role'],
+        });
+      }
+    });
+  }
+});
 
 export const reviewReadModelSchema = z.object({
   runId: packageIdSchema,
@@ -985,8 +1034,14 @@ export const reviewReadModelSchema = z.object({
   assets: z.object({
     hero: reviewAssetSchema,
     infographic: reviewAssetSchema,
-    audio: reviewAssetSchema,
+    audioBrief: reviewAssetSchema,
+    audioDiscussion: reviewAssetSchema,
   }).strict(),
+  generationExecutions: reviewGenerationExecutionsSchema,
 }).strict();
 
+export type ReviewAsset = z.infer<typeof reviewAssetSchema>;
+export type ReviewGenerationRole = z.infer<typeof reviewGenerationRoleSchema>;
+export type ReviewGenerationExecution = z.infer<typeof reviewGenerationExecutionSchema>;
+export type ReviewGenerationExecutions = z.infer<typeof reviewGenerationExecutionsSchema>;
 export type ReviewReadModel = z.infer<typeof reviewReadModelSchema>;

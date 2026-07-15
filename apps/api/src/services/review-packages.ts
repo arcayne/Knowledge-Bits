@@ -3,10 +3,15 @@ import {
   knowledgeBitsContentSchema,
   knowledgeBitsEvidenceSchema,
   knowledgeBitsQaSchema,
+  nugletGenerationPlanSchema,
   reviewPackageVersionSchema,
   reviewReadModelSchema,
   type ArtifactReference,
   type KnowledgeBitsEvidence,
+  type NugletGenerationPlan,
+  type ReviewGenerationExecution,
+  type ReviewGenerationExecutions,
+  type ReviewGenerationRole,
   type ReviewReadModel,
 } from '@knowledge-bits/contracts';
 import { calculateContentChecksum, calculatePackageChecksum } from '@knowledge-bits/pipeline';
@@ -19,11 +24,23 @@ import {
   readArtifactStorageObject,
   type ArtifactStorageAdapter,
 } from './artifacts.js';
+import {
+  calculateStoryPlaybookGenerationInputChecksum,
+  materializeStoryPlaybookTarget,
+  NUGLET_REVIEW_MEDIA_KINDS,
+  type NugletReviewMediaKind,
+} from './nuglet-package-materializer.js';
 
 const ADAPTER_VERSION = 'knowledge-bits.review-package.v1';
 const OWNER = 'knowledge-bits-engine';
 const USAGE_RIGHTS = { scope: 'internal-review' };
-const REVIEW_ASSET_KINDS = ['hero', 'infographic', 'audio'] as const;
+const REVIEW_ASSETS = [
+  { kind: 'hero', key: 'hero' },
+  { kind: 'infographic', key: 'infographic' },
+  { kind: 'audio_brief', key: 'audioBrief' },
+  { kind: 'audio_discussion', key: 'audioDiscussion' },
+] as const;
+const REVIEW_ASSET_KINDS = NUGLET_REVIEW_MEDIA_KINDS;
 
 export class ReviewPackageService {
   constructor(private readonly dependencies: {
@@ -37,9 +54,9 @@ export class ReviewPackageService {
     const artifacts = await this.dependencies.repository.listArtifactsForSuccessfulStageJobs(run.id, run.currentRevision);
     const packageArtifacts = canonicalPackageArtifacts(artifacts);
     const assets = assetStates(run.id, packageArtifacts);
-    const mediaIssues = REVIEW_ASSET_KINDS
-      .filter((kind) => assets[kind].state === 'missing')
-      .map((kind) => `Required review media is missing: ${kind}`);
+    const mediaIssues = REVIEW_ASSETS
+      .filter(({ key }) => assets[key].state === 'missing')
+      .map(({ kind }) => `Required review media is missing: ${kind}`);
 
     try {
       for (const kind of REVIEW_ASSET_KINDS) {
@@ -51,19 +68,18 @@ export class ReviewPackageService {
       const qaArtifact = requiredParsedArtifact(packageArtifacts, 'check_content', 'QA');
       const contentOutput = await this.readJson(contentArtifact, 'content');
       const qaOutput = await this.readJson(qaArtifact, 'QA');
-      const content = knowledgeBitsContentSchema.parse({
-        schemaVersion: 'knowledge-bits.content.v1',
-        target: { kind: 'nuglet.lesson.v1', payload: contentOutput },
-      });
+      const assembled = assembleContent(run.brief, contentOutput, packageArtifacts);
+      const content = assembled.content;
+      const generationExecutions = assembled.generationExecutions;
       const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
       const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, packageArtifacts, content.target.payload.claims);
       const qa = knowledgeBitsQaSchema.parse(qaOutput);
       const artifactInventory = packageArtifacts.map(toArtifactReference);
-      const contentChecksum = calculateContentChecksum(content.target.payload);
+      calculateFinalContentChecksum(content);
       const approvalIssues = [
         ...mediaIssues,
-        ...qaApprovalIssues(qa, contentChecksum),
-        ...assetChecksumIssues(packageArtifacts, contentChecksum),
+        ...qaApprovalIssues(qa, assembled.generationInputChecksum),
+        ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum),
       ];
       const packageChecksum = calculatePackageChecksum({
         content,
@@ -119,6 +135,7 @@ export class ReviewPackageService {
         issues: approvalIssues,
         package: packageVersion,
         assets,
+        generationExecutions,
       });
     } catch (error) {
       if (error instanceof ReviewPackageNotFoundError) throw error;
@@ -133,6 +150,7 @@ export class ReviewPackageService {
         issues: [assemblyErrorMessage(error)],
         package: null,
         assets,
+        generationExecutions: emptyGenerationExecutions(),
       });
     }
   }
@@ -167,6 +185,218 @@ export class ReviewPackageService {
 export class ReviewPackageNotFoundError extends Error {}
 export class ReviewPackageAssemblyError extends Error {}
 
+function assembleContent(
+  brief: Record<string, unknown>,
+  contentOutput: Record<string, unknown>,
+  artifacts: readonly WorkflowArtifact[],
+) {
+  if (contentOutput.kind === 'nuglet.lesson.v1' && contentOutput.schemaVersion === '1.1.0') {
+    const generationPlan = generationPlanFromBrief(brief);
+    const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(contentOutput);
+    const mediaArtifacts = Object.fromEntries(REVIEW_ASSET_KINDS.map((kind) => [
+      kind,
+      latestArtifact(artifacts, kind),
+    ])) as Partial<Record<NugletReviewMediaKind, WorkflowArtifact>>;
+    const target = materializeStoryPlaybookTarget({
+      semanticTarget: contentOutput,
+      generationPlan,
+      mediaArtifacts,
+    });
+    const content = knowledgeBitsContentSchema.parse({
+      schemaVersion: 'knowledge-bits.content.v1',
+      target,
+    });
+    const generationExecutions = assembleGenerationExecutions(artifacts, generationPlan);
+    assertHeroReferenceProvenance(generationExecutions.hero);
+    return { content, generationExecutions, generationInputChecksum };
+  }
+
+  const content = knowledgeBitsContentSchema.parse({
+    schemaVersion: 'knowledge-bits.content.v1',
+    target: { kind: 'nuglet.lesson.v1', payload: contentOutput },
+  });
+  return {
+    content,
+    generationExecutions: emptyGenerationExecutions(),
+    generationInputChecksum: calculateContentChecksum(content.target.payload),
+  };
+}
+
+function generationPlanFromBrief(brief: Record<string, unknown>): NugletGenerationPlan {
+  const parsed = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
+  if (!parsed.success) throw new ReviewPackageAssemblyError('Nuglet generation plan is missing or unreadable');
+  return parsed.data;
+}
+
+const GENERATION_ROLE_BINDINGS = [
+  { role: 'story', recipeKey: 'story', action: 'create_content' },
+  { role: 'playbook', recipeKey: 'playbook', action: 'create_content' },
+  { role: 'quiz', recipeKey: 'challenge', action: 'create_content' },
+  { role: 'hero', recipeKey: 'hero', action: 'produce_assets' },
+  { role: 'infographic', recipeKey: 'infographic', action: 'produce_assets' },
+  { role: 'audioBrief', recipeKey: 'audioBrief', action: 'produce_assets' },
+  { role: 'audioDiscussion', recipeKey: 'audioDiscussion', action: 'produce_assets' },
+] as const satisfies readonly {
+  role: ReviewGenerationRole;
+  recipeKey: keyof NugletGenerationPlan['recipes'];
+  action: string;
+}[];
+
+export function assembleGenerationExecutions(
+  artifacts: readonly WorkflowArtifact[],
+  generationPlan: NugletGenerationPlan,
+): ReviewGenerationExecutions {
+  const result = emptyGenerationExecutions();
+  for (const binding of GENERATION_ROLE_BINDINGS) {
+    const recipe = generationPlan.recipes[binding.recipeKey];
+    const snapshots = artifacts.filter((artifact) => (
+      artifact.kind === 'generation.recipe.snapshot'
+      && artifact.action === binding.action
+      && artifact.jobId !== null
+      && executorBindingMatches(artifact)
+      && provenanceMatchesRecipe(artifact.provenance, recipe)
+    ));
+    if (snapshots.length === 0) {
+      throw new ReviewPackageAssemblyError(`${binding.role} generation provenance is missing a recipe snapshot`);
+    }
+
+    for (const snapshot of snapshots) {
+      const execution = readExecutionProvenance(snapshot.provenance, binding.role);
+      if (`sha256:${snapshot.checksum}` !== execution.recipeChecksum) {
+        throw new ReviewPackageAssemblyError(`${binding.role} generation recipe snapshot checksum is mismatched`);
+      }
+      const prompts = artifacts.filter((artifact) => (
+        artifact.kind === 'generation.prompt.rendered'
+        && artifact.jobId === snapshot.jobId
+        && artifact.action === binding.action
+        && executorBindingMatches(artifact)
+        && sameExecutionProvenance(artifact.provenance, execution)
+      ));
+      if (prompts.length !== 1) {
+        throw new ReviewPackageAssemblyError(`${binding.role} generation provenance is missing a rendered prompt`);
+      }
+      const prompt = prompts[0]!;
+      if (`sha256:${prompt.checksum}` !== execution.promptChecksum) {
+        throw new ReviewPackageAssemblyError(`${binding.role} rendered prompt checksum is mismatched`);
+      }
+      const reports = artifacts.filter((artifact) => (
+        artifact.kind === 'generation.execution.report'
+        && artifact.jobId === snapshot.jobId
+        && artifact.action === binding.action
+        && executorBindingMatches(artifact)
+        && reportContainsExecution(artifact.provenance, execution)
+      ));
+      if (reports.length !== 1) {
+        throw new ReviewPackageAssemblyError(`${binding.role} generation provenance is missing a current execution report`);
+      }
+      result[binding.role].push({
+        role: binding.role,
+        recipe: {
+          id: execution.recipeId,
+          version: execution.recipeVersion,
+          checksum: execution.recipeChecksum,
+        },
+        model: execution.model,
+        promptChecksum: execution.promptChecksum,
+        referenceChecksums: [...execution.referenceChecksums],
+        recipeSnapshot: toArtifactReference(snapshot) as ReviewGenerationExecution['recipeSnapshot'],
+        renderedPrompt: toArtifactReference(prompt) as ReviewGenerationExecution['renderedPrompt'],
+        executionReport: toArtifactReference(reports[0]!) as ReviewGenerationExecution['executionReport'],
+      });
+    }
+  }
+  return result;
+}
+
+interface GenerationExecutionProvenance {
+  recipeId: string;
+  recipeVersion: string;
+  recipeChecksum: string;
+  promptChecksum: string;
+  model: string;
+  referenceChecksums: readonly string[];
+}
+
+function readExecutionProvenance(
+  value: Record<string, unknown>,
+  role: ReviewGenerationRole,
+): GenerationExecutionProvenance {
+  const recipeId = nonEmptyString(value.recipeId);
+  const recipeVersion = nonEmptyString(value.recipeVersion);
+  const recipeChecksum = prefixedChecksum(value.recipeChecksum);
+  const promptChecksum = prefixedChecksum(value.promptChecksum);
+  const model = nonEmptyString(value.model);
+  const referenceChecksums = prefixedChecksumList(value.referenceChecksums);
+  if (!recipeId || !recipeVersion || !recipeChecksum || !promptChecksum || !model || !referenceChecksums) {
+    throw new ReviewPackageAssemblyError(`${role} generation provenance is incomplete`);
+  }
+  return { recipeId, recipeVersion, recipeChecksum, promptChecksum, model, referenceChecksums };
+}
+
+function provenanceMatchesRecipe(
+  provenance: Record<string, unknown>,
+  recipe: NugletGenerationPlan['recipes'][keyof NugletGenerationPlan['recipes']],
+): boolean {
+  return provenance.recipeId === recipe.id
+    && provenance.recipeVersion === recipe.version
+    && provenance.recipeChecksum === recipe.checksum;
+}
+
+function executorBindingMatches(artifact: WorkflowArtifact): boolean {
+  return artifact.jobId !== null
+    && artifact.action !== null
+    && artifact.provenance.jobId === artifact.jobId
+    && artifact.provenance.action === artifact.action;
+}
+
+function sameExecutionProvenance(
+  provenance: Record<string, unknown>,
+  execution: GenerationExecutionProvenance,
+): boolean {
+  try {
+    return JSON.stringify(readExecutionProvenance(provenance, 'story')) === JSON.stringify(execution);
+  } catch {
+    return false;
+  }
+}
+
+function reportContainsExecution(
+  provenance: Record<string, unknown>,
+  execution: GenerationExecutionProvenance,
+): boolean {
+  const values = Array.isArray(provenance.generationExecutions)
+    ? provenance.generationExecutions
+    : [provenance];
+  return values.some((value) => isRecord(value) && sameExecutionProvenance(value, execution));
+}
+
+function assertHeroReferenceProvenance(executions: readonly ReviewGenerationExecution[]): void {
+  const expected = executions[0]?.referenceChecksums;
+  if (!expected || expected.length !== 2 || executions.some((execution) => (
+    JSON.stringify(execution.referenceChecksums) !== JSON.stringify(expected)
+  ))) {
+    throw new ReviewPackageAssemblyError('Hero reference checksum provenance is mismatched');
+  }
+}
+
+function emptyGenerationExecutions(): ReviewGenerationExecutions {
+  return {
+    story: [],
+    playbook: [],
+    quiz: [],
+    hero: [],
+    infographic: [],
+    audioBrief: [],
+    audioDiscussion: [],
+  };
+}
+
+function calculateFinalContentChecksum(content: ReturnType<typeof knowledgeBitsContentSchema.parse>): string {
+  return content.target.schemaVersion === '1.1.0'
+    ? calculateContentChecksum(content.target)
+    : calculateContentChecksum(content.target.payload);
+}
+
 function requiredParsedArtifact(
   artifacts: readonly WorkflowArtifact[],
   action: string,
@@ -196,9 +426,9 @@ function isReviewAssetKind(kind: string): kind is typeof REVIEW_ASSET_KINDS[numb
 }
 
 function assetStates(runId: string, artifacts: readonly WorkflowArtifact[]) {
-  return Object.fromEntries(REVIEW_ASSET_KINDS.map((kind) => {
+  return Object.fromEntries(REVIEW_ASSETS.map(({ kind, key }) => {
     const artifact = latestArtifact(artifacts, kind);
-    return [kind, artifact ? {
+    return [key, artifact ? {
       state: 'available' as const,
       artifactId: artifact.id,
       mediaType: artifact.mediaType,
@@ -209,7 +439,7 @@ function assetStates(runId: string, artifacts: readonly WorkflowArtifact[]) {
       mediaType: null,
       previewPath: null,
     }];
-  })) as Record<typeof REVIEW_ASSET_KINDS[number], {
+  })) as Record<typeof REVIEW_ASSETS[number]['key'], {
     state: 'available' | 'missing';
     artifactId: string | null;
     mediaType: string | null;
@@ -301,6 +531,19 @@ function assetChecksumIssues(artifacts: readonly WorkflowArtifact[], contentChec
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function prefixedChecksum(value: unknown): string | undefined {
+  return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value) ? value : undefined;
+}
+
+function prefixedChecksumList(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value) || !value.every((item) => prefixedChecksum(item))) return undefined;
+  return value as string[];
 }
 
 function assemblyErrorMessage(error: unknown): string {

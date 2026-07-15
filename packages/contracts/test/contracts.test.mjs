@@ -14,6 +14,7 @@ import {
   jobClaimSchema,
   jobResultSchema,
   reviewRunRequestSchema,
+  reviewReadModelSchema,
   stageStateSchema,
   workflowStageSchema,
 } from '../dist/index.js';
@@ -792,6 +793,96 @@ test('requires nested claim references to appear in their learner path coverage'
     ));
     assert.throws(() => storyPlaybookDraftSchema.parse(draft), /learner path coverage/i);
   }
+});
+
+test('requires four distinct review assets and complete generation execution links', () => {
+  const knowledgeBits = validKnowledgeBits();
+  const execution = (role, recipeId, index) => ({
+    role,
+    recipe: {
+      id: recipeId,
+      version: '1.0.0',
+      checksum: `sha256:${checksum}`,
+    },
+    model: 'fixture-model',
+    promptChecksum: `sha256:${checksum}`,
+    referenceChecksums: [],
+    recipeSnapshot: {
+      ...artifactReference('generation.recipe.snapshot'),
+      artifactId: `40000000-0000-4000-8000-0000000000${index}1`,
+    },
+    renderedPrompt: {
+      ...artifactReference('generation.prompt.rendered'),
+      artifactId: `40000000-0000-4000-8000-0000000000${index}2`,
+    },
+    executionReport: {
+      ...artifactReference('generation.execution.report'),
+      artifactId: `40000000-0000-4000-8000-0000000000${index}3`,
+    },
+  });
+  const available = (artifactId, mediaType) => ({
+    state: 'available',
+    artifactId,
+    mediaType,
+    previewPath: `/artifacts/${artifactId}`,
+  });
+  const model = {
+    runId: packageId,
+    title: 'Build a rainy day fund',
+    currentStage: 'human_review',
+    currentRevision: 1,
+    reviewStatus: 'pending',
+    currentPackageChecksum: checksum,
+    decisionAllowed: true,
+    issues: [],
+    package: {
+      id: 'review-package-1',
+      schemaVersion: 'knowledge-bits.review-package.v1',
+      packageId,
+      revision: 1,
+      packageChecksum: checksum,
+      adapterVersion: 'knowledge-bits.review-package.v1',
+      locale: 'en',
+      owner: 'knowledge-team',
+      usageRights: { scope: 'internal-review' },
+      content: { schemaVersion: 'knowledge-bits.content.v1', target: knowledgeBits.target },
+      evidence: knowledgeBits.evidence,
+      qa: knowledgeBits.qa,
+      artifactInventory: [],
+    },
+    assets: {
+      hero: available('0f8fad5b-d9cb-469f-a165-708677289530', 'image/webp'),
+      infographic: available('0f8fad5b-d9cb-469f-a165-708677289531', 'image/webp'),
+      audioBrief: available('0f8fad5b-d9cb-469f-a165-708677289532', 'audio/mp4'),
+      audioDiscussion: available('0f8fad5b-d9cb-469f-a165-708677289533', 'audio/mp4'),
+    },
+    generationExecutions: {
+      story: [execution('story', recipeIds.story, 1)],
+      playbook: [execution('playbook', recipeIds.playbook, 2)],
+      quiz: [execution('quiz', recipeIds.challenge, 3)],
+      hero: [execution('hero', recipeIds.hero, 4)],
+      infographic: [execution('infographic', recipeIds.infographic, 5)],
+      audioBrief: [execution('audioBrief', recipeIds.audioBrief, 6)],
+      audioDiscussion: [execution('audioDiscussion', recipeIds.audioDiscussion, 7)],
+    },
+  };
+
+  assert.equal(reviewReadModelSchema.safeParse(model).success, true);
+  assert.equal(reviewReadModelSchema.safeParse({
+    ...model,
+    assets: {
+      hero: model.assets.hero,
+      infographic: model.assets.infographic,
+      audio: model.assets.audioBrief,
+    },
+  }).success, false);
+  assert.equal(reviewReadModelSchema.safeParse({
+    ...model,
+    generationExecutions: {
+      ...model.generationExecutions,
+      hero: [{ ...model.generationExecutions.hero[0], renderedPrompt: undefined }],
+    },
+  }).success, false);
 });
 
 test('materialized media references enforce artifact kind and media type roles', () => {

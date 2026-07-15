@@ -19,34 +19,60 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
     <meta name="review-csrf-token" content={csrfToken} />
     <title>Content review</title>
     <style>
-      :root { color: #15211e; background: #f5f7f5; font-family: Arial, sans-serif; }
+      :root { color: #202526; background: #f2f4f3; font-family: Arial, sans-serif; }
+      * { box-sizing: border-box; }
       body { margin: 0; padding-bottom: 9rem; }
-      main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem; }
-      header { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; border-bottom: 1px solid #b9c6c0; padding-bottom: 1rem; }
+      main { max-width: 980px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
+      header { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; border-bottom: 1px solid #bcc4c2; padding-bottom: .9rem; }
       h1, h2, h3, h4, p { margin-top: 0; }
       h1 { font-size: 1.45rem; }
-      h2 { font-size: 1rem; margin-bottom: .75rem; }
+      h2 { font-size: 1.05rem; margin-bottom: .75rem; }
       h3 { font-size: 1.2rem; }
-      h4 { font-size: .8rem; text-transform: uppercase; color: #46625b; }
-      .status, .muted { color: #596a64; }
+      h4 { font-size: .78rem; text-transform: uppercase; color: #51605c; }
+      .status, .muted { color: #5f6967; }
       .status { font-size: .875rem; }
-      .review-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(260px, .8fr); gap: 1.25rem; margin-top: 1.25rem; }
-      .review-section { border-top: 2px solid #3b665a; padding-top: .75rem; margin-bottom: 1.25rem; }
+      .review-flow { margin-top: 1.25rem; }
+      .review-section { border-top: 2px solid #247264; padding: .8rem 0 1.5rem; }
       .review-section ul { padding-left: 1.15rem; }
-      .lesson-field { border-bottom: 1px solid #d8dfdc; margin-bottom: .9rem; padding-bottom: .9rem; }
-      .asset { border: 1px solid #b9c6c0; min-height: 6rem; padding: .75rem; margin-bottom: .75rem; background: #fff; }
+      .story-block, .playbook-step { border-bottom: 1px solid #d5dad8; padding: .65rem 0; }
+      .story-block:last-child, .playbook-step:last-child { border-bottom: 0; }
+      .story-block p, .playbook-step p { margin-bottom: 0; }
+      .asset { border: 1px solid #bcc4c2; min-height: 6rem; padding: .65rem; margin-bottom: .75rem; background: #fff; }
       .asset img, .asset audio { display: block; max-width: 100%; width: 100%; }
+      .asset img { height: auto; }
+      .crop-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: .75rem; margin: .75rem 0; }
+      .crop-preview { min-width: 0; }
+      .crop-preview h4 { margin-bottom: .35rem; }
+      .crop-frame { overflow: hidden; border: 1px solid #bcc4c2; background: #e8ebea; }
+      .crop-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      #hero-lesson-header { aspect-ratio: 16 / 5; }
+      #hero-card { aspect-ratio: 4 / 3; }
+      #hero-thumbnail { aspect-ratio: 1; }
+      .audio-layout { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.2fr); gap: 1rem; }
+      .transcript { white-space: pre-wrap; line-height: 1.55; }
+      .quiz-question { border-bottom: 1px solid #d5dad8; padding: .75rem 0; }
+      .quiz-question:last-child { border-bottom: 0; }
+      .quiz-question ol { margin-bottom: .5rem; }
+      details { border-top: 1px solid #aeb8b5; padding: .8rem 0; }
+      summary { cursor: pointer; font-weight: 700; }
+      .provenance-list { display: grid; gap: .65rem; padding-left: 1.15rem; }
+      .provenance-list a { color: #075ea8; }
       button:disabled { cursor: not-allowed; opacity: .45; }
-      .decision-bar { position: fixed; inset: auto 0 0; background: #10251f; color: #fff; border-top: 1px solid #0b1a16; padding: .75rem 1.25rem; }
-      .decision-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+      .decision-bar { position: fixed; inset: auto 0 0; z-index: 10; background: #202526; color: #fff; border-top: 1px solid #0f1112; padding: .75rem 1.25rem; }
+      .decision-inner { max-width: 980px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
       button { border: 1px solid transparent; padding: .55rem .8rem; font: inherit; cursor: pointer; }
-      button[data-decision="approve"] { background: #c8ee78; color: #142119; }
+      button[data-decision="approve"] { background: #d7ee72; color: #202526; }
       button[data-decision="request_changes"] { background: transparent; color: #fff; border-color: #c5d2cd; }
       #change-form { display: none; flex: 1 1 100%; gap: .5rem; align-items: end; }
       #change-form[data-open="true"] { display: flex; }
       textarea { flex: 1; min-height: 3.5rem; font: inherit; }
-      #error { color: #9b2424; }
-      @media (max-width: 720px) { .review-grid { grid-template-columns: 1fr; } header { display: block; } }
+      #error { color: #a12525; }
+      @media (max-width: 720px) {
+        header { display: block; }
+        .crop-grid, .audio-layout { grid-template-columns: 1fr; }
+        .decision-inner { align-items: stretch; }
+        #change-form[data-open="true"] { display: grid; }
+      }
     </style>
   </head>
   <body>
@@ -56,32 +82,46 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
         <p class="status" id="checksum">Checksum unavailable</p>
       </header>
       <p id="error" role="alert" hidden></p>
-      <div class="review-grid" id="review" hidden>
-        <section>
-          <section class="review-section" id="learner-preview">
-            <h2>Learner preview</h2>
-            <h3 data-content-path="title">Missing learner preview</h3>
-            <div class="lesson-field"><h4>Takeaway</h4><p data-content-path="takeaway"></p></div>
-            <div class="lesson-field"><h4>Action</h4><p data-content-path="action"></p></div>
-            <div class="lesson-field"><h4>Quick</h4><p data-content-path="depths.quick"></p></div>
-            <div class="lesson-field"><h4>Core</h4><p data-content-path="depths.core"></p></div>
-            <div class="lesson-field"><h4>Deep</h4><p data-content-path="depths.deep"></p></div>
-            <h4>Claim coverage</h4><ul id="claim-coverage"></ul>
-          </section>
-          <section class="review-section">
-            <h2>Evidence</h2>
-            <h4>Accepted sources</h4><ul id="accepted-sources"></ul>
-            <h4>Rejected sources</h4><ul id="rejected-sources"></ul>
-            <h4>Coverage gaps</h4><ul id="coverage-gaps"></ul>
-            <h4>Claims and citations</h4><ul id="claims"></ul>
-          </section>
-          <section class="review-section"><h2>QA</h2><p id="qa" class="muted">Loading QA status...</p><ul id="qa-findings"></ul></section>
+      <div class="review-flow" id="review" hidden>
+        <section class="review-section" id="story-section">
+          <h2>Story</h2><h3 id="story-title"></h3><p class="muted" id="story-meta"></p><div id="story-blocks"></div>
         </section>
-        <aside aria-label="Generated assets">
-          <section class="review-section"><h2>Hero</h2><div class="asset" id="hero">Missing hero preview.</div></section>
-          <section class="review-section"><h2>Infographic</h2><div class="asset" id="infographic">Missing infographic preview.</div></section>
-          <section class="review-section"><h2>Audio</h2><div class="asset" id="audio">Missing audio preview.</div></section>
-        </aside>
+        <section class="review-section" id="playbook-section">
+          <h2>Playbook</h2><h3 id="playbook-title"></h3><p id="playbook-principle"></p><p id="playbook-why"></p>
+          <div id="playbook-steps"></div><div id="playbook-example"></div><ul id="playbook-watch-outs"></ul><p id="playbook-action"></p>
+        </section>
+        <section class="review-section" id="hero-section">
+          <h2>Hero</h2><div class="asset" id="hero">Missing hero preview.</div><p id="hero-alt" class="muted"></p><p id="hero-metadata" class="muted"></p>
+          <div class="crop-grid" aria-label="Hero crop previews">
+            <div class="crop-preview"><h4>Lesson-header crop</h4><div class="crop-frame" id="hero-lesson-header"></div></div>
+            <div class="crop-preview"><h4>Card crop</h4><div class="crop-frame" id="hero-card"></div></div>
+            <div class="crop-preview"><h4>Thumbnail crop</h4><div class="crop-frame" id="hero-thumbnail"></div></div>
+          </div>
+        </section>
+        <section class="review-section" id="infographic-section">
+          <h2>Infographic</h2><div class="asset" id="infographic">Missing infographic preview.</div><p id="infographic-alt" class="muted"></p>
+          <h4>Text equivalent</h4><ul id="infographic-text-equivalent"></ul>
+        </section>
+        <section class="review-section" id="audio-brief-section">
+          <h2>Brief audio</h2><div class="audio-layout"><div class="asset" id="audio-brief">Missing Brief audio.</div><div><h4>Transcript</h4><p class="transcript" id="audio-brief-transcript"></p></div></div>
+        </section>
+        <section class="review-section" id="audio-discussion-section">
+          <h2>Discussion audio</h2><div class="audio-layout"><div class="asset" id="audio-discussion">Missing Discussion audio.</div><div><h4>Transcript</h4><p class="transcript" id="audio-discussion-transcript"></p></div></div>
+        </section>
+        <section class="review-section" id="quiz-section"><h2>Quiz</h2><div id="quiz"></div></section>
+        <section class="review-section" id="evidence-section">
+          <h2>Sources, claims, and QA</h2>
+          <h4>Accepted sources</h4><ul id="accepted-sources"></ul>
+          <h4>Rejected sources</h4><ul id="rejected-sources"></ul>
+          <h4>Coverage gaps</h4><ul id="coverage-gaps"></ul>
+          <h4>Claims and citations</h4><ul id="claims"></ul>
+          <h4>Claim coverage</h4><ul id="claim-coverage"></ul>
+          <h4>QA</h4><p id="qa" class="muted">Loading QA status...</p><ul id="qa-findings"></ul>
+        </section>
+        <details id="generation-provenance">
+          <summary>Generation provenance</summary>
+          <div id="generation-executions"></div>
+        </details>
       </div>
     </main>
     <footer class="decision-bar" aria-label="Overall review decision">

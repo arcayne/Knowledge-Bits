@@ -2,17 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
-import type { NugletLessonV1Payload } from '@knowledge-bits/contracts';
+import type { NugletGenerationPlan, NugletLessonV1Payload } from '@knowledge-bits/contracts';
 
 import type { ArtifactStorageAdapter } from './artifacts.js';
 import {
   ArtifactStorageObjectNotFoundError,
 } from './artifacts.js';
-import { ReviewPackageService } from './review-packages.js';
+import {
+  assembleGenerationExecutions,
+  ReviewPackageService,
+} from './review-packages.js';
 import { createApp } from '../app.js';
 import {
   createInMemoryWorkflowStore,
   WorkflowRepository,
+  type WorkflowArtifact,
 } from '../repositories/workflow-repository.js';
 
 const runId = '0f8fad5b-d9cb-469f-a165-70867728950e';
@@ -57,6 +61,8 @@ test('assembles and persists one checksum-bound review model from accepted artif
   assert.equal(model.package?.evidence.acceptedSources[0]?.title, 'Focused work evidence');
   assert.equal(model.package?.qa.deterministic.passed, true);
   assert.equal(model.assets.hero.state, 'available');
+  assert.ok(model.package?.artifactInventory.some((artifact) => artifact.kind === 'execution_report'));
+  assert.ok(Object.values(model.generationExecutions).every((executions) => executions.length === 0));
   assert.match(model.assets.hero.previewPath ?? '', new RegExp(`/runs/${runId}/artifacts/`));
   assert.notEqual(model.package?.packageChecksum, workerChecksum);
   assert.equal(run?.packageChecksum, model.package?.packageChecksum);
@@ -87,7 +93,8 @@ test('blocks decisions when only required review media is missing', async () => 
   assert.equal(model.decisionAllowed, false);
   assert.equal(model.assets.hero.state, 'missing');
   assert.equal(model.assets.infographic.state, 'missing');
-  assert.equal(model.assets.audio.state, 'missing');
+  assert.equal(model.assets.audioBrief.state, 'missing');
+  assert.equal(model.assets.audioDiscussion.state, 'missing');
   assert.match(model.issues.join(' '), /required review media/i);
 
   const app = createApp({
@@ -104,6 +111,65 @@ test('blocks decisions when only required review media is missing', async () => 
     body: JSON.stringify({ decision: 'approve', packageChecksum: model.package?.packageChecksum }),
   });
   assert.equal(decision.status, 409, await decision.clone().text());
+});
+
+test('joins every Story Playbook and media execution to complete inspectable provenance', () => {
+  const { artifacts, plan } = generationProvenanceFixture();
+
+  const executions = assembleGenerationExecutions(artifacts, plan);
+
+  assert.deepEqual(Object.keys(executions), [
+    'story',
+    'playbook',
+    'quiz',
+    'hero',
+    'infographic',
+    'audioBrief',
+    'audioDiscussion',
+  ]);
+  assert.equal(executions.story.length, 1);
+  assert.equal(executions.playbook.length, 1);
+  assert.equal(executions.quiz.length, 1);
+  assert.equal(executions.audioBrief.length, 2);
+  assert.equal(executions.audioDiscussion.length, 2);
+  for (const entries of Object.values(executions)) {
+    for (const execution of entries) {
+      assert.equal(execution.recipeSnapshot.kind, 'generation.recipe.snapshot');
+      assert.equal(execution.renderedPrompt.kind, 'generation.prompt.rendered');
+      assert.equal(execution.executionReport.kind, 'generation.execution.report');
+    }
+  }
+});
+
+test('blocks 1.1.0 provenance assembly when a recipe prompt or current execution report is missing', () => {
+  const missingPrompt = generationProvenanceFixture();
+  missingPrompt.artifacts = missingPrompt.artifacts.filter((artifact) => !(
+    artifact.kind === 'generation.prompt.rendered'
+    && artifact.provenance.recipeId === missingPrompt.plan.recipes.hero.id
+  ));
+  assert.throws(
+    () => assembleGenerationExecutions(missingPrompt.artifacts, missingPrompt.plan),
+    /hero.*rendered prompt|provenance.*hero/i,
+  );
+
+  const legacyReport = generationProvenanceFixture('execution_report');
+  assert.doesNotThrow(() => legacyReport.artifacts.find((artifact) => artifact.kind === 'execution_report'));
+  assert.throws(
+    () => assembleGenerationExecutions(legacyReport.artifacts, legacyReport.plan),
+    /execution report/i,
+  );
+
+  const mismatchedProfile = generationProvenanceFixture();
+  const heroSnapshot = mismatchedProfile.artifacts.find((artifact) => (
+    artifact.kind === 'generation.recipe.snapshot'
+    && artifact.provenance.recipeId === mismatchedProfile.plan.recipes.hero.id
+  ));
+  assert.ok(heroSnapshot);
+  heroSnapshot.checksum = 'f'.repeat(64);
+  assert.throws(
+    () => assembleGenerationExecutions(mismatchedProfile.artifacts, mismatchedProfile.plan),
+    /hero.*recipe snapshot checksum/i,
+  );
 });
 
 test('blocks approval for failed QA, blocking editorial findings, or stale asset inputs', async () => {
@@ -235,9 +301,11 @@ async function fixture(options: {
     evidence: 'objects/evidence',
     content: 'objects/content',
     qa: 'objects/qa',
+    legacyExecutionReport: 'objects/legacy-execution-report',
     hero: 'objects/hero',
     infographic: 'objects/infographic',
-    audio: 'objects/audio',
+    audioBrief: 'objects/audio-brief',
+    audioDiscussion: 'objects/audio-discussion',
     staleHero: 'objects/stale-hero',
     snapshot: 'objects/snapshot',
   };
@@ -287,6 +355,14 @@ async function fixture(options: {
       action: 'create_content',
       mediaType: 'application/json',
       body: contentOutput(),
+    },
+    {
+      id: '20000000-0000-4000-8000-000000000009',
+      kind: 'execution_report',
+      storageKey: artifactKeys.legacyExecutionReport,
+      action: 'create_content',
+      mediaType: 'application/json',
+      body: { provider: 'historical-fixture', status: 'complete' },
     },
     {
       id: '20000000-0000-4000-8000-000000000003',
@@ -342,11 +418,20 @@ async function fixture(options: {
       },
       {
         id: '20000000-0000-4000-8000-000000000006',
-        kind: 'audio',
-        storageKey: artifactKeys.audio,
+        kind: 'audio_brief',
+        storageKey: artifactKeys.audioBrief,
         action: 'produce_assets',
         mediaType: 'audio/mpeg',
-        body: 'audio-bytes',
+        body: 'brief-audio-bytes',
+        inputChecksum: options.assetInputChecksum ?? calculateContentChecksum(contentOutput()),
+      },
+      {
+        id: '20000000-0000-4000-8000-000000000008',
+        kind: 'audio_discussion',
+        storageKey: artifactKeys.audioDiscussion,
+        action: 'produce_assets',
+        mediaType: 'audio/mpeg',
+        body: 'discussion-audio-bytes',
         inputChecksum: options.assetInputChecksum ?? calculateContentChecksum(contentOutput()),
       },
     );
@@ -386,6 +471,129 @@ async function fixture(options: {
     staleMediaId: options.includeStaleHero ? '10000000-0000-4000-8000-000000000007' : null,
   };
 }
+
+function generationProvenanceFixture(
+  reportKind = 'generation.execution.report',
+): { artifacts: WorkflowArtifact[]; plan: NugletGenerationPlan } {
+  const binding = (id: string, digit: string) => ({
+    id,
+    version: '1.0.0',
+    checksum: `sha256:${digit.repeat(64)}`,
+  });
+  const recipes = {
+    story: binding('nuglet.lesson.story', '1'),
+    playbook: binding('nuglet.lesson.playbook', '2'),
+    challenge: binding('nuglet.challenge', '3'),
+    infographic: binding('nuglet.visual.infographic', '4'),
+    audioBrief: binding('nuglet.audio.brief', '5'),
+    audioDiscussion: binding('nuglet.audio.discussion', '6'),
+    hero: binding('nuglet.hero', '7'),
+    editorialQa: binding('nuglet.qa.editorial', '8'),
+  };
+  const plan = { recipes } as NugletGenerationPlan;
+  const artifacts: WorkflowArtifact[] = [];
+  const createJobId = '70000000-0000-4000-8000-000000000001';
+  const mediaJobId = '70000000-0000-4000-8000-000000000002';
+  const createExecutions = [recipes.story, recipes.playbook, recipes.challenge].map((recipe) => (
+    addExecutionPair(artifacts, recipe, createJobId, 'create_content', 'a')
+  ));
+  const mediaExecutions = [
+    addExecutionPair(artifacts, recipes.hero, mediaJobId, 'produce_assets', 'a', [
+      `sha256:${'9'.repeat(64)}`,
+      `sha256:${'a'.repeat(64)}`,
+    ]),
+    addExecutionPair(artifacts, recipes.infographic, mediaJobId, 'produce_assets', 'a'),
+    addExecutionPair(artifacts, recipes.audioBrief, mediaJobId, 'produce_assets', 'a'),
+    addExecutionPair(artifacts, recipes.audioBrief, mediaJobId, 'produce_assets', 'b'),
+    addExecutionPair(artifacts, recipes.audioDiscussion, mediaJobId, 'produce_assets', 'a'),
+    addExecutionPair(artifacts, recipes.audioDiscussion, mediaJobId, 'produce_assets', 'b'),
+  ];
+  artifacts.push(
+    workflowArtifact({
+      kind: reportKind,
+      jobId: createJobId,
+      action: 'create_content',
+      checksum: 'c'.repeat(64),
+      provenance: { generationExecutions: createExecutions },
+    }),
+    workflowArtifact({
+      kind: reportKind,
+      jobId: mediaJobId,
+      action: 'produce_assets',
+      checksum: 'd'.repeat(64),
+      provenance: { generationExecutions: mediaExecutions },
+    }),
+  );
+  return { artifacts, plan };
+}
+
+function addExecutionPair(
+  artifacts: WorkflowArtifact[],
+  recipe: NugletGenerationPlan['recipes'][keyof NugletGenerationPlan['recipes']],
+  jobId: string,
+  action: string,
+  promptDigit: string,
+  referenceChecksums: string[] = [],
+) {
+  const provenance = {
+    recipeId: recipe.id,
+    recipeVersion: recipe.version,
+    recipeChecksum: recipe.checksum,
+    promptChecksum: `sha256:${promptDigit.repeat(64)}`,
+    model: 'fixture-model',
+    referenceChecksums,
+  };
+  artifacts.push(
+    workflowArtifact({
+      kind: 'generation.recipe.snapshot',
+      jobId,
+      action,
+      checksum: recipe.checksum.replace('sha256:', ''),
+      provenance,
+    }),
+    workflowArtifact({
+      kind: 'generation.prompt.rendered',
+      jobId,
+      action,
+      checksum: promptDigit.repeat(64),
+      provenance,
+    }),
+  );
+  return provenance;
+}
+
+function workflowArtifact(input: {
+  kind: string;
+  jobId: string;
+  action: string;
+  checksum: string;
+  provenance: Record<string, unknown>;
+}): WorkflowArtifact {
+  const id = `80000000-0000-4000-8000-${String(provenanceArtifactCounter++).padStart(12, '0')}`;
+  return {
+    id,
+    runId,
+    revision: 1,
+    kind: input.kind,
+    mediaType: input.kind === 'generation.prompt.rendered' ? 'text/plain' : 'application/json',
+    checksum: input.checksum,
+    storageKey: `objects/${id}`,
+    byteSize: 128,
+    provenance: {
+      action: input.action,
+      jobId: input.jobId,
+      provider: 'fixture',
+      ...input.provenance,
+    },
+    inputChecksum: null,
+    jobId: input.jobId,
+    stage: input.action === 'create_content' ? 'create' : 'produce_assets',
+    action: input.action,
+    createdAt: new Date('2026-07-15T10:00:00.000Z'),
+  };
+}
+
+let provenanceArtifactCounter = 1;
 
 function contentOutput(): NugletLessonV1Payload {
   const citation = {
