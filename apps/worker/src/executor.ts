@@ -244,7 +244,6 @@ export class WorkerExecutor {
       job,
       provider,
       supportArtifacts,
-      carriesNugletGenerationPlan(job),
     );
     const artifacts: ExecutionArtifact[] = [
       ...supportArtifacts
@@ -339,7 +338,6 @@ function validateGenerationProvenance(
   job: JobClaim,
   provider: string,
   artifacts: readonly ProviderSupportArtifact[],
-  bindToPlan: boolean,
 ): Readonly<Record<string, unknown>> | undefined {
   const evidenceArtifacts = artifacts.filter(({ kind }) => kind !== 'generation.execution.report');
   if (evidenceArtifacts.length === 0) return undefined;
@@ -375,7 +373,7 @@ function validateGenerationProvenance(
     if (group.some(({ provenance }) => !sameGenerationProvenance(provenance, expected))) {
       throw new GenerationProvenanceError('generation_provenance_conflict');
     }
-    if (bindToPlan && !recipeIsBoundToJobPlan(job, expected)) {
+    if (!recipeIsBoundToJobPlan(job, expected)) {
       throw new GenerationProvenanceError('generation_provenance_recipe_mismatch');
     }
     if (expected.recipeChecksum !== prefixedChecksum(recipeSnapshots[0]!.artifact.body)
@@ -486,20 +484,16 @@ function redactValue(value: unknown, secrets: readonly string[], seen: WeakSet<o
 
 function redactString(value: string, secrets: readonly string[]): string {
   const safeUrls: string[] = [];
-  const withoutCredentialUrls = value.replace(URL_PATTERN, (candidate) => {
-    try {
-      const parsed = new URL(candidate);
-      if (parsed.username || parsed.password) return '[REDACTED_URL]';
-      const token = `__SAFE_URL_${safeUrls.length}__`;
-      safeUrls.push(candidate);
-      return token;
-    } catch {
-      return candidate;
-    }
+  const withoutUnsafeUrls = value.replace(URL_PATTERN, (candidate) => {
+    const replacement = sanitizeUrl(candidate, secrets);
+    if (replacement) return replacement;
+    const token = `__SAFE_URL_${safeUrls.length}__`;
+    safeUrls.push(candidate);
+    return token;
   });
   const withoutEnvironmentSecrets = secrets.reduce(
     (safe, secret) => safe.replaceAll(secret, '[REDACTED]'),
-    withoutCredentialUrls,
+    withoutUnsafeUrls,
   );
   const withoutCredentialLiterals = withoutEnvironmentSecrets
     .replace(/\b(?:bearer|basic|token)\s+[A-Za-z0-9._~+\/=:-]{8,}\b/gi, '[REDACTED]')
@@ -507,13 +501,44 @@ function redactString(value: string, secrets: readonly string[]): string {
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
     .replace(/\b(?:api.?key|credential|password|secret|token)\s*[=:]\s*[^\s,;]+/gi, '[REDACTED]');
   const withoutPaths = withoutCredentialLiterals
-    .replace(/"((?:file:\/\/|~[\\/]|[A-Za-z]:[\\/]|\/(?!\/))[^"\r\n]+)"/gi, '"[REDACTED_PATH]"')
-    .replace(/'((?:file:\/\/|~[\\/]|[A-Za-z]:[\\/]|\/(?!\/))[^'\r\n]+)'/gi, "'[REDACTED_PATH]'")
-    .replace(/`((?:file:\/\/|~[\\/]|[A-Za-z]:[\\/]|\/(?!\/))[^`\r\n]+)`/gi, '`[REDACTED_PATH]`')
-    .replace(/<((?:file:\/\/|~[\\/]|[A-Za-z]:[\\/]|\/(?!\/))[^>\r\n]+)>/gi, '<[REDACTED_PATH]>')
-    .replace(/file:\/\/[^\s"'`<>{}\[\]()]+/gi, '[REDACTED_PATH]')
-    .replace(/~[\\/][^\s"'`<>{}\[\]()]+|[A-Za-z]:[\\/][^\s"'`<>{}\[\]()]+|(?<![A-Za-z0-9._-])\/(?!\/)[^\s"'`<>{}\[\]()]+/g, '[REDACTED_PATH]');
+    .replace(/"((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^"\r\n]+)"/gi, '"[REDACTED_PATH]"')
+    .replace(/'((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^'\r\n]+)'/gi, "'[REDACTED_PATH]'")
+    .replace(/`((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^`\r\n]+)`/gi, '`[REDACTED_PATH]`')
+    .replace(/<((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^>\r\n]+)>/gi, '<[REDACTED_PATH]>')
+    .replace(/(?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|(?<![A-Za-z0-9._-])\/(?!\/))[^\s"'`<>{}\[\]()]+/g, '[REDACTED_PATH]');
   return safeUrls.reduce((safe, url, index) => safe.replaceAll(`__SAFE_URL_${index}__`, url), withoutPaths);
+}
+
+function sanitizeUrl(candidate: string, secrets: readonly string[]): string | undefined {
+  if (/^file:/i.test(candidate) || containsSecret(candidate, secrets)) return '[REDACTED_URL]';
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.username || parsed.password || hasCredentialParameter(parsed.searchParams)) {
+      return '[REDACTED_URL]';
+    }
+    const fragment = parsed.hash.slice(1);
+    if (fragment && hasCredentialParameter(new URLSearchParams(fragment))) return '[REDACTED_URL]';
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function containsSecret(value: string, secrets: readonly string[]): boolean {
+  const decoded = safelyDecodeUrl(value);
+  return secrets.some((secret) => value.includes(secret) || decoded.includes(secret));
+}
+
+function safelyDecodeUrl(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function hasCredentialParameter(parameters: URLSearchParams): boolean {
+  return Array.from(parameters.keys()).some((key) => isSensitiveKey(key));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -521,7 +546,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const SENSITIVE_KEY = /(?:access.?key|api.?key|authorization|auth(?:entication)?|bearer|client.?secret|connection.?string|cookie|credential|dsn|keyfile|oauth|pass(?:word|phrase)|private.?key|secret|session|signature|signing.?key|token)/i;
-const URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s"'`<>{}\[\]()]+/gi;
+const URL_PATTERN = /(?:[a-z][a-z0-9+.-]*:\/\/|file:)[^\s"'`<>{}\[\]()]+/gi;
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY.test(key);
@@ -544,13 +569,6 @@ type GenerationProvenance = Readonly<Record<string, unknown>> & {
   model: string;
   referenceChecksums: readonly string[];
 };
-
-function carriesNugletGenerationPlan(job: JobClaim): boolean {
-  const brief = job.input.brief;
-  if (!isRecord(brief)) return false;
-  const plan = brief.generationPlan;
-  return isRecord(plan) && plan.contentKind === 'nuglet.lesson.v1';
-}
 
 function recipeIsBoundToJobPlan(job: JobClaim, provenance: GenerationProvenance): boolean {
   const brief = job.input.brief;

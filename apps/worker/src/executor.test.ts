@@ -253,10 +253,12 @@ test('uploads the audit artifact triplet before reporting a non-asset success', 
 
 test('uploads immutable recipe and prompt support artifacts during a non-media stage', async () => {
   const client = new FakeEngineClient();
-  const claimedJob = job('research');
   const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
   const promptBody = Buffer.from('Create the Story.');
   const provenance = generationProvenance(recipeBody, promptBody);
+  const claimedJob = jobWithRecipePlan('research', {
+    story: recipeBinding(provenance),
+  });
   const provider = providerFor('collect_sources', {
     ...successOutput(),
     supportArtifacts: [
@@ -401,6 +403,36 @@ test('rejects valid artifact bytes when their recipe identity is not bound to th
   assert.equal(client.results[0]?.result.error, 'generation_provenance_recipe_mismatch');
 });
 
+test('rejects recipe and prompt evidence when the job has no claimed generation plan', async () => {
+  const client = new FakeEngineClient();
+  const recipeBody = Buffer.from('{"id":"fixture.recipe","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Create the fixture.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const provider = providerFor('collect_sources', {
+    ...successOutput(),
+    supportArtifacts: [{
+      kind: 'generation.recipe.snapshot',
+      mediaType: 'application/json',
+      body: recipeBody,
+      inputChecksum: null,
+      provenance,
+    }, {
+      kind: 'generation.prompt.rendered',
+      mediaType: 'text/plain',
+      body: promptBody,
+      inputChecksum: prefixedChecksum(recipeBody),
+      provenance,
+    }],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('research'));
+
+  assert.equal(client.completedArtifacts.length, 0);
+  assert.equal(client.results[0]?.result.state, 'needs_human');
+  assert.equal(client.results[0]?.result.error, 'generation_provenance_recipe_mismatch');
+});
+
 test('rejects missing, conflicting, and body-mismatched generation provenance before uploading artifacts', async (context) => {
   const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
   const promptBody = Buffer.from('Create the Story.');
@@ -458,7 +490,9 @@ test('rejects missing, conflicting, and body-mismatched generation provenance be
       });
       const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
 
-      await executor.execute(job('research'));
+      await executor.execute(jobWithRecipePlan('research', {
+        scenario: recipeBinding(scenario.provenance),
+      }));
 
       assert.equal(client.completedArtifacts.length, 0);
       assert.equal(client.results[0]?.result.state, 'needs_human');
@@ -550,12 +584,23 @@ test('removes credentials, path fields, and embedded absolute paths from generat
           'open "/Users/name/My Project/private.json" or <C:\\Build Output\\private.json>',
           "open '/srv/My Project/private.json' or `D:\\Build Output\\private.json`",
         ].join('; '),
+        endpoint: [
+          `https://api.example.test/run?endpoint=${secret}`,
+          'https://api.example.test/run?token=query-credential-12345',
+          'https://api.example.test/run#access_token=fragment-credential-12345',
+          'https://worker:query-credential-12345@api.example.test/run',
+          'file:///Users/name/My%20Project/private.json',
+          'open "\\\\server\\share\\My Project\\private.json"',
+          'open <\\\\?\\C:\\Build Output\\private.json>',
+        ],
         safeSetting: 'kept',
       },
     });
     const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
 
-    await executor.execute(job('research'));
+    await executor.execute(jobWithRecipePlan('research', {
+      safe: recipeBinding(generationProvenance(recipeBody, promptBody)),
+    }));
 
     const reportIndex = client.completedArtifacts.findIndex(({ kind }) => kind === 'generation.execution.report');
     const report = Buffer.from(client.uploadedArtifacts[reportIndex]!.body).toString('utf8');
@@ -578,6 +623,12 @@ test('removes credentials, path fields, and embedded absolute paths from generat
     assert.equal(report.includes('Project/private.json'), false);
     assert.equal(report.includes('Output\\\\private.json'), false);
     assert.equal(report.includes(credential), false);
+    assert.equal(report.includes('query-credential-12345'), false);
+    assert.equal(report.includes('fragment-credential-12345'), false);
+    assert.equal(report.includes('My%20Project/private.json'), false);
+    assert.equal(report.includes('server\\share\\My Project\\private.json'), false);
+    assert.equal(report.includes('Build Output\\private.json'), false);
+    assert.match(report, /endpoint/);
     assert.match(report, /safeSetting/);
     const recipeProvenance = JSON.stringify(client.completedArtifacts.find(
       ({ kind }) => kind === 'generation.recipe.snapshot',
@@ -783,6 +834,33 @@ function nugletJob(
         },
       },
     },
+  };
+}
+
+function jobWithRecipePlan(
+  stage: JobClaim['stage'],
+  recipes: Readonly<Record<string, { id: string; version: string; checksum: string }>>,
+): JobClaim {
+  const claimed = job(stage);
+  return {
+    ...claimed,
+    input: {
+      ...claimed.input,
+      brief: {
+        generationPlan: {
+          contentKind: 'fixture.generic.v1',
+          recipes,
+        },
+      },
+    },
+  };
+}
+
+function recipeBinding(provenance: Readonly<Record<string, unknown>>): { id: string; version: string; checksum: string } {
+  return {
+    id: String(provenance.recipeId),
+    version: String(provenance.recipeVersion),
+    checksum: String(provenance.recipeChecksum),
   };
 }
 
