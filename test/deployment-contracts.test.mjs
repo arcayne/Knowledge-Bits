@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 
 const repositoryRoot = new URL('../', import.meta.url);
@@ -51,6 +51,49 @@ test('worker remains outside the Vercel deployment surface', async () => {
   await assert.rejects(access(new URL('apps/worker/vercel.json', repositoryRoot)));
 });
 
+test('provider credentials and recipe filesystem roots remain local-worker-only', async () => {
+  const deployedRuntimeFiles = [
+    'apps/api/vercel.json',
+    'apps/api/package.json',
+    'apps/review/vercel.json',
+    'apps/review/package.json',
+    'apps/review/astro.config.mjs',
+    ...await sourceFiles('apps/api/api'),
+    ...await sourceFiles('apps/api/src'),
+    ...await sourceFiles('apps/review/src'),
+  ];
+  const workerRuntime = await readFile(new URL('apps/worker/src/runtime.ts', repositoryRoot), 'utf8');
+  const forbiddenDeploymentConfiguration = [
+    'PRODUCT_RECIPE_ROOTS',
+    'WORKER_FIXTURE_DIRECTORY',
+    'NOTEBOOKLM_TIMEOUT_MS',
+    'NOTEBOOKLM_TRUSTED_SOURCE_HOSTS',
+    'PI_PROVIDER',
+    'PI_MODEL',
+    'MEDIA_GENERATION_COMMAND',
+    'MEDIA_GENERATION_ARGS',
+  ];
+
+  for (const path of deployedRuntimeFiles) {
+    const contents = await readFile(new URL(path, repositoryRoot), 'utf8');
+    for (const name of forbiddenDeploymentConfiguration) {
+      assert.doesNotMatch(contents, new RegExp(`\\b${name}\\b`), `${path} must not expose ${name}`);
+    }
+  }
+  assert.match(workerRuntime, /env\.PRODUCT_RECIPE_ROOTS/);
+  assert.match(workerRuntime, /parseProductRecipeRoots/);
+});
+
 async function readJson(path) {
   return JSON.parse(await readFile(new URL(path, repositoryRoot), 'utf8'));
+}
+
+async function sourceFiles(path) {
+  const entries = await readdir(new URL(`${path}/`, repositoryRoot), { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const child = `${path}/${entry.name}`;
+    if (entry.isDirectory()) return sourceFiles(child);
+    return /\.(?:astro|js|mjs|ts)$/.test(entry.name) && !/\.test\./.test(entry.name) ? [child] : [];
+  }));
+  return files.flat();
 }

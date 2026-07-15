@@ -14,21 +14,23 @@ import { createApp } from '../../apps/api/dist/app.js';
 import { createIsolatedPrismaClient } from '../../apps/api/dist/config.js';
 import { createWorkflowRepository } from '../../apps/api/dist/repositories/workflow-repository.js';
 import { FixtureDeliveryAdapter } from '../../apps/api/dist/services/delivery-adapters/fixture.js';
+import { calculateStoryPlaybookGenerationInputChecksum } from '../../apps/api/dist/services/nuglet-package-materializer.js';
 import { HttpEngineClient } from '../../apps/worker/dist/engine-client.js';
 import { WorkerExecutor } from '../../apps/worker/dist/executor.js';
 import { composeWorkerProviders } from '../../apps/worker/dist/runtime.js';
 import { calculateContentChecksum } from '../../packages/pipeline/dist/package-builder.js';
 
+import { createSchema11RunRequest } from './schema-1-1-fixture.mjs';
+
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 const apiRoot = fileURLToPath(new URL('../../apps/api/', import.meta.url));
-const fixtureRoot = fileURLToPath(new URL('../fixtures/attention-recovery/', import.meta.url));
-const providerRoot = fileURLToPath(new URL('../fixtures/attention-recovery/providers/', import.meta.url));
+const providerRoot = fileURLToPath(new URL('../../apps/worker/src/providers/fixtures/', import.meta.url));
 const requireFromApi = createRequire(new URL('../../apps/api/package.json', import.meta.url));
 const { serve } = requireFromApi('@hono/node-server');
 const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0;
 
 test(
-  'brief becomes one approved and verified Knowledge Bits delivery',
+  'schema 1.1.0 fixture becomes one complete checksum-bound Knowledge Bits approval',
   { skip: dockerUnavailable ? 'Docker is unavailable' : false, timeout: 120_000 },
   async (t) => {
     const containerName = `knowledge-bits-e2e-${randomUUID()}`;
@@ -84,8 +86,10 @@ test(
       workerToken: 'fixture-worker-token-b',
       fetch: routedFetch,
     });
-    const fixtureBrief = JSON.parse(await readFile(`${fixtureRoot}/brief.json`, 'utf8'));
-    const fixtureCandidate = JSON.parse(await readFile(`${providerRoot}/create-content.json`, 'utf8'));
+    const fixtureBrief = createSchema11RunRequest();
+    const fixtureCandidate = JSON.parse(
+      await readFile(`${providerRoot}/create-content-story-playbook.json`, 'utf8'),
+    ).parsedOutput;
 
     const created = await requestJson(app, '/runs', 'fixture-api-token', {
       method: 'POST',
@@ -103,10 +107,17 @@ test(
     });
     assert.equal(await repository.releaseExpiredLeases(), 1);
 
-    await drainFixtureWorker(restartedClient, providers);
+    await drainFixtureWorker(restartedClient, providers, 1);
     const reclaimed = await prisma.job.findUniqueOrThrow({ where: { id: interrupted.jobId } });
     assert.equal(reclaimed.state, 'done');
     assert.equal(reclaimed.attempt, 2);
+
+    const incomplete = await requestJson(app, `/runs/${created.id}/review`, 'fixture-review-token');
+    assert.equal(incomplete.currentStage, 'produce_assets');
+    assert.equal(incomplete.decisionAllowed, false);
+    assert.ok(incomplete.issues.some((issue) => /missing|required/i.test(issue)));
+
+    assert.equal(await drainFixtureWorker(restartedClient, providers, 1), 1);
 
     const identityHeaders = { 'Cf-Access-Jwt-Assertion': identityRuntime.token };
     const pageResponse = await fetch(`${reviewRuntime.url}/runs/${created.id}`, { headers: identityHeaders });
@@ -129,31 +140,67 @@ test(
     assert.deepEqual(review.issues, []);
     assert.ok(review.package);
     assert.equal(review.currentPackageChecksum, review.package.packageChecksum);
-    assert.equal(review.package.evidence.acceptedSources.length, 2);
+    assert.equal(review.package.content.target.kind, 'nuglet.lesson.v1');
+    assert.equal(review.package.content.target.schemaVersion, '1.1.0');
+    assert.equal(review.package.content.target.payload.materialization, 'materialized');
+    assert.notDeepEqual(
+      review.package.content.target.payload.read.story,
+      review.package.content.target.payload.read.playbook,
+    );
+    assert.equal(review.package.content.target.payload.quiz.questions.length, 3);
+    assert.equal(review.package.evidence.acceptedSources.length, 1);
     assert.ok(review.package.evidence.acceptedSources.every(({ url }) => new URL(url).hostname === 'example.test'));
     assert.ok(review.package.evidence.acceptedSources.every(({ snapshot }) => snapshot.kind === 'source_snapshot'));
     assert.deepEqual(review.package.evidence.rejectedSources, []);
     assert.deepEqual(review.package.evidence.coverageGaps, []);
     assert.ok(review.package.evidence.claims.every(({ citations }) => citations.length > 0));
     assert.ok(review.package.content.target.payload.claims.every(({ citations }) => citations.length > 0));
-    assert.equal(review.package.content.target.payload.title, fixtureCandidate.title);
-    assert.equal(review.package.content.target.payload.takeaway, fixtureCandidate.takeaway);
-    assert.equal(review.package.content.target.payload.action, fixtureCandidate.action);
-    assert.deepEqual(review.package.content.target.payload.depths, fixtureCandidate.depths);
-    assert.deepEqual(review.package.content.target.payload.claimCoverage, fixtureCandidate.claimCoverage);
-    assert.equal(review.package.content.target.payload.claims.length, fixtureCandidate.claims.length);
-    const contentChecksum = calculateContentChecksum(review.package.content.target.payload);
-    assert.equal(review.package.qa.deterministic.contentChecksum, contentChecksum);
+    const semanticCandidate = resolveSnapshotPlaceholder(
+      fixtureCandidate,
+      review.package.evidence.acceptedSources[0].snapshot.artifactId,
+    );
+    assert.equal(review.package.content.target.payload.identity.title, semanticCandidate.payload.identity.title);
+    assert.deepEqual(review.package.content.target.payload.claimCoverage, semanticCandidate.payload.claimCoverage);
+    assert.equal(review.package.content.target.payload.claims.length, semanticCandidate.payload.claims.length);
+    const semanticChecksum = calculateContentChecksum(semanticCandidate);
+    const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(
+      semanticCandidate,
+      fixtureBrief.brief.generationPlan,
+    );
+    const changedDirection = structuredClone(fixtureBrief.brief.generationPlan);
+    changedDirection.heroDirection.mustAvoid.push('dense collage');
+    assert.notEqual(
+      calculateStoryPlaybookGenerationInputChecksum(semanticCandidate, changedDirection),
+      generationInputChecksum,
+    );
+    assert.equal(review.package.qa.deterministic.contentChecksum, semanticChecksum);
     assert.ok(review.package.artifactInventory
-      .filter(({ kind }) => ['hero', 'infographic', 'audio'].includes(kind))
-      .every(({ inputChecksum }) => inputChecksum === contentChecksum));
+      .filter(({ kind }) => ['hero', 'infographic', 'audio_brief', 'audio_discussion'].includes(kind))
+      .every(({ inputChecksum }) => inputChecksum === generationInputChecksum));
     assert.deepEqual(
       Object.values(review.assets).map(({ state }) => state),
-      ['available', 'available', 'available'],
+      ['available', 'available', 'available', 'available'],
     );
+    assertCompleteGenerationProvenance(review);
+
+    const repeatedResponse = await fetch(`${reviewRuntime.url}/api/review?runId=${created.id}`, {
+      headers: identityHeaders,
+    });
+    const repeatedText = await repeatedResponse.text();
+    assert.equal(repeatedResponse.status, 200, repeatedText);
+    const repeated = JSON.parse(repeatedText);
+    assert.equal(repeated.currentPackageChecksum, review.currentPackageChecksum);
+    assert.equal(repeated.package.packageChecksum, review.package.packageChecksum);
+    assert.deepEqual(repeated.package, review.package);
 
     const surfaceChecksum = review.currentPackageChecksum;
     assert.equal(surfaceChecksum, review.package.packageChecksum);
+    const staleApproval = await postReview(reviewRuntime, identityHeaders, csrfCookie, csrfToken, {
+      runId: created.id,
+      decision: 'approve',
+      packageChecksum: 'f'.repeat(64),
+    });
+    assert.equal(staleApproval.status, 409, staleApproval.text);
     const approvalResponse = await fetch(`${reviewRuntime.url}/api/review`, {
       method: 'POST',
       headers: {
@@ -206,6 +253,64 @@ test(
     );
   },
 );
+
+function assertCompleteGenerationProvenance(review) {
+  const outputKindByRole = {
+    story: 'parsed_output',
+    playbook: 'parsed_output',
+    quiz: 'parsed_output',
+    hero: 'hero',
+    infographic: 'infographic',
+    audioBrief: 'audio_brief',
+    audioDiscussion: 'audio_discussion',
+  };
+  for (const [role, outputKind] of Object.entries(outputKindByRole)) {
+    const executions = review.generationExecutions[role];
+    assert.ok(executions.length > 0, `${role} should expose generation provenance`);
+    for (const execution of executions) {
+      assert.equal(execution.role, role);
+      assert.equal(execution.outputKind, outputKind);
+      assert.match(execution.outputChecksum, /^sha256:[a-f0-9]{64}$/);
+      assert.match(execution.promptChecksum, /^sha256:[a-f0-9]{64}$/);
+      assert.match(execution.recipe.checksum, /^sha256:[a-f0-9]{64}$/);
+      assert.equal(execution.recipeSnapshot.kind, 'generation.recipe.snapshot');
+      assert.equal(execution.renderedPrompt.kind, 'generation.prompt.rendered');
+      assert.equal(execution.executionReport.kind, 'generation.execution.report');
+      const output = review.package.artifactInventory.find(({ kind, checksum }) => (
+        kind === outputKind && `sha256:${checksum}` === execution.outputChecksum
+      ));
+      assert.ok(output, `${role} output should be in the immutable package inventory`);
+      assert.equal(execution.outputChecksum, `sha256:${output.checksum}`);
+    }
+  }
+}
+
+function resolveSnapshotPlaceholder(value, artifactId) {
+  if (value === '$snapshotArtifactId:11111111-1111-4111-8111-111111111111') return artifactId;
+  if (Array.isArray(value)) return value.map((item) => resolveSnapshotPlaceholder(item, artifactId));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      resolveSnapshotPlaceholder(item, artifactId),
+    ]));
+  }
+  return value;
+}
+
+async function postReview(runtime, identityHeaders, csrfCookie, csrfToken, body) {
+  const response = await fetch(`${runtime.url}/api/review`, {
+    method: 'POST',
+    headers: {
+      ...identityHeaders,
+      'Content-Type': 'application/json',
+      Cookie: csrfCookie,
+      Origin: runtime.url,
+      'X-CSRF-Token': csrfToken,
+    },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, text: await response.text() };
+}
 
 class FixtureStorageAdapter {
   objects = new Map();
