@@ -569,6 +569,29 @@ test('honors a safe retry-after delay for a temporary NotebookLM transport respo
   );
 });
 
+test('classifies transient DNS EAI_AGAIN as a bounded transport wait', async () => {
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    now: () => new Date('2026-07-13T10:00:00.000Z'),
+    process: processWith([], [
+      {
+        stdout: '',
+        stderr: 'getaddrinfo EAI_AGAIN notebooklm.google.com; retry after 7200 seconds',
+        exitCode: 1,
+      },
+    ]),
+    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
+  });
+
+  await assert.rejects(
+    () => provider.execute(input('collect_sources')),
+    (error: unknown) => error instanceof Error
+      && error.message === 'notebooklm_transport_unavailable'
+      && 'retryAt' in error
+      && (error as { retryAt: string }).retryAt === '2026-07-13T10:01:00.000Z',
+  );
+});
+
 test('keeps NotebookLM authentication and notebook failures as human configuration work', async (context) => {
   const cases = [
     { name: 'authentication', output: 'authentication required: please login' },

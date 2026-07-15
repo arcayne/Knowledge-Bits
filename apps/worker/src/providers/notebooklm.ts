@@ -558,7 +558,7 @@ function parsedRetryAfterSeconds(value: string): number | undefined {
 }
 
 function isTemporaryTransportFailure(value: string): boolean {
-  return /\b(?:http\s*)?5(?:00|02|03|04)\b|bad gateway|gateway (?:error|timeout)|service unavailable|connection (?:reset|refused)|(?:temporary|transient) (?:dns|network|name resolution|failure)|(?:network|dns) (?:failure|error|unreachable)|socket hang ?up|econnreset|econnrefused|etimedout|timed? out|timeout/i.test(value);
+  return /\b(?:http\s*)?5(?:00|02|03|04)\b|bad gateway|gateway (?:error|timeout)|service unavailable|connection (?:reset|refused)|(?:temporary|transient) (?:dns|network|name resolution|failure)|(?:network|dns) (?:failure|error|unreachable)|socket hang ?up|eai[_ ]?again|econnreset|econnrefused|etimedout|timed? out|timeout/i.test(value);
 }
 
 function isDurableTransportConfigurationFailure(value: string): boolean {
