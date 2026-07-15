@@ -13,6 +13,7 @@ test('NotebookLM fixtures contain no credential names or absolute home paths', a
   const fixtureUrls = [
     new URL('./fixtures/notebooklm-research.json', import.meta.url),
     new URL('./fixtures/notebooklm-create.json', import.meta.url),
+    new URL('./fixtures/notebooklm-story-playbook.json', import.meta.url),
     new URL('./fixtures/pi-editorial.json', import.meta.url),
   ];
   const fixtures = await Promise.all(fixtureUrls.map(async (url) => JSON.parse(await readFile(url, 'utf8'))));
@@ -71,7 +72,7 @@ test('does not activate Story recipe semantics before the Story and Playbook tas
       notebookId: 'notebook_fixture_01',
       sourceUrls: [],
       topic: 'returning to focused work',
-      generationPlan: generationPlanFor(storyRecipe),
+      generationPlan: generationPlanFor({ story: storyRecipe }),
       resolvedRecipes: { story: storyRecipe },
     }),
   });
@@ -83,6 +84,144 @@ test('does not activate Story recipe semantics before the Story and Playbook tas
   const prompt = String(calls[1]?.args[3]);
   assert.doesNotMatch(prompt, /Keep the research grounded/);
   assert.equal(result.supportArtifacts, undefined);
+});
+
+test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const recipes = generationRecipes();
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: 'returning to focused work',
+      locale: 'en-GB',
+      audience: 'busy knowledge workers',
+      objective: 'make interrupted work easier to resume',
+      centralIdea: 'A visible next step reduces restart friction.',
+      evidence: {
+        sources: [{
+          sourceId,
+          title: 'Accepted source',
+          snapshotArtifactId: '55555555-5555-4555-8555-555555555555',
+        }],
+      },
+      generationPlan: generationPlanFor(recipes),
+      resolvedRecipes: recipes,
+    }),
+  });
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const prompt = String(calls[1]?.args[3]);
+  assert.match(prompt, /Open with one concrete interruption/);
+  assert.match(prompt, /Give the learner three usable steps/);
+  assert.match(prompt, /Return exactly three application questions/);
+  assert.match(prompt, /"acceptedSourceIds":\s*\[\s*"11111111-1111-4111-8111-111111111111"/);
+  assert.match(prompt, /"audience": "busy knowledge workers"/);
+  assert.doesNotMatch(prompt, /depths\.quick/);
+
+  const output = result.parsedOutput as {
+    kind: string;
+    schemaVersion: string;
+    payload: {
+      materialization: string;
+      learning: { centralIdea: string; oneLineToKeep: string; action: { instruction: string } };
+      read: {
+        story: { blocks: Array<{ type: string; claimRefs: string[] }> };
+        playbook: { principle: string; steps: unknown[]; example: unknown; watchOuts: string[]; action: string };
+      };
+      quiz: { questions: unknown[] };
+      claims: Array<{ citations: Array<{ snapshotArtifactId: string }> }>;
+    };
+  };
+  assert.equal(output.kind, 'nuglet.lesson.v1');
+  assert.equal(output.schemaVersion, '1.1.0');
+  assert.equal(output.payload.materialization, 'draft');
+  assert.deepEqual(output.payload.read.story.blocks.map(({ type }) => type), [
+    'opening', 'evidence', 'turning_point', 'practical_bridge',
+  ]);
+  assert.ok(output.payload.read.story.blocks.find(({ type }) => type === 'evidence')?.claimRefs.length);
+  assert.equal(output.payload.read.playbook.principle, output.payload.learning.centralIdea);
+  assert.equal(output.payload.read.playbook.steps.length, 3);
+  assert.ok(output.payload.read.playbook.example);
+  assert.ok(output.payload.read.playbook.watchOuts.length);
+  assert.equal(output.payload.read.playbook.action, output.payload.learning.action.instruction);
+  assert.equal(output.payload.quiz.questions.length, 3);
+  assert.equal(output.payload.claims[0]?.citations[0]?.snapshotArtifactId, '55555555-5555-4555-8555-555555555555');
+  assert.equal(/"(?:asset|transcript)"/.test(JSON.stringify(output)), false);
+
+  assert.deepEqual(result.supportArtifacts?.map(({ kind }) => kind), [
+    'generation.recipe.snapshot', 'generation.prompt.rendered',
+    'generation.recipe.snapshot', 'generation.prompt.rendered',
+    'generation.recipe.snapshot', 'generation.prompt.rendered',
+  ]);
+  assert.deepEqual(result.supportArtifacts?.filter(({ kind }) => kind === 'generation.recipe.snapshot')
+    .map(({ body }) => Buffer.from(body).toString('utf8')), [
+    Buffer.from(recipes.story.canonicalBytes).toString('utf8'),
+    Buffer.from(recipes.playbook.canonicalBytes).toString('utf8'),
+    Buffer.from(recipes.challenge.canonicalBytes).toString('utf8'),
+  ]);
+  for (const artifact of result.supportArtifacts?.filter(({ kind }) => kind === 'generation.prompt.rendered') ?? []) {
+    assert.equal(Buffer.from(artifact.body).toString('utf8'), prompt);
+  }
+  const report = result.executionReport as { promptVersion: string; renderedPrompt: string; renderedPrompts: string[] };
+  assert.equal(report.promptVersion, 'notebooklm-recipe-create.v1');
+  assert.equal(report.renderedPrompt, prompt);
+  assert.deepEqual(report.renderedPrompts, [prompt]);
+});
+
+test('records every recipe-shaped NotebookLM repair call with its exact prompt', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const recipes = generationRecipes();
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: 'not json', stderr: '', exitCode: 0 },
+      { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: 'returning to focused work',
+      locale: 'en-GB',
+      audience: 'busy knowledge workers',
+      objective: 'make interrupted work easier to resume',
+      evidence: {
+        sources: [{
+          sourceId,
+          title: 'Accepted source',
+          snapshotArtifactId: '55555555-5555-4555-8555-555555555555',
+        }],
+      },
+      generationPlan: generationPlanFor(recipes),
+      resolvedRecipes: recipes,
+    }),
+  });
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const prompts = [String(calls[1]?.args[3]), String(calls[2]?.args[3])];
+  assert.match(prompts[1]!, /strict JSON object/);
+  assert.equal(result.supportArtifacts?.length, 12);
+  assert.deepEqual(
+    result.supportArtifacts?.filter(({ kind }) => kind === 'generation.prompt.rendered')
+      .map(({ body }) => Buffer.from(body).toString('utf8')),
+    [prompts[0], prompts[0], prompts[0], prompts[1], prompts[1], prompts[1]],
+  );
+  assert.deepEqual(
+    (result.executionReport as { renderedPrompts: string[] }).renderedPrompts,
+    prompts,
+  );
 });
 
 test('accepts the NotebookLM CLI snake_case envelope and verifies run sources when citations have no URLs', async () => {
@@ -408,15 +547,42 @@ function resolvedRecipe(id: string, value: Record<string, unknown>) {
   };
 }
 
-function generationPlanFor(story: ReturnType<typeof resolvedRecipe>) {
-  const binding = (id: string) => ({ id, version: '1.0.0', checksum: story.checksum });
+function generationRecipes() {
+  return {
+    story: resolvedRecipe('nuglet.lesson.story', {
+      id: 'nuglet.lesson.story',
+      version: '1.0.0',
+      status: 'approved',
+      instructions: ['Open with one concrete interruption.'],
+    }),
+    playbook: resolvedRecipe('nuglet.lesson.playbook', {
+      id: 'nuglet.lesson.playbook',
+      version: '1.0.0',
+      status: 'approved',
+      instructions: ['Give the learner three usable steps.'],
+    }),
+    challenge: resolvedRecipe('nuglet.challenge', {
+      id: 'nuglet.challenge',
+      version: '1.0.0',
+      status: 'approved',
+      instructions: ['Return exactly three application questions.'],
+    }),
+  };
+}
+
+function generationPlanFor(recipes: { story: ReturnType<typeof resolvedRecipe>; playbook?: ReturnType<typeof resolvedRecipe>; challenge?: ReturnType<typeof resolvedRecipe> }) {
+  const binding = (id: string, recipe?: ReturnType<typeof resolvedRecipe>) => ({
+    id,
+    version: '1.0.0',
+    checksum: recipe?.checksum ?? recipes.story.checksum,
+  });
   return {
     contentKind: 'nuglet.lesson.v1' as const,
     schemaVersion: '1.1.0' as const,
     recipes: {
-      story: { id: 'nuglet.lesson.story' as const, version: '1.0.0', checksum: story.checksum },
-      playbook: binding('nuglet.lesson.playbook'),
-      challenge: binding('nuglet.challenge'),
+      story: { id: 'nuglet.lesson.story' as const, version: '1.0.0', checksum: recipes.story.checksum },
+      playbook: binding('nuglet.lesson.playbook', recipes.playbook),
+      challenge: binding('nuglet.challenge', recipes.challenge),
       infographic: binding('nuglet.visual.infographic'),
       audioBrief: binding('nuglet.audio.brief'),
       audioDiscussion: binding('nuglet.audio.discussion'),

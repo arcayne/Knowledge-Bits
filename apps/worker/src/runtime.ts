@@ -4,6 +4,7 @@ import {
   knowledgeBitsQaSchema,
   nugletGenerationPlanSchema,
   nugletLessonV1PayloadSchema,
+  storyPlaybookDraftSchema,
   type NugletGenerationPlan,
 } from '@knowledge-bits/contracts';
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
@@ -88,6 +89,7 @@ export function composeWorkerProviders(options: {
       ? new PiEditorialProvider({
         client: runtime.piClient,
         context: trustedContextResolver(runtime.piContext, runtime.recipeBindingVerifier),
+        model: configuredValue(env, 'PI_MODEL') ?? 'pi-editorial',
       })
       : new UnavailableProvider('pi', ['check_content']),
     runtime.mediaClient && runtime.mediaContext
@@ -157,10 +159,15 @@ export class LeaseScopedJobContextResolver {
     const generation = await validatedGenerationPlan(brief, this.recipeBindingVerifier);
     const notebookId = notebookIdFromJob(input);
     const research = input.action === 'create_content' ? await this.verifiedResearch(input) : undefined;
+    const topic = stringValue(brief.title) ?? stringValue(brief.topic) ?? stringValue(brief.objective) ?? 'Knowledge Bits lesson';
     return {
       notebookId,
       sourceUrls: research?.sourceUrls ?? stringArray(brief.sourceUrls),
-      topic: stringValue(brief.title) ?? stringValue(brief.topic) ?? stringValue(brief.objective) ?? 'Knowledge Bits lesson',
+      topic,
+      locale: stringValue(brief.locale) ?? 'en',
+      audience: stringValue(brief.audience) ?? 'general adult learners',
+      objective: stringValue(brief.objective) ?? topic,
+      ...(stringValue(brief.centralIdea) ? { centralIdea: stringValue(brief.centralIdea) } : {}),
       ...(generation ? { generationPlan: generation.plan, resolvedRecipes: generation.recipes } : {}),
       ...(research ? { evidence: research.evidence } : {}),
     };
@@ -192,7 +199,20 @@ export class LeaseScopedJobContextResolver {
   }
 
   private async content(input: ProviderExecutionInput): Promise<ContentCandidate> {
-    return nugletLessonV1PayloadSchema.parse(await this.readJsonDependency(input, 'create_content', 'parsed_output'));
+    const value = await this.readJsonDependency(input, 'create_content', 'parsed_output');
+    const generationPlan = jobBrief(input).generationPlan;
+    if (isRecord(generationPlan) && generationPlan.schemaVersion === '1.1.0') {
+      if (!isRecord(value)
+        || value.kind !== 'nuglet.lesson.v1'
+        || value.schemaVersion !== '1.1.0'
+        || !isRecord(value.payload)) {
+        throw new ProviderNeedsHumanError('story_playbook_draft_invalid', 'quality');
+      }
+      const payload = storyPlaybookDraftSchema.safeParse(value.payload);
+      if (!payload.success) throw new ProviderNeedsHumanError('story_playbook_draft_invalid', 'quality');
+      return { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0', payload: payload.data };
+    }
+    return nugletLessonV1PayloadSchema.parse(value);
   }
 
   private async evidence(input: ProviderExecutionInput): Promise<EvidenceManifest> {
@@ -279,6 +299,7 @@ export class LocalPiSdkClient implements PiSdkClient {
     candidate: ContentCandidate;
     evidence: EvidenceManifest;
     rubric: string;
+    renderedPrompt: string;
     idempotencyKey: string;
     signal: AbortSignal;
   }): Promise<unknown> {
@@ -289,7 +310,7 @@ export class LocalPiSdkClient implements PiSdkClient {
         provider: this.options.provider,
         model: this.options.model,
         systemPrompt: 'Return one strict JSON object with summary and findings. Each finding must be exactly {code: string, severity: critical|major|minor, message: string}. Use an empty findings array when there is no issue. Do not rewrite content or request tools.',
-        userPrompt: JSON.stringify({ candidate: input.candidate, evidence: input.evidence, rubric: input.rubric }),
+        userPrompt: input.renderedPrompt,
         sessionId: input.idempotencyKey,
         signal,
       });

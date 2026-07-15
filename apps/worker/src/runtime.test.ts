@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
@@ -173,15 +174,16 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   const researchId = '88888888-8888-4888-8888-888888888881';
   const createId = '88888888-8888-4888-8888-888888888882';
   const checkId = '88888888-8888-4888-8888-888888888883';
+  const storyCandidate = await semanticCandidate();
   const client = contextClient(new Map([
     [researchId, Buffer.from(JSON.stringify({ acceptedSources: [{
       sourceId: evidence.sources[0]!.sourceId,
       title: evidence.sources[0]!.title,
       url: 'https://accepted.example.test/evidence',
     }] }))],
-    [createId, Buffer.from(JSON.stringify(candidate))],
+    [createId, Buffer.from(JSON.stringify(storyCandidate))],
     [checkId, Buffer.from(JSON.stringify({
-      deterministic: { passed: true, contentChecksum: calculateContentChecksum(candidate), findings: [] },
+      deterministic: { passed: true, contentChecksum: calculateContentChecksum(storyCandidate), findings: [] },
       editorial: { summary: 'Ready.', findings: [] },
     }))],
   ]));
@@ -192,7 +194,14 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
     { artifactId: createId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'create_content' },
     { artifactId: checkId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'check_content' },
   ];
-  const brief = { title: 'Focus', generationPlan };
+  const brief = {
+    title: 'Focus',
+    locale: 'en-GB',
+    audience: 'busy knowledge workers',
+    objective: 'make interrupted work easier to resume',
+    centralIdea: 'A visible next step reduces restart friction.',
+    generationPlan,
+  };
 
   const notebook = await resolver.notebook(input('create_content', dependencies, brief));
   const pi = await resolver.pi(input('check_content', dependencies, brief));
@@ -201,6 +210,12 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   assert.deepEqual(notebook.generationPlan, generationPlan);
   assert.deepEqual(pi.generationPlan, generationPlan);
   assert.deepEqual(media.generationPlan, generationPlan);
+  assert.equal(notebook.locale, 'en-GB');
+  assert.equal(notebook.audience, 'busy knowledge workers');
+  assert.equal(notebook.objective, 'make interrupted work easier to resume');
+  assert.equal(notebook.centralIdea, 'A visible next step reduces restart friction.');
+  assert.deepEqual(pi.candidate, storyCandidate);
+  assert.equal(media.contentChecksum, calculateContentChecksum(storyCandidate));
   assert.equal(notebook.resolvedRecipes?.story?.id, generationPlan.recipes.story.id);
   assert.equal(pi.resolvedRecipes?.editorialQa?.id, generationPlan.recipes.editorialQa.id);
   assert.equal(media.resolvedRecipes?.hero?.id, generationPlan.recipes.hero.id);
@@ -339,12 +354,14 @@ test('executes editorial inference through the local Pi SDK adapter with an abor
     candidate,
     evidence,
     rubric: 'Check it.',
+    renderedPrompt: 'Rendered editorial prompt.',
     idempotencyKey: 'stable-key',
     signal,
   });
 
   assert.deepEqual(result, { summary: 'Ready.', findings: [] });
   assert.equal(observed?.sessionId, 'stable-key');
+  assert.equal(observed?.userPrompt, 'Rendered editorial prompt.');
   assert.ok(observed?.signal instanceof AbortSignal);
 });
 
@@ -511,4 +528,19 @@ function resolvedRecipesFor(plan: typeof generationPlan) {
     canonicalBytes: Buffer.from(JSON.stringify(binding)),
     value: binding,
   }])) as unknown as ResolvedNugletRecipes;
+}
+
+async function semanticCandidate() {
+  const fixture = JSON.parse(await readFile(
+    new URL('./providers/fixtures/notebooklm-story-playbook.json', import.meta.url),
+    'utf8',
+  )) as { answer: { payload: { claims: Array<{ citations: Array<Record<string, unknown>> }> } } };
+  const value = structuredClone(fixture.answer);
+  for (const claim of value.payload.claims) {
+    claim.citations = claim.citations.map((citation) => ({
+      ...citation,
+      snapshotArtifactId: evidence.sources[0]!.snapshotArtifactId,
+    }));
+  }
+  return value;
 }

@@ -1,15 +1,21 @@
 import {
   NOTEBOOKLM_CREATE_PROMPT_VERSION,
   renderNotebookLmCreatePrompt,
-} from '../prompts/notebooklm-create.v1.js';
+} from '../prompts/notebooklm-create-legacy.v1.js';
 import {
   NOTEBOOKLM_RESEARCH_PROMPT_VERSION,
   renderNotebookLmResearchPrompt,
 } from '../prompts/notebooklm-research.v1.js';
 import type { EvidenceManifest, GroundedClaim } from '../checks/deterministic.js';
 import type { VerifiedResearchEvidence } from '../checks/source-verifier.js';
-import { nugletLessonV1PayloadSchema, type NugletGenerationPlan } from '@knowledge-bits/contracts';
-import type { ResolvedNugletRecipes } from '../recipes/types.js';
+import {
+  nugletLessonV1PayloadSchema,
+  storyPlaybookDraftSchema,
+  type NugletGenerationPlan,
+} from '@knowledge-bits/contracts';
+import { renderPromptSections } from '../recipes/file-registry.js';
+import { generationSupportArtifacts } from '../recipes/support-artifacts.js';
+import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
 
 import {
   ProviderNeedsHumanError,
@@ -21,6 +27,16 @@ import {
 import { createHash } from 'node:crypto';
 
 export const DEFAULT_NOTEBOOKLM_TIMEOUT_MS = 180_000;
+export const NOTEBOOKLM_RECIPE_CREATE_PROMPT_VERSION = 'notebooklm-recipe-create.v1';
+
+export interface PromptInputs {
+  topic: string;
+  locale: string;
+  audience: string;
+  objective: string;
+  acceptedSourceIds: string[];
+  centralIdea?: string;
+}
 
 export interface NotebookLmProcess {
   run(input: {
@@ -36,6 +52,10 @@ export interface NotebookLmContext {
   notebookId: string;
   sourceUrls: readonly string[];
   topic: string;
+  locale?: string;
+  audience?: string;
+  objective?: string;
+  centralIdea?: string;
   evidence?: EvidenceManifest;
   generationPlan?: NugletGenerationPlan;
   resolvedRecipes?: Partial<ResolvedNugletRecipes>;
@@ -68,18 +88,26 @@ export class NotebookLmProvider implements ContentProvider {
       throw new ProviderNeedsHumanError(`notebooklm_unsupported_action:${input.action}`);
     }
     const context = await this.options.context(input);
+    const recipeExecution = input.action === 'create_content' && context.generationPlan
+      ? resolvedCreateRecipes(context)
+      : undefined;
     const cliVersion = await this.version(input.signal);
     await this.importSources(context, input.signal);
-    const prompt = input.action === 'collect_sources'
-      ? renderNotebookLmResearchPrompt({ topic: context.topic })
-      : renderNotebookLmCreatePrompt({
-        topic: context.topic,
-        revision: input.job.revision,
-        sources: context.evidence?.sources,
-      });
+    const promptBytes = input.action === 'collect_sources'
+      ? renderPromptSections([renderNotebookLmResearchPrompt({ topic: context.topic })])
+      : recipeExecution
+        ? renderRecipeCreatePrompt(context, recipeExecution)
+        : renderPromptSections([renderNotebookLmCreatePrompt({
+          topic: context.topic,
+          revision: input.job.revision,
+          sources: context.evidence?.sources,
+        })]);
+    const prompt = Buffer.from(promptBytes).toString('utf8');
     const promptVersion = input.action === 'collect_sources'
       ? NOTEBOOKLM_RESEARCH_PROMPT_VERSION
-      : NOTEBOOKLM_CREATE_PROMPT_VERSION;
+      : recipeExecution
+        ? NOTEBOOKLM_RECIPE_CREATE_PROMPT_VERSION
+        : NOTEBOOKLM_CREATE_PROMPT_VERSION;
     const response = await this.query(context.notebookId, prompt, input.signal);
     const parsed = await this.parseOrRepair(context.notebookId, prompt, response, input.signal);
     validateCitations(parsed.answer, input.action === 'create_content' ? context.evidence : undefined);
@@ -87,7 +115,7 @@ export class NotebookLmProvider implements ContentProvider {
       ? await this.verifyResearch(parsed.answer, context, input.signal)
       : undefined;
     const parsedOutput = verified?.evidence
-      ?? parseCreateOutput(parsed.answer, context.evidence);
+      ?? parseCreateOutput(parsed.answer, context.evidence, context.generationPlan);
 
     return {
       kind: 'success',
@@ -99,8 +127,19 @@ export class NotebookLmProvider implements ContentProvider {
         promptVersion,
         provider: this.name,
         renderedPrompt: prompt,
+        renderedPrompts: parsed.prompts,
         sourceIds: sourceIds(parsed.answer),
       },
+      ...(recipeExecution ? {
+        supportArtifacts: parsed.prompts.flatMap((renderedPrompt) => recipeExecution.flatMap((recipe) => (
+          generationSupportArtifacts({
+            recipe,
+            prompt: Buffer.from(renderedPrompt),
+            model: `notebooklm-cli:${cliVersion}`,
+            executionInput: input,
+          })
+        ))),
+      } : {}),
       ...(verified ? { assets: verified.snapshots } : {}),
     };
   }
@@ -159,16 +198,16 @@ export class NotebookLmProvider implements ContentProvider {
     prompt: string,
     response: { stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean },
     signal: AbortSignal,
-  ): Promise<{ raw: string; conversationId: string; answer: Record<string, unknown> }> {
+  ): Promise<{ raw: string; conversationId: string; answer: Record<string, unknown>; prompts: readonly string[] }> {
     const parsed = parseStructuredResponse(response.stdout);
-    if (parsed) return parsed;
+    if (parsed) return { ...parsed, prompts: [prompt] };
 
     const repairedPrompt = `${prompt}\n\nReturn the same answer again as one strict JSON object with no markdown fences.`;
     const repaired = await this.run(['notebook', 'query', notebookId, repairedPrompt, '--json'], signal);
     this.assertProcessSuccess(repaired);
     const repairedParsed = parseStructuredResponse(repaired.stdout);
     if (!repairedParsed) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
-    return repairedParsed;
+    return { ...repairedParsed, prompts: [prompt, repairedPrompt] };
   }
 
   private async run(args: readonly string[], signal: AbortSignal, stdin?: string) {
@@ -245,8 +284,81 @@ function sourceTitle(value: string): string {
   }
 }
 
+function resolvedCreateRecipes(context: NotebookLmContext): readonly ResolvedRecipe[] {
+  const recipes = context.resolvedRecipes;
+  const resolved = [recipes?.story, recipes?.playbook, recipes?.challenge];
+  if (resolved.some((recipe) => !recipe)) {
+    throw new ProviderNeedsHumanError('generation_recipe_resolution_missing');
+  }
+  return resolved as ResolvedRecipe[];
+}
+
+function renderRecipeCreatePrompt(
+  context: NotebookLmContext,
+  recipes: readonly ResolvedRecipe[],
+): Uint8Array {
+  if (!context.generationPlan || !context.evidence) {
+    throw new ProviderNeedsHumanError('notebooklm_create_evidence_missing');
+  }
+  const promptInputs: PromptInputs = {
+    topic: context.topic,
+    locale: context.locale ?? 'en',
+    audience: context.audience ?? 'general adult learners',
+    objective: context.objective ?? context.topic,
+    acceptedSourceIds: context.evidence.sources.map(({ sourceId }) => sourceId),
+    ...(context.centralIdea ? { centralIdea: context.centralIdea } : {}),
+  };
+  return renderPromptSections([
+    [
+      'Return one strict JSON object with no markdown fences.',
+      'The object must be a nuglet.lesson.v1 target with schemaVersion 1.1.0.',
+      'Its payload must use contentModel story-playbook.v1 and materialization draft.',
+      'Return semantic briefs only. Do not include asset references, final media metadata, audio bytes, or transcripts.',
+      'Use UUID claim IDs, accepted source IDs only, short citation excerpts, and complete claim coverage for every learner path.',
+      'The Story must contain opening, evidence, turning_point, and practical_bridge blocks.',
+      'The Playbook must contain one principle, whyItMatters, three to five steps, one example, watchOuts, and the shared action.',
+      'Story and Playbook must reuse the same central idea, oneLineToKeep, terminology, and action while remaining structurally distinct.',
+      'Return exactly three quiz questions.',
+    ].join('\n'),
+    [
+      'Required payload shape:',
+      '- identity: locale, topic {label, categoryId}, tags, title, deck, slugSuggestion',
+      '- learning: centralIdea, whyItMatters, oneLineToKeep, action {label, instruction}',
+      '- hero: altText, accessibilityPurpose, mediaBrief {concept, metaphor, compositionFamily}',
+      '- read.story: title, estimatedMinutes, blocks [{type, text, claimRefs}]',
+      '- read.playbook: title, estimatedMinutes, principle, whyItMatters, steps [{id, title, body, claimRefs}], example {title, body, claimRefs}, watchOuts, action',
+      '- visual: title, altText, textEquivalent, claimRefs, mediaBrief {objective, structure}',
+      '- listen.brief and listen.discussion: editorialBrief {objective, tone, keyPoints}',
+      '- quiz.questions: exactly three items with id, prompt, three or four options [{id, text}], correctOptionId, rationale, reviewConcept, claimRefs',
+      '- publicSources: [{evidenceSourceId, label, publisher}]',
+      '- claims: [{claimId, statement, citations [{sourceId, excerpt}]}]',
+      `- claimCoverage: one entry for each path: ${STORY_PLAYBOOK_COVERAGE_PATHS.join(', ')}`,
+    ].join('\n'),
+    `Named inputs:\n${JSON.stringify(promptInputs, null, 2)}`,
+    `Approved hero direction for the semantic brief:\n${JSON.stringify(context.generationPlan.heroDirection, null, 2)}`,
+    ...recipes.map((recipe) => [
+      `Resolved recipe ${recipe.id}@${recipe.version} (canonical JSON):`,
+      Buffer.from(recipe.canonicalBytes).toString('utf8'),
+    ].join('\n')),
+  ]);
+}
+
+const STORY_PLAYBOOK_COVERAGE_PATHS = [
+  'identity.title',
+  'learning.centralIdea',
+  'learning.whyItMatters',
+  'learning.oneLineToKeep',
+  'learning.action',
+  'read.story',
+  'read.playbook',
+  'visual',
+  'listen.brief',
+  'listen.discussion',
+  'quiz',
+] as const;
+
 function validateCitations(answer: Record<string, unknown>, acceptedEvidence?: EvidenceManifest): void {
-  const claims = Array.isArray(answer.claims) ? answer.claims as GroundedClaim[] : [];
+  const claims = claimsFromAnswer(answer);
   const responseSources = Array.isArray(answer.sources)
     ? answer.sources.map((source) => source as { sourceId?: unknown }).map(({ sourceId }) => sourceId).filter((sourceId): sourceId is string => typeof sourceId === 'string')
     : [];
@@ -264,10 +376,36 @@ function validateCitations(answer: Record<string, unknown>, acceptedEvidence?: E
   }
 }
 
-function parseCreateOutput(answer: Record<string, unknown>, evidence: EvidenceManifest | undefined) {
+function parseCreateOutput(
+  answer: Record<string, unknown>,
+  evidence: EvidenceManifest | undefined,
+  generationPlan?: NugletGenerationPlan,
+) {
   if (!evidence) throw new ProviderNeedsHumanError('notebooklm_create_evidence_missing');
   const snapshotsBySource = new Map(evidence.sources.map((source) => [source.sourceId, source.snapshotArtifactId]));
-  const claims = Array.isArray(answer.claims) ? answer.claims.map((value) => {
+  if (generationPlan?.schemaVersion === '1.1.0') {
+    const payload = isRecord(answer.payload) ? answer.payload : {};
+    const claims = attachSnapshotArtifacts(payload.claims, snapshotsBySource);
+    const parsed = storyPlaybookDraftSchema.safeParse({
+      ...payload,
+      claims,
+      claimCoverage: normalizeClaimCoverage(payload.claimCoverage),
+    });
+    if (answer.kind !== 'nuglet.lesson.v1' || answer.schemaVersion !== '1.1.0' || !parsed.success) {
+      throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
+    }
+    return { kind: 'nuglet.lesson.v1' as const, schemaVersion: '1.1.0' as const, payload: parsed.data };
+  }
+
+  const claims = attachSnapshotArtifacts(answer.claims, snapshotsBySource);
+  const claimCoverage = normalizeClaimCoverage(answer.claimCoverage);
+  const parsed = nugletLessonV1PayloadSchema.safeParse({ ...answer, claims, claimCoverage });
+  if (!parsed.success) throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
+  return parsed.data;
+}
+
+function attachSnapshotArtifacts(value: unknown, snapshotsBySource: ReadonlyMap<string, string>): unknown {
+  return Array.isArray(value) ? value.map((value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
     const claim = value as Record<string, unknown>;
     const citations = Array.isArray(claim.citations) ? claim.citations.map((citationValue) => {
@@ -279,11 +417,7 @@ function parseCreateOutput(answer: Record<string, unknown>, evidence: EvidenceMa
       return { ...citation, snapshotArtifactId };
     }) : claim.citations;
     return { ...claim, citations };
-  }) : answer.claims;
-  const claimCoverage = normalizeClaimCoverage(answer.claimCoverage);
-  const parsed = nugletLessonV1PayloadSchema.safeParse({ ...answer, claims, claimCoverage });
-  if (!parsed.success) throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
-  return parsed.data;
+  }) : value;
 }
 
 function normalizeClaimCoverage(value: unknown): unknown {
@@ -293,11 +427,22 @@ function normalizeClaimCoverage(value: unknown): unknown {
 }
 
 function sourceIds(answer: Record<string, unknown>): string[] {
-  if (!Array.isArray(answer.sources)) return [];
-  return answer.sources.flatMap((source) => {
+  const direct = Array.isArray(answer.sources) ? answer.sources.flatMap((source) => {
     if (!source || typeof source !== 'object' || typeof (source as { sourceId?: unknown }).sourceId !== 'string') return [];
     return [(source as { sourceId: string }).sourceId];
-  });
+  }) : [];
+  const cited = claimsFromAnswer(answer).flatMap(({ citations }) => citations.map(({ sourceId }) => sourceId));
+  return [...new Set([...direct, ...cited])];
+}
+
+function claimsFromAnswer(answer: Record<string, unknown>): GroundedClaim[] {
+  const payload = isRecord(answer.payload) ? answer.payload : undefined;
+  const claims = payload?.claims ?? answer.claims;
+  return Array.isArray(claims) ? claims as GroundedClaim[] : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function retryAfterSeconds(value: string): number {
