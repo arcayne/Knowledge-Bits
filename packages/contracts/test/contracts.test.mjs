@@ -50,6 +50,43 @@ function validGenerationPlan() {
       mustInclude: ['one vessel'],
       mustAvoid: ['rigid symmetry'],
     },
+    mediaBaseline: validMediaBaseline(),
+  };
+}
+
+function validMediaBaseline() {
+  const evidence = (recipeId, artifactId, prompt) => ({
+    artifactId,
+    model: 'notebooklm-cli:fixture',
+    notebookId: 'notebook-fixture',
+    prompt: {
+      bytesBase64: Buffer.from(prompt).toString('base64'),
+      checksum: `sha256:${checksum}`,
+    },
+    provider: 'notebooklm',
+    recipe: { id: recipeId, version: '1.0.0', checksum: `sha256:${checksum}` },
+  });
+  const artifact = (recipeId, artifactId, path) => ({
+    checksum: `sha256:${checksum}`,
+    generation: evidence(recipeId, artifactId, `Generate ${artifactId}`),
+    mediaType: recipeId.includes('audio') ? 'audio/mp4' : 'image/webp',
+    path,
+    providerArtifactId: artifactId,
+  });
+  return {
+    descriptorChecksum: `sha256:${checksum}`,
+    descriptorPath: 'knowledge-bits/media-baseline.v1.json',
+    descriptor: {
+      artifacts: {
+        infographic: artifact('nuglet.visual.infographic', 'infographic-artifact', 'notebooklm/infographic.webp'),
+        audioBrief: artifact('nuglet.audio.brief', 'brief-artifact', 'audio/brief.m4a'),
+        audioDiscussion: artifact('nuglet.audio.discussion', 'discussion-artifact', 'audio/discussion.m4a'),
+      },
+      notebookId: 'notebook-fixture',
+      runFolder: 'apps/nuglet-lab/outputs/fixture-run',
+      runId: 'fixture-run',
+      schemaVersion: 'nuglet.media-baseline.v1',
+    },
   };
 }
 
@@ -381,6 +418,20 @@ test('rejects missing and mismatched Nuglet recipe identities and checksums', ()
     knowledgeBitsRunBriefSchema.safeParse({ contentKind: 'nuglet.lesson.v1' }).success,
     false,
   );
+});
+
+test('requires an inspectable immutable media baseline with complete NotebookLM generation evidence', () => {
+  const missing = validGenerationPlan();
+  delete missing.mediaBaseline;
+  assert.equal(nugletGenerationPlanSchema.safeParse(missing).success, false);
+
+  const missingEvidence = validGenerationPlan();
+  delete missingEvidence.mediaBaseline.descriptor.artifacts.audioDiscussion.generation.prompt;
+  assert.equal(nugletGenerationPlanSchema.safeParse(missingEvidence).success, false);
+
+  const escapingPath = validGenerationPlan();
+  escapingPath.mediaBaseline.descriptor.artifacts.infographic.path = '../other-run/infographic.webp';
+  assert.equal(nugletGenerationPlanSchema.safeParse(escapingPath).success, false);
 });
 
 test('approval must bind the exact package checksum', () => {

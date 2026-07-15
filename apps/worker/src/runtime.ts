@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import {
   knowledgeBitsQaSchema,
@@ -6,6 +7,7 @@ import {
   nugletLessonV1PayloadSchema,
   storyPlaybookDraftSchema,
   type NugletGenerationPlan,
+  type NugletMediaBaseline,
 } from '@knowledge-bits/contracts';
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
@@ -384,6 +386,7 @@ export class LocalMediaCommandClient implements MediaClient {
     kinds: readonly MediaKind[];
     idempotencyKey: string;
     heroDirection: NugletGenerationPlan['heroDirection'];
+    mediaBaseline: NugletMediaBaseline;
     resolvedRecipes: MediaRecipes;
     executionInput: ProviderExecutionInput;
     signal: AbortSignal;
@@ -397,6 +400,7 @@ export class LocalMediaCommandClient implements MediaClient {
         kinds: input.kinds,
         idempotencyKey: input.idempotencyKey,
         heroDirection: input.heroDirection,
+        mediaBaseline: input.mediaBaseline,
         recipeSnapshots: serializeMediaRecipes(input.resolvedRecipes),
       }),
       timeoutMs: this.options.timeoutMs ?? 600_000,
@@ -620,32 +624,16 @@ function parseMediaAsset(
     || typeof value.generationInputChecksum !== 'string'
     || !isRecord(value.metadata)
     || !isRecord(value.support)
-    || typeof value.support.renderedPrompt !== 'string'
-    || !value.support.renderedPrompt.trim()
-    || typeof value.support.model !== 'string'
-    || !value.support.model.trim()
-    || !Array.isArray(value.support.referenceChecksums)
-    || !value.support.referenceChecksums.every((checksum) => (
-      typeof checksum === 'string' && /^sha256:[a-f0-9]{64}$/.test(checksum)
-    ))) {
+    || !Array.isArray(value.support.executions)
+    || value.support.executions.length === 0) {
     throw new ProviderNeedsHumanError('media_generation_invalid_response');
   }
   const bytes = Buffer.from(value.bytesBase64, 'base64');
   if (bytes.byteLength === 0) throw new ProviderNeedsHumanError('media_generation_invalid_response');
-  const support = value.support as Record<string, unknown>;
   const recipe = recipeForKind(input.resolvedRecipes, value.kind);
-  const supportArtifacts = generationSupportArtifacts({
-    recipe,
-    prompt: Buffer.from(support.renderedPrompt as string),
-    model: support.model as string,
-    executionInput: input.executionInput,
-  }).map((artifact) => ({
-    ...artifact,
-    provenance: {
-      ...artifact.provenance,
-      referenceChecksums: support.referenceChecksums as string[],
-    },
-  }));
+  const supportArtifacts = value.support.executions.flatMap((execution) => (
+    parseMediaExecutionEvidence(execution, recipe, input.executionInput)
+  ));
   return {
     kind: value.kind,
     mediaType: value.mediaType,
@@ -654,6 +642,61 @@ function parseMediaAsset(
     metadata: value.metadata,
     supportArtifacts,
   };
+}
+
+function parseMediaExecutionEvidence(
+  value: unknown,
+  recipe: ReturnType<typeof recipeForKind>,
+  executionInput: ProviderExecutionInput,
+) {
+  if (!isRecord(value)
+    || !isRecord(value.recipe)
+    || value.recipe.id !== recipe.id
+    || value.recipe.version !== recipe.version
+    || value.recipe.checksum !== recipe.checksum
+    || typeof value.promptBase64 !== 'string'
+    || typeof value.promptChecksum !== 'string'
+    || !/^sha256:[a-f0-9]{64}$/.test(value.promptChecksum)
+    || typeof value.model !== 'string'
+    || !value.model.trim()
+    || typeof value.provider !== 'string'
+    || !value.provider.trim()
+    || !Array.isArray(value.referenceChecksums)
+    || !value.referenceChecksums.every((checksum) => (
+      typeof checksum === 'string' && /^sha256:[a-f0-9]{64}$/.test(checksum)
+    ))
+    || (value.artifactId !== undefined && (typeof value.artifactId !== 'string' || !value.artifactId.trim()))
+    || (value.notebookId !== undefined && (typeof value.notebookId !== 'string' || !value.notebookId.trim()))
+    || (value.provider === 'notebooklm' && (typeof value.artifactId !== 'string' || typeof value.notebookId !== 'string'))) {
+    throw new ProviderNeedsHumanError('media_generation_invalid_response');
+  }
+  const prompt = decodeBase64(value.promptBase64, 'media_generation_invalid_response');
+  if (`sha256:${createHash('sha256').update(prompt).digest('hex')}` !== value.promptChecksum) {
+    throw new ProviderNeedsHumanError('media_generation_invalid_response');
+  }
+  return generationSupportArtifacts({
+    recipe,
+    prompt,
+    model: value.model,
+    executionInput,
+  }).map((artifact) => ({
+    ...artifact,
+    provenance: {
+      ...artifact.provenance,
+      provider: value.provider,
+      ...(value.artifactId === undefined ? {} : { artifactId: value.artifactId }),
+      ...(value.notebookId === undefined ? {} : { notebookId: value.notebookId }),
+      referenceChecksums: value.referenceChecksums as string[],
+    },
+  }));
+}
+
+function decodeBase64(value: string, reason: string): Buffer {
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.byteLength === 0 || bytes.toString('base64') !== value.replace(/\s/g, '')) {
+    throw new ProviderNeedsHumanError(reason);
+  }
+  return bytes;
 }
 
 function serializeMediaRecipes(recipes: MediaRecipes): Record<string, unknown> {

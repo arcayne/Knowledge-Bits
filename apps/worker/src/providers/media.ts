@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { ContentCandidate } from '../checks/deterministic.js';
-import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
+import type { NugletGenerationPlan, NugletMediaBaseline } from '@knowledge-bits/contracts';
 import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
 
 import {
@@ -46,6 +46,7 @@ export interface MediaClient {
     kinds: readonly MediaKind[];
     idempotencyKey: string;
     heroDirection: NugletGenerationPlan['heroDirection'];
+    mediaBaseline: NugletMediaBaseline;
     resolvedRecipes: MediaRecipes;
     executionInput: ProviderExecutionInput;
     signal: AbortSignal;
@@ -84,6 +85,7 @@ export class MediaProviderAdapter implements MediaProvider {
       kinds,
       idempotencyKey: input.idempotencyKey,
       heroDirection: generation.plan.heroDirection,
+      mediaBaseline: generation.plan.mediaBaseline,
       resolvedRecipes: generation.recipes,
       executionInput: input,
       signal: input.signal,
@@ -95,7 +97,7 @@ export class MediaProviderAdapter implements MediaProvider {
     if (generated.some((asset) => asset.generationInputChecksum !== context.contentChecksum)) {
       throw new ProviderNeedsHumanError('media_input_checksum_mismatch');
     }
-    for (const asset of generated) validateGeneratedMedia(asset, generation.recipes);
+    for (const asset of generated) validateGeneratedMedia(asset, generation.recipes, generation.plan.mediaBaseline);
 
     const assets = generated.map((asset) => ({
       byteSize: asset.bytes.byteLength,
@@ -153,7 +155,7 @@ function assertExactRequiredKinds(kinds: readonly MediaKind[]): void {
   }
 }
 
-function validateGeneratedMedia(asset: GeneratedMedia, recipes: MediaRecipes): void {
+function validateGeneratedMedia(asset: GeneratedMedia, recipes: MediaRecipes, baseline: NugletMediaBaseline): void {
   if (!asset.mediaType.trim() || asset.bytes.byteLength === 0 || !isRecord(asset.metadata)) {
     throw new ProviderNeedsHumanError('media_generation_invalid_response');
   }
@@ -179,28 +181,99 @@ function validateGeneratedMedia(asset: GeneratedMedia, recipes: MediaRecipes): v
       throw new ProviderNeedsHumanError('media_audio_metadata_invalid');
     }
   }
-  validateSupportArtifacts(asset, recipeForKind(recipes, asset.kind));
+  const baselineArtifact = baselineArtifactForKind(baseline, asset.kind);
+  if (baselineArtifact && prefixedChecksum(asset.bytes) !== baselineArtifact.checksum) {
+    throw new ProviderNeedsHumanError('media_baseline_checksum_mismatch');
+  }
+  validateSupportArtifacts(asset, recipeForKind(recipes, asset.kind), baselineArtifact);
 }
 
-function validateSupportArtifacts(asset: GeneratedMedia, recipe: ResolvedRecipe): void {
-  if (asset.supportArtifacts.length !== 2
-    || asset.supportArtifacts.filter(({ kind }) => kind === 'generation.recipe.snapshot').length !== 1
-    || asset.supportArtifacts.filter(({ kind }) => kind === 'generation.prompt.rendered').length !== 1) {
+function validateSupportArtifacts(
+  asset: GeneratedMedia,
+  recipe: ResolvedRecipe,
+  baselineArtifact: NugletMediaBaseline['descriptor']['artifacts'][keyof NugletMediaBaseline['descriptor']['artifacts']] | undefined,
+): void {
+  const minimumPairCount = asset.kind.startsWith('audio_') ? 2 : 1;
+  if (asset.supportArtifacts.length < minimumPairCount * 2 || asset.supportArtifacts.length % 2 !== 0) {
     throw new ProviderNeedsHumanError('media_support_evidence_incomplete');
   }
-  for (const support of asset.supportArtifacts) {
-    if (support.provenance.recipeId !== recipe.id
-      || support.provenance.recipeVersion !== recipe.version
-      || support.provenance.recipeChecksum !== recipe.checksum) {
+  const expectedReferences = asset.kind === 'hero' ? heroReferenceChecksums(recipe) : [];
+  for (let index = 0; index < asset.supportArtifacts.length; index += 2) {
+    const recipeArtifact = asset.supportArtifacts[index];
+    const promptArtifact = asset.supportArtifacts[index + 1];
+    if (!recipeArtifact || !promptArtifact
+      || recipeArtifact.kind !== 'generation.recipe.snapshot'
+      || promptArtifact.kind !== 'generation.prompt.rendered'
+      || !Buffer.from(recipeArtifact.body).equals(Buffer.from(recipe.canonicalBytes))
+      || promptArtifact.inputChecksum !== recipe.checksum.replace(/^sha256:/, '')) {
+      throw new ProviderNeedsHumanError('media_support_evidence_incomplete');
+    }
+    for (const support of [recipeArtifact, promptArtifact]) {
+      if (support.provenance.recipeId !== recipe.id
+        || support.provenance.recipeVersion !== recipe.version
+        || support.provenance.recipeChecksum !== recipe.checksum
+        || typeof support.provenance.provider !== 'string'
+        || !support.provenance.provider.trim()
+        || typeof support.provenance.model !== 'string'
+        || !support.provenance.model.trim()
+        || support.provenance.promptChecksum !== prefixedChecksum(promptArtifact.body)
+        || JSON.stringify(support.provenance.referenceChecksums) !== JSON.stringify(expectedReferences)) {
+        throw new ProviderNeedsHumanError('media_support_evidence_mismatch');
+      }
+    }
+    if (JSON.stringify(recipeArtifact.provenance) !== JSON.stringify(promptArtifact.provenance)) {
       throw new ProviderNeedsHumanError('media_support_evidence_mismatch');
     }
   }
-  const expectedReferences = asset.kind === 'hero' ? heroReferenceChecksums(recipe) : [];
-  const observedReferences = asset.supportArtifacts[0]?.provenance.referenceChecksums;
-  if (!Array.isArray(observedReferences)
-    || JSON.stringify(observedReferences) !== JSON.stringify(expectedReferences)) {
-    throw new ProviderNeedsHumanError('media_reference_provenance_mismatch');
+  if (baselineArtifact) {
+    validateExpectedExecutionPair(asset.supportArtifacts, 0, baselineArtifact.generation);
+    if (asset.kind.startsWith('audio_')) {
+      const transcriptSource = asset.metadata.transcriptSource;
+      if (transcriptSource === 'notebooklm') {
+        if (!('transcript' in baselineArtifact) || !baselineArtifact.transcript) {
+          throw new ProviderNeedsHumanError('media_transcript_evidence_mismatch');
+        }
+        validateExpectedExecutionPair(asset.supportArtifacts, 1, baselineArtifact.transcript.extraction);
+      } else if (('transcript' in baselineArtifact) && baselineArtifact.transcript) {
+        throw new ProviderNeedsHumanError('media_transcript_evidence_mismatch');
+      } else if (asset.supportArtifacts[2]?.provenance.provider !== 'vertex') {
+        throw new ProviderNeedsHumanError('media_transcript_evidence_mismatch');
+      }
+    }
   }
+}
+
+function validateExpectedExecutionPair(
+  artifacts: readonly ProviderSupportArtifact[],
+  pairIndex: number,
+  evidence: NugletMediaBaseline['descriptor']['artifacts']['infographic']['generation'],
+): void {
+  const recipeArtifact = artifacts[pairIndex * 2];
+  const promptArtifact = artifacts[(pairIndex * 2) + 1];
+  const expectedPrompt = Buffer.from(evidence.prompt.bytesBase64, 'base64');
+  if (!recipeArtifact || !promptArtifact
+    || !Buffer.from(promptArtifact.body).equals(expectedPrompt)
+    || promptArtifact.provenance.promptChecksum !== evidence.prompt.checksum
+    || promptArtifact.provenance.provider !== evidence.provider
+    || promptArtifact.provenance.model !== evidence.model
+    || promptArtifact.provenance.artifactId !== evidence.artifactId
+    || promptArtifact.provenance.notebookId !== evidence.notebookId) {
+    throw new ProviderNeedsHumanError('media_support_evidence_mismatch');
+  }
+}
+
+function baselineArtifactForKind(
+  baseline: NugletMediaBaseline,
+  kind: MediaKind,
+): NugletMediaBaseline['descriptor']['artifacts'][keyof NugletMediaBaseline['descriptor']['artifacts']] | undefined {
+  if (kind === 'infographic') return baseline.descriptor.artifacts.infographic;
+  if (kind === 'audio_brief') return baseline.descriptor.artifacts.audioBrief;
+  if (kind === 'audio_discussion') return baseline.descriptor.artifacts.audioDiscussion;
+  return undefined;
+}
+
+function prefixedChecksum(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
 
 function heroReferenceChecksums(recipe: ResolvedRecipe): readonly string[] {

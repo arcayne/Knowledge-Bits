@@ -11,6 +11,11 @@ const packageIdSchema = z.string().uuid();
 
 const generationRecipeVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 const generationRecipeChecksumSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const relativeArtifactPathSchema = z.string().trim().min(1).refine((value) => (
+  !value.startsWith('/')
+  && !value.includes('\\')
+  && value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..')
+), 'must be a normalized relative path');
 
 function generationRecipeBindingSchema(id: string) {
   return z.object({
@@ -19,6 +24,60 @@ function generationRecipeBindingSchema(id: string) {
     checksum: generationRecipeChecksumSchema,
   }).strict();
 }
+
+const genericGenerationRecipeBindingSchema = z.object({
+  id: z.string().trim().min(1),
+  version: generationRecipeVersionSchema,
+  checksum: generationRecipeChecksumSchema,
+}).strict();
+
+const notebookLmExecutionEvidenceSchema = z.object({
+  artifactId: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  notebookId: z.string().trim().min(1),
+  prompt: z.object({
+    bytesBase64: z.string().trim().min(1),
+    checksum: generationRecipeChecksumSchema,
+  }).strict(),
+  provider: z.literal('notebooklm'),
+  recipe: genericGenerationRecipeBindingSchema,
+}).strict();
+
+const baselineTranscriptSchema = z.object({
+  audioChecksum: generationRecipeChecksumSchema,
+  extraction: notebookLmExecutionEvidenceSchema,
+  path: relativeArtifactPathSchema,
+  providerArtifactId: z.string().trim().min(1),
+  transcriptChecksum: generationRecipeChecksumSchema,
+}).strict();
+
+const baselineArtifactSchema = z.object({
+  checksum: generationRecipeChecksumSchema,
+  generation: notebookLmExecutionEvidenceSchema,
+  mediaType: z.string().trim().min(1),
+  path: relativeArtifactPathSchema,
+  providerArtifactId: z.string().trim().min(1),
+}).strict();
+
+const baselineAudioArtifactSchema = baselineArtifactSchema.extend({
+  transcript: baselineTranscriptSchema.optional(),
+}).strict();
+
+export const nugletMediaBaselineSchema = z.object({
+  descriptorChecksum: generationRecipeChecksumSchema,
+  descriptorPath: z.literal('knowledge-bits/media-baseline.v1.json'),
+  descriptor: z.object({
+    artifacts: z.object({
+      infographic: baselineArtifactSchema,
+      audioBrief: baselineAudioArtifactSchema,
+      audioDiscussion: baselineAudioArtifactSchema,
+    }).strict(),
+    notebookId: z.string().trim().min(1),
+    runFolder: relativeArtifactPathSchema,
+    runId: z.string().trim().min(1),
+    schemaVersion: z.literal('nuglet.media-baseline.v1'),
+  }).strict(),
+}).strict();
 
 export const nugletGenerationPlanSchema = z.object({
   contentKind: z.literal('nuglet.lesson.v1'),
@@ -40,7 +99,47 @@ export const nugletGenerationPlanSchema = z.object({
     mustInclude: z.array(z.string().trim().min(1)),
     mustAvoid: z.array(z.string().trim().min(1)),
   }).strict(),
-}).strict();
+  mediaBaseline: nugletMediaBaselineSchema,
+}).strict().superRefine((plan, context) => {
+  const expected = [
+    ['infographic', plan.recipes.infographic],
+    ['audioBrief', plan.recipes.audioBrief],
+    ['audioDiscussion', plan.recipes.audioDiscussion],
+  ] as const;
+  for (const [role, recipe] of expected) {
+    const artifact = plan.mediaBaseline.descriptor.artifacts[role];
+    validateBaselineEvidenceBinding(artifact.generation, artifact.providerArtifactId, recipe, plan.mediaBaseline.descriptor.notebookId, ['mediaBaseline', 'descriptor', 'artifacts', role, 'generation'], context);
+    if ('transcript' in artifact && artifact.transcript) {
+      if (artifact.transcript.audioChecksum !== artifact.checksum) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'transcript audio checksum must match artifact checksum', path: ['mediaBaseline', 'descriptor', 'artifacts', role, 'transcript', 'audioChecksum'] });
+      }
+      validateBaselineEvidenceBinding(artifact.transcript.extraction, artifact.transcript.providerArtifactId, recipe, plan.mediaBaseline.descriptor.notebookId, ['mediaBaseline', 'descriptor', 'artifacts', role, 'transcript', 'extraction'], context);
+    }
+  }
+});
+
+function validateBaselineEvidenceBinding(
+  evidence: z.infer<typeof notebookLmExecutionEvidenceSchema>,
+  artifactId: string,
+  recipe: z.infer<typeof genericGenerationRecipeBindingSchema>,
+  notebookId: string,
+  path: (string | number)[],
+  context: z.RefinementCtx,
+): void {
+  if (evidence.artifactId !== artifactId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'evidence artifact ID mismatch', path: [...path, 'artifactId'] });
+  }
+  if (evidence.notebookId !== notebookId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'evidence notebook ID mismatch', path: [...path, 'notebookId'] });
+  }
+  if (evidence.recipe.id !== recipe.id
+    || evidence.recipe.version !== recipe.version
+    || evidence.recipe.checksum !== recipe.checksum) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'evidence recipe binding mismatch', path: [...path, 'recipe'] });
+  }
+}
+
+export type NugletMediaBaseline = z.infer<typeof nugletMediaBaselineSchema>;
 
 export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((brief, context) => {
   const generationPlan = brief.generationPlan;

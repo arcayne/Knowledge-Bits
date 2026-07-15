@@ -577,30 +577,71 @@ function generationRecipes() {
 }
 
 function generationPlanFor(recipes: { story: ReturnType<typeof resolvedRecipe>; playbook?: ReturnType<typeof resolvedRecipe>; challenge?: ReturnType<typeof resolvedRecipe> }) {
-  const binding = (id: string, recipe?: ReturnType<typeof resolvedRecipe>) => ({
+  const binding = <Id extends string>(id: Id, recipe?: ReturnType<typeof resolvedRecipe>) => ({
     id,
     version: '1.0.0',
     checksum: recipe?.checksum ?? recipes.story.checksum,
   });
+  const planRecipes = {
+    story: { id: 'nuglet.lesson.story' as const, version: '1.0.0', checksum: recipes.story.checksum },
+    playbook: binding('nuglet.lesson.playbook', recipes.playbook),
+    challenge: binding('nuglet.challenge', recipes.challenge),
+    infographic: binding('nuglet.visual.infographic'),
+    audioBrief: binding('nuglet.audio.brief'),
+    audioDiscussion: binding('nuglet.audio.discussion'),
+    hero: binding('nuglet.hero'),
+    editorialQa: binding('nuglet.qa.editorial'),
+  };
   return {
     contentKind: 'nuglet.lesson.v1' as const,
     schemaVersion: '1.1.0' as const,
-    recipes: {
-      story: { id: 'nuglet.lesson.story' as const, version: '1.0.0', checksum: recipes.story.checksum },
-      playbook: binding('nuglet.lesson.playbook', recipes.playbook),
-      challenge: binding('nuglet.challenge', recipes.challenge),
-      infographic: binding('nuglet.visual.infographic'),
-      audioBrief: binding('nuglet.audio.brief'),
-      audioDiscussion: binding('nuglet.audio.discussion'),
-      hero: binding('nuglet.hero'),
-      editorialQa: binding('nuglet.qa.editorial'),
-    },
+    recipes: planRecipes,
     heroDirection: {
       concept: 'A clear path',
       metaphor: 'One marked step',
       compositionFamily: 'asymmetrical-story' as const,
       mustInclude: ['one focal object'],
       mustAvoid: ['rigid symmetry'],
+    },
+    mediaBaseline: mediaBaselineFor(planRecipes),
+  };
+}
+
+function mediaBaselineFor(recipes: Record<string, { id: string; version: string; checksum: string }>) {
+  const artifact = (role: 'infographic' | 'audioBrief' | 'audioDiscussion', artifactId: string, path: string) => {
+    const prompt = Buffer.from(`Generate ${artifactId}`);
+    const recipe = recipes[role]!;
+    return {
+      checksum: `sha256:${'b'.repeat(64)}`,
+      generation: {
+        artifactId,
+        model: 'notebooklm-cli:fixture',
+        notebookId: 'notebook-fixture',
+        prompt: {
+          bytesBase64: prompt.toString('base64'),
+          checksum: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
+        },
+        provider: 'notebooklm' as const,
+        recipe: { id: recipe.id, version: recipe.version, checksum: recipe.checksum },
+      },
+      mediaType: role === 'infographic' ? 'image/webp' : 'audio/mp4',
+      path,
+      providerArtifactId: artifactId,
+    };
+  };
+  return {
+    descriptorChecksum: `sha256:${'f'.repeat(64)}`,
+    descriptorPath: 'knowledge-bits/media-baseline.v1.json' as const,
+    descriptor: {
+      artifacts: {
+        infographic: artifact('infographic', 'infographic-artifact', 'notebooklm/infographic.webp'),
+        audioBrief: artifact('audioBrief', 'brief-artifact', 'audio/brief.m4a'),
+        audioDiscussion: artifact('audioDiscussion', 'discussion-artifact', 'audio/discussion.m4a'),
+      },
+      notebookId: 'notebook-fixture',
+      runFolder: 'apps/nuglet-lab/outputs/fixture-run',
+      runId: 'fixture-run',
+      schemaVersion: 'nuglet.media-baseline.v1' as const,
     },
   };
 }

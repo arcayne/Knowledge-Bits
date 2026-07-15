@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
+import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
 
 import {
   composeWorkerProviders,
@@ -382,9 +384,14 @@ test('executes media generation through one bounded local command adapter', asyn
               generationInputChecksum: inputChecksum,
               metadata: { byteSize: 4, height: 768, width: 1024 },
               support: {
-                model: 'vertex:fixture-image',
-                referenceChecksums: [],
-                renderedPrompt: 'Rendered hero prompt.',
+                executions: [{
+                  model: 'vertex:fixture-image',
+                  promptBase64: Buffer.from('Rendered hero prompt.').toString('base64'),
+                  promptChecksum: `sha256:${createHash('sha256').update('Rendered hero prompt.').digest('hex')}`,
+                  provider: 'vertex',
+                  recipe: generationPlan.recipes.hero,
+                  referenceChecksums: [],
+                }],
               },
             }],
           }),
@@ -400,6 +407,7 @@ test('executes media generation through one bounded local command adapter', asyn
     kinds: ['hero'],
     idempotencyKey: 'stable-media-key',
     heroDirection: generationPlan.heroDirection,
+    mediaBaseline: generationPlan.mediaBaseline,
     resolvedRecipes: recipes,
     executionInput: input('produce_assets', [], { generationPlan }),
     signal: new AbortController().signal,
@@ -413,6 +421,8 @@ test('executes media generation through one bounded local command adapter', asyn
   assert.match(String(commandInput?.stdin), /stable-media-key/);
   assert.match(String(commandInput?.stdin), /canonicalBase64/);
   assert.match(String(commandInput?.stdin), /Move from distraction to focus/);
+  assert.match(String(commandInput?.stdin), /media-baseline\.v1\.json/);
+  assert.match(String(commandInput?.stdin), /fixture-run/);
   assert.equal(commandInput?.timeoutMs, 600_000);
 });
 
@@ -451,7 +461,43 @@ const generationPlan = {
     mustInclude: ['one focal object'],
     mustAvoid: ['rigid symmetry'],
   },
+  mediaBaseline: {
+    descriptorChecksum: `sha256:${'f'.repeat(64)}`,
+    descriptorPath: 'knowledge-bits/media-baseline.v1.json',
+    descriptor: {
+      artifacts: {
+        infographic: baselineArtifact('nuglet.visual.infographic', 'infographic-artifact', 'notebooklm/infographic.webp'),
+        audioBrief: baselineArtifact('nuglet.audio.brief', 'brief-artifact', 'audio/brief.m4a'),
+        audioDiscussion: baselineArtifact('nuglet.audio.discussion', 'discussion-artifact', 'audio/discussion.m4a'),
+      },
+      notebookId: 'notebook-fixture',
+      runFolder: 'apps/nuglet-lab/outputs/fixture-run',
+      runId: 'fixture-run',
+      schemaVersion: 'nuglet.media-baseline.v1',
+    },
+  } as const,
 };
+
+function baselineArtifact(recipeId: string, artifactId: string, path: string) {
+  const prompt = Buffer.from(`Generate ${artifactId}`);
+  return {
+    checksum: `sha256:${'b'.repeat(64)}`,
+    generation: {
+      artifactId,
+      model: 'notebooklm-cli:fixture',
+      notebookId: 'notebook-fixture',
+      prompt: {
+        bytesBase64: prompt.toString('base64'),
+        checksum: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
+      },
+      provider: 'notebooklm' as const,
+      recipe: { id: recipeId, version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    },
+    mediaType: recipeId.includes('audio') ? 'audio/mp4' : 'image/webp',
+    path,
+    providerArtifactId: artifactId,
+  };
+}
 const evidence = {
   sources: [{
     sourceId: '11111111-1111-4111-8111-111111111111',
@@ -541,7 +587,7 @@ function exactRecipeVerifier(trusted: typeof generationPlan): TrustedRecipeBindi
   };
 }
 
-function resolvedRecipesFor(plan: typeof generationPlan) {
+function resolvedRecipesFor(plan: Pick<NugletGenerationPlan, 'recipes'>) {
   return Object.fromEntries(Object.entries(plan.recipes).map(([role, binding]) => [role, {
     ...binding,
     canonicalBytes: Buffer.from(JSON.stringify(binding)),

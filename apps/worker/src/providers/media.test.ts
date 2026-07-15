@@ -66,11 +66,34 @@ test('media preserves measured metadata and recipe support evidence on all four 
   assert.deepEqual(parsed.assets.map(({ kind }) => kind), requiredKinds);
   assert.ok(parsed.assets.every((asset) => asset.generationInputChecksum === checksum));
   assert.ok(parsed.assets.every((asset) => asset.metadata.byteSize === Buffer.from(asset.kind).byteLength));
-  assert.equal(result.supportArtifacts?.length, 8);
+  assert.equal(result.supportArtifacts?.length, 12);
   assert.deepEqual(
     result.assets?.map((asset) => ({ kind: asset.kind, provenance: asset.provenance })),
     requiredKinds.map((kind) => ({ kind, provenance: metadataFor(kind) })),
   );
+});
+
+test('media rejects baseline bytes that do not match the immutable descriptor', async () => {
+  const provider = providerFor((request) => request.kinds.map((kind) => (
+    kind === 'infographic'
+      ? { ...generated(kind), bytes: Buffer.from('wrong-baseline-bytes'), metadata: { ...metadataFor(kind), byteSize: 20 } }
+      : generated(kind)
+  )));
+
+  await assert.rejects(() => provider.execute(mediaInput()), /media_baseline_checksum_mismatch/);
+});
+
+test('media accepts every complete provenance pair and rejects an incomplete additional execution', async () => {
+  const complete = providerFor((request) => request.kinds.map((kind) => generated(kind)));
+  const result = await complete.execute(mediaInput());
+  assert.equal(result.kind, 'success');
+
+  const incomplete = providerFor((request) => request.kinds.map((kind) => (
+    kind === 'audio_discussion'
+      ? { ...generated(kind), supportArtifacts: supportFor(kind).slice(0, 3) }
+      : generated(kind)
+  )));
+  await assert.rejects(() => incomplete.execute(mediaInput()), /media_support_evidence_incomplete/);
 });
 
 function providerFor(generate: (request: Parameters<MediaClient['generate']>[0]) => unknown) {
@@ -117,13 +140,40 @@ function metadataFor(kind: MediaKind): Record<string, unknown> {
 
 function supportFor(kind: MediaKind): ProviderSupportArtifact[] {
   const recipe = recipeFor(kind);
-  const prompt = Buffer.from(`Rendered ${kind} prompt.`);
+  const pairs = [supportPair(kind, recipe, Buffer.from(`Generate ${kind}`), {
+    artifactId: kind === 'hero' ? undefined : `${kind}-artifact`,
+    model: kind === 'hero' ? 'vertex:fixture-image' : 'notebooklm-cli:fixture',
+    notebookId: kind === 'hero' ? undefined : 'notebook-fixture',
+    provider: kind === 'hero' ? 'vertex' : 'notebooklm',
+  })];
+  if (kind.startsWith('audio_')) {
+    pairs.push(kind === 'audio_brief'
+      ? supportPair(kind, recipe, Buffer.from(`Extract ${kind}`), {
+        artifactId: `${kind}-transcript`,
+        model: 'notebooklm-cli:fixture',
+        notebookId: 'notebook-fixture',
+        provider: 'notebooklm',
+      })
+      : supportPair(kind, recipe, Buffer.from(`Transcribe ${kind}`), {
+        model: 'vertex:fixture-transcriber',
+        provider: 'vertex',
+      }));
+  }
+  return pairs.flat();
+}
+
+function supportPair(
+  kind: MediaKind,
+  recipe: ResolvedRecipe,
+  prompt: Buffer,
+  execution: { artifactId?: string; model: string; notebookId?: string; provider: string },
+): ProviderSupportArtifact[] {
   const provenance = {
+    ...execution,
     recipeId: recipe.id,
     recipeVersion: recipe.version,
     recipeChecksum: recipe.checksum,
     promptChecksum: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
-    model: kind === 'hero' ? 'vertex:fixture-image' : 'notebooklm-cli:fixture',
     referenceChecksums: kind === 'hero' ? heroReferenceChecksums : [],
   };
   return [{
@@ -169,7 +219,68 @@ const generationPlan: NugletGenerationPlan = {
     mustInclude: ['one focal object'],
     mustAvoid: ['rigid symmetry'],
   },
+  mediaBaseline: {
+    descriptorChecksum: `sha256:${'f'.repeat(64)}`,
+    descriptorPath: 'knowledge-bits/media-baseline.v1.json',
+    descriptor: {
+      artifacts: {
+        infographic: baselineArtifact('infographic', 'nuglet.visual.infographic', `sha256:${'6'.repeat(64)}`),
+        audioBrief: {
+          ...baselineArtifact('audio_brief', 'nuglet.audio.brief', `sha256:${'7'.repeat(64)}`),
+          transcript: baselineTranscript('audio_brief', 'nuglet.audio.brief', `sha256:${'7'.repeat(64)}`),
+        },
+        audioDiscussion: baselineArtifact('audio_discussion', 'nuglet.audio.discussion', `sha256:${'8'.repeat(64)}`),
+      },
+      notebookId: 'notebook-fixture',
+      runFolder: 'apps/nuglet-lab/outputs/fixture-run',
+      runId: 'fixture-run',
+      schemaVersion: 'nuglet.media-baseline.v1',
+    },
+  },
 };
+
+function baselineArtifact(kind: Exclude<MediaKind, 'hero'>, recipeId: string, recipeChecksum: string) {
+  const prompt = Buffer.from(`Generate ${kind}`);
+  return {
+    checksum: `sha256:${createHash('sha256').update(kind).digest('hex')}`,
+    generation: {
+      artifactId: `${kind}-artifact`,
+      model: 'notebooklm-cli:fixture',
+      notebookId: 'notebook-fixture',
+      prompt: {
+        bytesBase64: prompt.toString('base64'),
+        checksum: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
+      },
+      provider: 'notebooklm' as const,
+      recipe: { id: recipeId, version: '1.0.0', checksum: recipeChecksum },
+    },
+    mediaType: kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
+    path: kind === 'infographic' ? 'notebooklm/infographic.webp' : `audio/${kind}.m4a`,
+    providerArtifactId: `${kind}-artifact`,
+  };
+}
+
+function baselineTranscript(kind: 'audio_brief', recipeId: string, recipeChecksum: string) {
+  const prompt = Buffer.from(`Extract ${kind}`);
+  const audioChecksum = `sha256:${createHash('sha256').update(kind).digest('hex')}`;
+  return {
+    audioChecksum,
+    extraction: {
+      artifactId: `${kind}-transcript`,
+      model: 'notebooklm-cli:fixture',
+      notebookId: 'notebook-fixture',
+      prompt: {
+        bytesBase64: prompt.toString('base64'),
+        checksum: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
+      },
+      provider: 'notebooklm' as const,
+      recipe: { id: recipeId, version: '1.0.0', checksum: recipeChecksum },
+    },
+    path: 'audio/audio_brief.transcript.json',
+    providerArtifactId: `${kind}-transcript`,
+    transcriptChecksum: `sha256:${'c'.repeat(64)}`,
+  };
+}
 
 const resolvedRecipes = Object.fromEntries(Object.entries(generationPlan.recipes).map(([role, recipeBinding]) => {
   const value = recipeBinding.id === 'nuglet.hero'
