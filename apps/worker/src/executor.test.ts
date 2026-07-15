@@ -594,6 +594,8 @@ test('removes credentials, path fields, and embedded absolute paths from generat
           'https://api.example.test/run#value=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturepart',
           'file:///Users/name/My%20Project/private.json',
           'file:///Users/name/My (Secret Project) [draft]/private.json',
+          'plain /Users/Alice/My Secret [draft]/private.json',
+          'plain /Users/Alice/My (Secret) [draft]/private.json',
           'open "\\\\server\\share\\My Project\\private.json"',
           'open <\\\\?\\C:\\Build Output\\private.json>',
           'open [\\\\server\\share\\My (Secret) [draft]\\private.json]',
@@ -644,6 +646,9 @@ test('removes credentials, path fields, and embedded absolute paths from generat
     assert.equal(report.includes('Build Output\\private.json'), false);
     assert.equal(report.includes('My (Secret) [draft]\\private.json'), false);
     assert.equal(report.includes('Build\\My(Secret)[draft]\\private.json'), false);
+    assert.equal(report.includes('My Secret [draft]/private.json'), false);
+    assert.equal(report.includes('My (Secret) [draft]/private.json'), false);
+    assert.equal(report.includes('private.json'), false);
     assert.match(report, /endpoint/);
     assert.match(report, /safeSetting/);
     const recipeProvenance = JSON.stringify(client.completedArtifacts.find(

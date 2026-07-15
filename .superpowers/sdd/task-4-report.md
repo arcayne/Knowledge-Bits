@@ -4,6 +4,31 @@
 
 Implemented file-backed Nuglet recipe verification and immutable generation provenance without activating product-specific recipe semantics. The worker resolves trusted recipe bindings by canonical checksum, normalizes rendered prompt bytes, keeps execution evidence separate from learner media, sanitizes reports and provenance, and uploads the three versioned generation artifact kinds under the active worker lease when a provider returns them.
 
+## Sixth Repair Follow-up
+
+Resolved the remaining unquoted absolute path disclosure and trailing whitespace finding from the final approval review.
+
+### Changes
+
+- Added a fail-closed redaction pass for ambiguous unquoted absolute POSIX, drive, and UNC paths. When spaces, parentheses, or brackets make the path boundary ambiguous, redaction consumes the rest of the string so no path suffix remains.
+- Added the exact neutral-key regressions for `plain /Users/Alice/My Secret [draft]/private.json` and `plain /Users/Alice/My (Secret) [draft]/private.json`, including an assertion that no `private.json` suffix survives.
+- Removed trailing whitespace from `apps/worker/src/runtime.ts:44`.
+- Kept Task 4 sequencing, provider behavior, and generation-plan binding unchanged.
+
+### Verification
+
+- Focused recipe and executor tests: 35 passed.
+- Full worker suite: 80 passed.
+- Worker build: passed.
+- API repository and artifact-route compatibility tests: 41 passed.
+- Forbidden-credential scan: passed for 142 tracked files.
+- Workspace typechecks: all 5 participating projects passed.
+- `git diff --check af3be16..HEAD`: passed after the report update.
+
+### Concerns
+
+- Tests ran on Node `v26.5.0`, while the workspace declares `>=24 <25`. Pnpm emitted the existing engine warning and TSX emitted the existing `module.register()` deprecation warning.
+
 ## Fifth Repair Follow-up
 
 Resolved the remaining Important redaction finding with a fail-closed report sanitizer.

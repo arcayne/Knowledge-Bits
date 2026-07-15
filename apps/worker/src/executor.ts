@@ -500,6 +500,7 @@ function redactString(value: string, secrets: readonly string[]): string {
     .replace(/<((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^>\r\n]+)>/gi, '<[REDACTED_PATH]>')
     .replace(/\[((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^\r\n]*)\]/gi, '[REDACTED_PATH]')
     .replace(/\(((?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|\/(?!\/))[^\r\n]*)\)/gi, '([REDACTED_PATH])')
+    .replace(/(?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|(?<![A-Za-z0-9._-])\/(?!\/))(?=[^\r\n"'`<>{}]*[\\s()[\]])[^\r\n"'`<>{}]*/g, '[REDACTED_PATH]')
     .replace(/(?:~[\\/]|[A-Za-z]:[\\/]|\\\\(?:\?\\)?(?:UNC\\)?|(?<![A-Za-z0-9._-])\/(?!\/))[^\s"'`<>{}]+/g, '[REDACTED_PATH]');
   return withoutPaths;
 }

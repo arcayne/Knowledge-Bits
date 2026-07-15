@@ -41,7 +41,7 @@ type MediaContextResolver = (input: ProviderExecutionInput) => Promise<{
   contentChecksum: string;
   generationPlan?: NugletGenerationPlan;
   resolvedRecipes?: Partial<ResolvedNugletRecipes>;
-}>; 
+}>;
 
 export interface TrustedRecipeBindingVerifier {
   resolvePlan(plan: NugletGenerationPlan): ResolvedNugletRecipes | Promise<ResolvedNugletRecipes>;
