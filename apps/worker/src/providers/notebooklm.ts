@@ -33,6 +33,7 @@ import {
 import { createHash } from 'node:crypto';
 
 export const DEFAULT_NOTEBOOKLM_TIMEOUT_MS = 180_000;
+export const NOTEBOOKLM_QUERY_PROMPT_MAX_BYTES = 8_000;
 export const NOTEBOOKLM_RECIPE_CREATE_PROMPT_VERSION = 'notebooklm-recipe-create.v1';
 const DEFAULT_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS = 60;
 const MAX_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS = 3_600;
@@ -227,6 +228,7 @@ export class NotebookLmProvider implements ContentProvider {
   }
 
   private async query(notebookId: string, prompt: string, signal: AbortSignal, conversationId?: string) {
+    assertNotebookLmQueryPromptSize(prompt);
     const response = await this.run([
       'notebook', 'query', notebookId, prompt,
       ...(conversationId ? ['--conversation-id', conversationId] : []),
@@ -384,13 +386,17 @@ function renderRecipeCreatePrompt(
   return renderPromptSections([
     'Return one response encoded as a strict JSON object with no markdown fences.',
     STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS,
-    `Named inputs:\n${JSON.stringify(promptInputs, null, 2)}`,
-    `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)}`,
+    `Named inputs:\n${JSON.stringify(promptInputs)}`,
+    `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor)}`,
     ...recipes.map((recipe) => [
-      `Resolved recipe ${recipe.id}@${recipe.version} (canonical JSON):`,
-      Buffer.from(recipe.canonicalBytes).toString('utf8'),
+      `Resolved recipe ${recipe.id}@${recipe.version} (compact canonical JSON):`,
+      compactCanonicalJson(recipe.canonicalBytes),
     ].join('\n')),
   ]);
+}
+
+function compactCanonicalJson(bytes: Uint8Array): string {
+  return JSON.stringify(JSON.parse(Buffer.from(bytes).toString('utf8')));
 }
 
 function validateCitations(answer: Record<string, unknown>, acceptedEvidence?: EvidenceManifest): void {
@@ -538,8 +544,14 @@ function renderStoryPlaybookSemanticRepairPrompt(issues: StoryPlaybookSemanticIs
     'Deterministic findings:',
     ...(issues.deterministic.length > 0 ? issues.deterministic : ['None.']).map((issue) => `- ${issue}`),
     STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS,
-    `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)}`,
+    `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor)}`,
   ].join('\n');
+}
+
+function assertNotebookLmQueryPromptSize(prompt: string): void {
+  if (Buffer.byteLength(prompt, 'utf8') > NOTEBOOKLM_QUERY_PROMPT_MAX_BYTES) {
+    throw new ProviderNeedsHumanError('notebooklm_prompt_too_large');
+  }
 }
 
 function safeDeterministicIssues(findings: readonly DeterministicFinding[]): string[] {

@@ -3,12 +3,18 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { NotebookLmProvider, type NotebookLmProcess } from './notebooklm.js';
+import {
+  NOTEBOOKLM_QUERY_PROMPT_MAX_BYTES,
+  NotebookLmProvider,
+  type NotebookLmProcess,
+} from './notebooklm.js';
 import type { ProviderExecutionInput } from './types.js';
 import { canonicalJsonBytes } from '../recipes/file-registry.js';
 import { storyPlaybookDraftContractDescriptor } from '@knowledge-bits/contracts';
 
 const sourceId = '11111111-1111-4111-8111-111111111111';
+const secondarySourceId = '22222222-2222-4222-8222-222222222222';
+const tertiarySourceId = '66666666-6666-4666-8666-666666666666';
 
 test('NotebookLM fixtures contain no credential names or absolute home paths', async () => {
   const fixtureUrls = [
@@ -106,11 +112,23 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
       objective: 'make interrupted work easier to resume',
       centralIdea: 'A visible next step reduces restart friction.',
       evidence: {
-        sources: [{
-          sourceId,
-          title: 'Accepted source',
-          snapshotArtifactId: '55555555-5555-4555-8555-555555555555',
-        }],
+        sources: [
+          {
+            sourceId,
+            title: 'Accepted source',
+            snapshotArtifactId: '55555555-5555-4555-8555-555555555555',
+          },
+          {
+            sourceId: secondarySourceId,
+            title: 'Second accepted source',
+            snapshotArtifactId: '77777777-7777-4777-8777-777777777777',
+          },
+          {
+            sourceId: tertiarySourceId,
+            title: 'Third accepted source',
+            snapshotArtifactId: '88888888-8888-4888-8888-888888888888',
+          },
+        ],
       },
       generationPlan: generationPlanFor(recipes),
       resolvedRecipes: recipes,
@@ -126,9 +144,17 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
   assert.match(prompt, /Open with one concrete interruption/);
   assert.match(prompt, /Give the learner three usable steps/);
   assert.match(prompt, /Return exactly three application questions/);
-  assert.match(prompt, /"acceptedSourceIds":\s*\[\s*"11111111-1111-4111-8111-111111111111"/);
-  assert.match(prompt, /"audience": "busy knowledge workers"/);
-  assert.match(prompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2))));
+  assert.match(prompt, /Named inputs:\n\{"topic":"returning to focused work"/);
+  assert.match(prompt, /"acceptedSourceIds":\["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222","66666666-6666-4666-8666-666666666666"\]/);
+  assert.match(prompt, /"audience":"busy knowledge workers"/);
+  assert.match(prompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor))));
+  assert.equal(prompt.includes(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), false);
+  for (const recipe of Object.values(recipes)) {
+    const compactRecipe = JSON.stringify(JSON.parse(Buffer.from(recipe.canonicalBytes).toString('utf8')));
+    assert.equal(countOccurrences(prompt, compactRecipe), 1);
+    assert.equal(prompt.includes(Buffer.from(recipe.canonicalBytes).toString('utf8').trim()), false);
+  }
+  assert.ok(Buffer.byteLength(prompt, 'utf8') < NOTEBOOKLM_QUERY_PROMPT_MAX_BYTES);
   assertCrossFormatRequirements(prompt);
   assert.doesNotMatch(prompt, /Required payload shape:/);
   assert.doesNotMatch(prompt, /The Story must contain/);
@@ -184,6 +210,7 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
   assert.equal(report.promptVersion, 'notebooklm-recipe-create.v1');
   assert.equal(report.renderedPrompt, prompt);
   assert.deepEqual(report.renderedPrompts, [prompt]);
+  assert.equal(Buffer.byteLength(report.renderedPrompt, 'utf8'), Buffer.byteLength(prompt, 'utf8'));
 });
 
 test('records every recipe-shaped NotebookLM repair call with its exact prompt', async () => {
@@ -232,11 +259,11 @@ test('records every recipe-shaped NotebookLM repair call with its exact prompt',
   ]);
   assert.match(prompts[1]!, /prior answer was not valid JSON/i);
   assert.equal(prompts[1]!.includes(prompts[0]!), false);
-  assert.equal(prompts[1]!.includes(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), false);
+  assert.equal(prompts[1]!.includes(JSON.stringify(storyPlaybookDraftContractDescriptor)), false);
   assert.match(prompts[2]!, /prior answer was structurally invalid/i);
   assert.equal(prompts[2]!.includes(prompts[0]!), false);
-  assert.equal(countOccurrences(prompts[2]!, JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), 1);
-  assert.ok(prompts[2]!.length <= JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2).length + 3_000);
+  assert.equal(countOccurrences(prompts[2]!, JSON.stringify(storyPlaybookDraftContractDescriptor)), 1);
+  assert.ok(prompts[2]!.length <= JSON.stringify(storyPlaybookDraftContractDescriptor).length + 3_000);
   assert.equal(result.supportArtifacts?.length, 18);
   assert.deepEqual(
     result.supportArtifacts?.filter(({ kind }) => kind === 'generation.prompt.rendered')
@@ -277,9 +304,10 @@ test('repairs a structurally invalid direct Story and Playbook answer once and r
   assert.match(repairPrompt, /\$\.kind: Expected "nuglet\.lesson\.v1"/);
   assert.match(repairPrompt, /\$\.schemaVersion: Expected "1\.1\.0"/);
   assert.match(repairPrompt, /\$\.payload: Expected the required value type\./);
-  assert.match(repairPrompt, /"kind": "nuglet\.lesson\.v1"/);
-  assert.match(repairPrompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2))));
-  assert.equal(countOccurrences(repairPrompt, JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), 1);
+  assert.match(repairPrompt, /"kind":"nuglet\.lesson\.v1"/);
+  assert.match(repairPrompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor))));
+  assert.equal(countOccurrences(repairPrompt, JSON.stringify(storyPlaybookDraftContractDescriptor)), 1);
+  assert.equal(repairPrompt.includes(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), false);
   assert.match(repairPrompt, /preserve grounded meaning and accepted citations/i);
   assertCrossFormatRequirements(repairPrompt);
   assert.doesNotMatch(repairPrompt, /direct-unwrapped-story-playbook/);
@@ -415,6 +443,58 @@ test('bounds semantic issues without exposing many oversized unknown keys in pro
   assert.ok(issueSection.length <= 2_000);
   assert.equal(repairPrompt.includes(unknownKeyPrefix), false);
   assert.equal(renderedPromptArtifacts(result).some((prompt) => prompt.includes(unknownKeyPrefix)), false);
+});
+
+test('keeps a maximum bounded semantic repair below the NotebookLM query ceiling', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: maximallyInvalidStoryPlaybookAnswer(), stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const repairPrompt = String(calls[2]?.args[3]);
+  const issueSection = repairPrompt.split('Validation issues:\n')[1]?.split('\nExact required root envelope:')[0] ?? '';
+  assert.equal(issueSection.split('\n').filter((line) => line.startsWith('- ')).length, 20);
+  assert.ok(Buffer.byteLength(repairPrompt, 'utf8') < NOTEBOOKLM_QUERY_PROMPT_MAX_BYTES);
+  assert.match(repairPrompt, /\$\.payload\.contentModel: Expected "story-playbook\.v1"\./);
+  assert.match(repairPrompt, /Exact required root envelope:\n\{ kind: "nuglet\.lesson\.v1", schemaVersion: "1\.1\.0", payload: \{ \.\.\. \} \}/);
+  assert.equal(countOccurrences(repairPrompt, JSON.stringify(storyPlaybookDraftContractDescriptor)), 1);
+  assert.equal(repairPrompt.includes(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), false);
+  assertCrossFormatRequirements(repairPrompt);
+  assert.deepEqual(
+    (result.executionReport as { renderedPrompts: string[] }).renderedPrompts,
+    [String(calls[1]?.args[3]), repairPrompt],
+  );
+});
+
+test('rejects an oversized UTF-8 query before invoking the query process with a sanitized error', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const secret = 'provider-topic-secret-DO-NOT-EXPOSE';
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: `${secret}${'\u00e9'.repeat(4_000)}`,
+    }),
+  });
+
+  await assert.rejects(
+    () => provider.execute(input('collect_sources')),
+    (error: unknown) => error instanceof Error
+      && error.message === 'notebooklm_prompt_too_large'
+      && !error.message.includes(secret)
+      && 'needsHumanKind' in error
+      && error.needsHumanKind === 'configuration',
+  );
+  assert.deepEqual(calls.map(({ args }) => args), [['--version']]);
 });
 
 test('semantically repairs extra root keys and object-shaped claim coverage', async (context) => {
@@ -1035,6 +1115,30 @@ function malformedAnswerEnvelope(conversationId: string): string {
   return JSON.stringify({ conversation_id: conversationId, answer: 'not json' });
 }
 
+function maximallyInvalidStoryPlaybookAnswer(): string {
+  return JSON.stringify({
+    conversationId: 'conversation_maximum_semantic_repair',
+    answer: {
+      kind: 'nuglet.lesson.v1',
+      schemaVersion: '1.1.0',
+      payload: {
+        contentModel: 'wrong',
+        materialization: 'wrong',
+        identity: {},
+        learning: {},
+        read: { story: {}, playbook: {} },
+        quiz: {},
+        publicSources: [],
+        claims: [],
+        claimCoverage: 'wrong',
+        hero: {},
+        visual: {},
+        listen: {},
+      },
+    },
+  });
+}
+
 async function deterministicInvalidStoryPlaybookAnswer(): Promise<string> {
   return mutateStoryPlaybookAnswer((answer) => {
     const read = answer.payload.read as {
@@ -1118,19 +1222,48 @@ function generationRecipes() {
       id: 'nuglet.lesson.story',
       version: '1.0.0',
       status: 'approved',
-      instructions: ['Open with one concrete interruption.'],
+      instructions: [
+        'Open with one concrete interruption.',
+        'Build a clear opening, evidence, turning point, and practical bridge.',
+        'Keep factual statements bound to accepted claim IDs and citations.',
+        'Use the central idea, line to keep, action instruction, and terminology exactly.',
+      ],
+      constraints: {
+        estimatedMinutes: { min: 3, max: 7 },
+        evidenceBlockRequired: true,
+        learnerFacingMetadataForbidden: true,
+      },
     }),
     playbook: resolvedRecipe('nuglet.lesson.playbook', {
       id: 'nuglet.lesson.playbook',
       version: '1.0.0',
       status: 'approved',
-      instructions: ['Give the learner three usable steps.'],
+      instructions: [
+        'Give the learner three usable steps.',
+        'Include a principle, why it matters, an example, watch-outs, and the shared action.',
+        'Keep every factual reference attached to accepted claim IDs.',
+        'Make the Playbook operationally distinct from the Story.',
+      ],
+      constraints: {
+        stepCount: { min: 3, max: 5 },
+        watchOutsRequired: true,
+        exactSharedActionRequired: true,
+      },
     }),
     challenge: resolvedRecipe('nuglet.challenge', {
       id: 'nuglet.challenge',
       version: '1.0.0',
       status: 'approved',
-      instructions: ['Return exactly three application questions.'],
+      instructions: [
+        'Return exactly three application questions.',
+        'Give each question three or four distinct options and one valid correct option ID.',
+        'Include rationale, review concept, and accepted claim references.',
+        'Test application of the lesson instead of recall of internal metadata.',
+      ],
+      constraints: {
+        questionCount: 3,
+        optionsPerQuestion: { min: 3, max: 4 },
+      },
     }),
   };
 }
