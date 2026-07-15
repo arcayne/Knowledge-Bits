@@ -5,6 +5,8 @@ import {
   knowledgeBitsEvidenceSchema,
   knowledgeBitsQaSchema,
   knowledgeBitsSchema,
+  knowledgeBitsRunBriefSchema,
+  nugletGenerationPlanSchema,
   storyPlaybookDraftSchema,
   storyPlaybookPayloadSchema,
   jobClaimSchema,
@@ -19,6 +21,36 @@ const packageId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const sourceId = '0f8fad5b-d9cb-469f-a165-70867728950f';
 const claimId = '0f8fad5b-d9cb-469f-a165-708677289510';
 const snapshotArtifactId = '0f8fad5b-d9cb-469f-a165-708677289512';
+
+const recipeIds = {
+  story: 'nuglet.lesson.story',
+  playbook: 'nuglet.lesson.playbook',
+  challenge: 'nuglet.challenge',
+  infographic: 'nuglet.visual.infographic',
+  audioBrief: 'nuglet.audio.brief',
+  audioDiscussion: 'nuglet.audio.discussion',
+  hero: 'nuglet.hero',
+  editorialQa: 'nuglet.qa.editorial',
+};
+
+function validGenerationPlan() {
+  return {
+    contentKind: 'nuglet.lesson.v1',
+    schemaVersion: '1.1.0',
+    recipes: Object.fromEntries(Object.entries(recipeIds).map(([role, id]) => [role, {
+      id,
+      version: '1.0.0',
+      checksum: `sha256:${checksum}`,
+    }])),
+    heroDirection: {
+      concept: 'Moving from saving to growth',
+      metaphor: 'A vessel connected to tokens and a seedling',
+      compositionFamily: 'asymmetrical-story',
+      mustInclude: ['one vessel'],
+      mustAvoid: ['rigid symmetry'],
+    },
+  };
+}
 
 function artifactReference(kind) {
   return {
@@ -307,6 +339,46 @@ test('uses the six approved stages and five visible states', () => {
   assert.deepEqual(stageStateSchema.options, [
     'queued', 'running', 'waiting', 'needs_human', 'done',
   ]);
+});
+
+test('validates the complete Nuglet generation plan while keeping other briefs generic', () => {
+  const generationPlan = validGenerationPlan();
+  assert.deepEqual(nugletGenerationPlanSchema.parse(generationPlan), generationPlan);
+  assert.deepEqual(
+    knowledgeBitsRunBriefSchema.parse({ generationPlan, productMetadata: { campaign: 'pilot' } }),
+    { generationPlan, productMetadata: { campaign: 'pilot' } },
+  );
+  assert.deepEqual(
+    knowledgeBitsRunBriefSchema.parse({ contentKind: 'another.product.v1', arbitrary: true }),
+    { contentKind: 'another.product.v1', arbitrary: true },
+  );
+});
+
+test('rejects missing and mismatched Nuglet recipe identities and checksums', () => {
+  const missing = validGenerationPlan();
+  delete missing.recipes.audioDiscussion;
+  assert.equal(nugletGenerationPlanSchema.safeParse(missing).success, false);
+
+  const mismatchedId = validGenerationPlan();
+  mismatchedId.recipes.hero.id = 'nuglet.hero.other';
+  assert.equal(nugletGenerationPlanSchema.safeParse(mismatchedId).success, false);
+
+  const mismatchedChecksum = validGenerationPlan();
+  mismatchedChecksum.recipes.story.checksum = `sha256:${'b'.repeat(63)}`;
+  assert.equal(nugletGenerationPlanSchema.safeParse(mismatchedChecksum).success, false);
+
+  const missingChecksum = validGenerationPlan();
+  delete missingChecksum.recipes.hero.checksum;
+  assert.equal(nugletGenerationPlanSchema.safeParse(missingChecksum).success, false);
+
+  assert.equal(
+    knowledgeBitsRunBriefSchema.safeParse({ generationPlan: missing }).success,
+    false,
+  );
+  assert.equal(
+    knowledgeBitsRunBriefSchema.safeParse({ contentKind: 'nuglet.lesson.v1' }).success,
+    false,
+  );
 });
 
 test('approval must bind the exact package checksum', () => {

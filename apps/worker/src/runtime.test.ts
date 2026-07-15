@@ -159,10 +159,76 @@ test('builds Create context from accepted source URLs instead of brief candidate
   const context = await resolver.notebook(input('create_content', dependencies, {
     title: 'Focus',
     sourceUrls: [rejectedBriefUrl],
+    generationPlan,
   }));
 
   assert.deepEqual(context.sourceUrls, [acceptedUrl]);
   assert.deepEqual(context.evidence, evidence);
+  assert.deepEqual(context.generationPlan, generationPlan);
+});
+
+test('passes a validated generation plan to NotebookLM, editorial QA, and media contexts', async () => {
+  const researchId = '88888888-8888-4888-8888-888888888881';
+  const createId = '88888888-8888-4888-8888-888888888882';
+  const checkId = '88888888-8888-4888-8888-888888888883';
+  const client = contextClient(new Map([
+    [researchId, Buffer.from(JSON.stringify({ acceptedSources: [{
+      sourceId: evidence.sources[0]!.sourceId,
+      title: evidence.sources[0]!.title,
+      url: 'https://accepted.example.test/evidence',
+    }] }))],
+    [createId, Buffer.from(JSON.stringify(candidate))],
+    [checkId, Buffer.from(JSON.stringify({
+      deterministic: { passed: true, contentChecksum: calculateContentChecksum(candidate), findings: [] },
+      editorial: { summary: 'Ready.', findings: [] },
+    }))],
+  ]));
+  const resolver = new LeaseScopedJobContextResolver(client);
+  const dependencies = [
+    { artifactId: researchId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'collect_sources' },
+    { artifactId: evidence.sources[0]!.snapshotArtifactId, revision: 1, kind: 'source_snapshot', mediaType: 'text/plain', checksum: inputChecksum, action: 'collect_sources', sourceId: evidence.sources[0]!.sourceId },
+    { artifactId: createId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'create_content' },
+    { artifactId: checkId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'check_content' },
+  ];
+  const brief = { title: 'Focus', generationPlan };
+
+  const notebook = await resolver.notebook(input('create_content', dependencies, brief));
+  const pi = await resolver.pi(input('check_content', dependencies, brief));
+  const media = await resolver.media(input('produce_assets', dependencies, brief));
+
+  assert.deepEqual(notebook.generationPlan, generationPlan);
+  assert.deepEqual(pi.generationPlan, generationPlan);
+  assert.deepEqual(media.generationPlan, generationPlan);
+});
+
+test('rejects missing or invalid Nuglet generation plans before reading provider dependencies', async () => {
+  let artifactReads = 0;
+  const client = contextClient(new Map());
+  client.readArtifact = async () => {
+    artifactReads += 1;
+    throw new Error('provider dependency should not be read');
+  };
+  const resolver = new LeaseScopedJobContextResolver(client);
+
+  await assert.rejects(
+    () => resolver.notebook(input('collect_sources', [], { title: 'Focus', contentKind: 'nuglet.lesson.v1' })),
+    /generation_plan_missing/,
+  );
+
+  const missingChecksum = structuredClone(generationPlan);
+  delete (missingChecksum.recipes.hero as { checksum?: string }).checksum;
+  await assert.rejects(
+    () => resolver.media(input('produce_assets', [], { title: 'Focus', generationPlan: missingChecksum })),
+    /generation_plan_invalid/,
+  );
+
+  const mismatched = structuredClone(generationPlan);
+  mismatched.recipes.hero.checksum = `sha256:${'b'.repeat(63)}`;
+  await assert.rejects(
+    () => resolver.pi(input('check_content', [], { title: 'Focus', generationPlan: mismatched })),
+    /generation_plan_invalid/,
+  );
+  assert.equal(artifactReads, 0);
 });
 
 test('executes editorial inference through the local Pi SDK adapter with an abort signal', async () => {
@@ -232,6 +298,27 @@ test('force-kills a local provider process that ignores graceful timeout termina
 });
 
 const inputChecksum = 'a'.repeat(64);
+const generationPlan = {
+  contentKind: 'nuglet.lesson.v1' as const,
+  schemaVersion: '1.1.0' as const,
+  recipes: {
+    story: { id: 'nuglet.lesson.story', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    playbook: { id: 'nuglet.lesson.playbook', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    challenge: { id: 'nuglet.challenge', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    infographic: { id: 'nuglet.visual.infographic', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    audioBrief: { id: 'nuglet.audio.brief', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    audioDiscussion: { id: 'nuglet.audio.discussion', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    hero: { id: 'nuglet.hero', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    editorialQa: { id: 'nuglet.qa.editorial', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+  },
+  heroDirection: {
+    concept: 'Move from distraction to focus',
+    metaphor: 'One stone settling beside a clear path',
+    compositionFamily: 'asymmetrical-story' as const,
+    mustInclude: ['one focal object'],
+    mustAvoid: ['rigid symmetry'],
+  },
+};
 const evidence = {
   sources: [{
     sourceId: '11111111-1111-4111-8111-111111111111',

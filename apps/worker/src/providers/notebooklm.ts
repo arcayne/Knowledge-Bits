@@ -8,7 +8,7 @@ import {
 } from '../prompts/notebooklm-research.v1.js';
 import type { EvidenceManifest, GroundedClaim } from '../checks/deterministic.js';
 import type { VerifiedResearchEvidence } from '../checks/source-verifier.js';
-import { nugletLessonV1PayloadSchema } from '@knowledge-bits/contracts';
+import { nugletLessonV1PayloadSchema, type NugletGenerationPlan } from '@knowledge-bits/contracts';
 
 import {
   ProviderNeedsHumanError,
@@ -36,6 +36,7 @@ export interface NotebookLmContext {
   sourceUrls: readonly string[];
   topic: string;
   evidence?: EvidenceManifest;
+  generationPlan?: NugletGenerationPlan;
 }
 
 export interface ResearchSourceVerifier {

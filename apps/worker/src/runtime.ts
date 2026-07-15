@@ -2,7 +2,9 @@ import { spawn } from 'node:child_process';
 
 import {
   knowledgeBitsQaSchema,
+  nugletGenerationPlanSchema,
   nugletLessonV1PayloadSchema,
+  type NugletGenerationPlan,
 } from '@knowledge-bits/contracts';
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
@@ -27,11 +29,13 @@ type PiContextResolver = (input: ProviderExecutionInput) => Promise<{
   candidate: ContentCandidate;
   evidence: EvidenceManifest;
   rubric: string;
+  generationPlan?: NugletGenerationPlan;
 }>;
 type MediaContextResolver = (input: ProviderExecutionInput) => Promise<{
   passedCheck: boolean;
   content: ContentCandidate;
   contentChecksum: string;
+  generationPlan?: NugletGenerationPlan;
 }>;
 
 export interface ProviderRuntime {
@@ -126,25 +130,30 @@ export class LeaseScopedJobContextResolver {
 
   async notebook(input: ProviderExecutionInput): Promise<NotebookLmContext> {
     const brief = jobBrief(input);
+    const generationPlan = validatedGenerationPlan(brief);
     const notebookId = notebookIdFromJob(input);
     const research = input.action === 'create_content' ? await this.verifiedResearch(input) : undefined;
     return {
       notebookId,
       sourceUrls: research?.sourceUrls ?? stringArray(brief.sourceUrls),
       topic: stringValue(brief.title) ?? stringValue(brief.topic) ?? stringValue(brief.objective) ?? 'Knowledge Bits lesson',
+      ...(generationPlan ? { generationPlan } : {}),
       ...(research ? { evidence: research.evidence } : {}),
     };
   }
 
   async pi(input: ProviderExecutionInput) {
+    const generationPlan = validatedGenerationPlan(jobBrief(input));
     return {
       candidate: await this.content(input),
       evidence: await this.evidence(input),
       rubric: 'Reject unsupported claims, harmful guidance, source leakage, generic filler, and unusable lesson structure.',
+      ...(generationPlan ? { generationPlan } : {}),
     };
   }
 
   async media(input: ProviderExecutionInput) {
+    const generationPlan = validatedGenerationPlan(jobBrief(input));
     const content = await this.content(input);
     const qa = knowledgeBitsQaSchema.parse(await this.readJsonDependency(input, 'check_content', 'parsed_output'));
     const contentChecksum = calculateContentChecksum(content);
@@ -154,6 +163,7 @@ export class LeaseScopedJobContextResolver {
         && !qa.editorial.findings.some((finding) => finding.blocking),
       content,
       contentChecksum,
+      ...(generationPlan ? { generationPlan } : {}),
     };
   }
 
@@ -468,6 +478,26 @@ function jobBrief(input: ProviderExecutionInput): Record<string, unknown> {
   const brief = input.job.input.brief;
   if (!isRecord(brief)) throw new ProviderNeedsHumanError('job_brief_missing');
   return brief;
+}
+
+function validatedGenerationPlan(brief: Record<string, unknown>): NugletGenerationPlan | undefined {
+  const value = brief.generationPlan;
+  if (value === undefined) {
+    if (brief.contentKind === 'nuglet.lesson.v1') {
+      throw new ProviderNeedsHumanError('generation_plan_missing');
+    }
+    return undefined;
+  }
+  if (!isRecord(value)) throw new ProviderNeedsHumanError('generation_plan_invalid');
+  if (value.contentKind !== 'nuglet.lesson.v1') {
+    if (brief.contentKind === 'nuglet.lesson.v1') {
+      throw new ProviderNeedsHumanError('generation_plan_invalid');
+    }
+    return undefined;
+  }
+  const parsed = nugletGenerationPlanSchema.safeParse(value);
+  if (!parsed.success) throw new ProviderNeedsHumanError('generation_plan_invalid');
+  return parsed.data;
 }
 
 function parseMediaAsset(value: unknown): {

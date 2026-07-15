@@ -9,6 +9,55 @@ import {
 
 const packageIdSchema = z.string().uuid();
 
+const generationRecipeVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
+const generationRecipeChecksumSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+
+function generationRecipeBindingSchema(id: string) {
+  return z.object({
+    id: z.literal(id),
+    version: generationRecipeVersionSchema,
+    checksum: generationRecipeChecksumSchema,
+  }).strict();
+}
+
+export const nugletGenerationPlanSchema = z.object({
+  contentKind: z.literal('nuglet.lesson.v1'),
+  schemaVersion: z.literal('1.1.0'),
+  recipes: z.object({
+    story: generationRecipeBindingSchema('nuglet.lesson.story'),
+    playbook: generationRecipeBindingSchema('nuglet.lesson.playbook'),
+    challenge: generationRecipeBindingSchema('nuglet.challenge'),
+    infographic: generationRecipeBindingSchema('nuglet.visual.infographic'),
+    audioBrief: generationRecipeBindingSchema('nuglet.audio.brief'),
+    audioDiscussion: generationRecipeBindingSchema('nuglet.audio.discussion'),
+    hero: generationRecipeBindingSchema('nuglet.hero'),
+    editorialQa: generationRecipeBindingSchema('nuglet.qa.editorial'),
+  }).strict(),
+  heroDirection: z.object({
+    concept: z.string().trim().min(1),
+    metaphor: z.string().trim().min(1),
+    compositionFamily: z.literal('asymmetrical-story'),
+    mustInclude: z.array(z.string().trim().min(1)),
+    mustAvoid: z.array(z.string().trim().min(1)),
+  }).strict(),
+}).strict();
+
+export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((brief, context) => {
+  const generationPlan = brief.generationPlan;
+  const targetsNuglet = brief.contentKind === 'nuglet.lesson.v1'
+    || (typeof generationPlan === 'object'
+      && generationPlan !== null
+      && !Array.isArray(generationPlan)
+      && 'contentKind' in generationPlan
+      && generationPlan.contentKind === 'nuglet.lesson.v1');
+  if (!targetsNuglet) return;
+  const parsed = nugletGenerationPlanSchema.safeParse(generationPlan);
+  if (parsed.success) return;
+  for (const issue of parsed.error.issues) {
+    context.addIssue({ ...issue, path: ['generationPlan', ...issue.path] });
+  }
+});
+
 export const artifactPrepareRequestSchema = z.object({
   jobId: z.string().uuid(),
   runId: packageIdSchema,
@@ -628,6 +677,7 @@ export const knowledgeBitsSchema = z.object({
 });
 
 export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
+export type NugletGenerationPlan = z.infer<typeof nugletGenerationPlanSchema>;
 type LegacyUnversionedNugletLessonTarget = Omit<z.infer<typeof legacyNugletLessonTargetSchema>, 'schemaVersion'>;
 export type KnowledgeBitsContent = z.infer<typeof knowledgeBitsContentSchema> | {
   schemaVersion: 'knowledge-bits.content.v1';

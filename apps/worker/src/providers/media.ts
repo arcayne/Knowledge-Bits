@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { ContentCandidate } from '../checks/deterministic.js';
+import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
 
 import {
   ProviderNeedsHumanError,
@@ -36,6 +37,7 @@ export class MediaProviderAdapter implements MediaProvider {
       passedCheck: boolean;
       content: ContentCandidate;
       contentChecksum: string;
+      generationPlan?: NugletGenerationPlan;
     }>;
     kinds?: readonly MediaKind[];
   }) {}

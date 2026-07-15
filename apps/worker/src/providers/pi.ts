@@ -1,6 +1,7 @@
 import { parseEditorialCheck, requiresEditorialFailure } from '../checks/editorial.js';
 import { runDeterministicChecks, type ContentCandidate, type EvidenceManifest } from '../checks/deterministic.js';
 import { EDITORIAL_CHECK_PROMPT_VERSION, renderEditorialCheckPrompt } from '../prompts/editorial-check.v1.js';
+import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
 
 import {
   ProviderNeedsHumanError,
@@ -29,6 +30,7 @@ export class PiEditorialProvider implements ContentProvider {
       candidate: ContentCandidate;
       evidence: EvidenceManifest;
       rubric: string;
+      generationPlan?: NugletGenerationPlan;
     }>;
   }) {}
 
