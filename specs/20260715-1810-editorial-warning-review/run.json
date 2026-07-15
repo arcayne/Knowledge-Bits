@@ -1,0 +1,19 @@
+{
+  "workflow": "agentic-delivery-playbook",
+  "version": "0.2",
+  "phase": "implementation",
+  "status": "in_progress",
+  "taskFit": "broad-ticket",
+  "specPath": "specs/20260715-1810-editorial-warning-review/spec.md",
+  "approval": "User explicitly decided editorial_check_failed quality verdicts must continue to human review with a warning and never become a blind pipeline stop.",
+  "activeRole": "parent",
+  "activeModel": "runtime-default",
+  "modelLedger": [{ "role": "parent", "model": "runtime-default", "source": "runtime-default" }],
+  "reviewGates": ["tests-first", "implementation-qa", "verification"],
+  "changedFiles": [],
+  "validationEvidence": [],
+  "findings": [],
+  "knownGaps": [],
+  "nextAction": "Write and verify failing behavioral tests."
+}
+
