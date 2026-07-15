@@ -192,7 +192,8 @@ test('records every recipe-shaped NotebookLM repair call with its exact prompt',
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
-      { stdout: 'not json', stderr: '', exitCode: 0 },
+      { stdout: malformedAnswerEnvelope('conversation_initial_malformed'), stderr: '', exitCode: 0 },
+      { stdout: await directStoryPlaybookFailure('conversation_after_malformed_repair'), stderr: '', exitCode: 0 },
       { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
     ]),
     context: async () => ({
@@ -218,13 +219,32 @@ test('records every recipe-shaped NotebookLM repair call with its exact prompt',
 
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
-  const prompts = [String(calls[1]?.args[3]), String(calls[2]?.args[3])];
-  assert.match(prompts[1]!, /strict JSON object/);
-  assert.equal(result.supportArtifacts?.length, 12);
+  assert.equal(calls.length, 4);
+  const prompts = [String(calls[1]?.args[3]), String(calls[2]?.args[3]), String(calls[3]?.args[3])];
+  assert.deepEqual(calls[2]?.args, [
+    'notebook', 'query', 'notebook_fixture_01', prompts[1]!,
+    '--conversation-id', 'conversation_initial_malformed', '--json',
+  ]);
+  assert.deepEqual(calls[3]?.args, [
+    'notebook', 'query', 'notebook_fixture_01', prompts[2]!,
+    '--conversation-id', 'conversation_after_malformed_repair', '--json',
+  ]);
+  assert.match(prompts[1]!, /prior answer was not valid JSON/i);
+  assert.equal(prompts[1]!.includes(prompts[0]!), false);
+  assert.equal(prompts[1]!.includes(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), false);
+  assert.match(prompts[2]!, /prior answer was structurally invalid/i);
+  assert.equal(prompts[2]!.includes(prompts[0]!), false);
+  assert.equal(countOccurrences(prompts[2]!, JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), 1);
+  assert.ok(prompts[2]!.length <= JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2).length + 3_000);
+  assert.equal(result.supportArtifacts?.length, 18);
   assert.deepEqual(
     result.supportArtifacts?.filter(({ kind }) => kind === 'generation.prompt.rendered')
       .map(({ body }) => Buffer.from(body).toString('utf8')),
-    [prompts[0], prompts[0], prompts[0], prompts[1], prompts[1], prompts[1]],
+    [
+      prompts[0], prompts[0], prompts[0],
+      prompts[1], prompts[1], prompts[1],
+      prompts[2], prompts[2], prompts[2],
+    ],
   );
   assert.deepEqual(
     (result.executionReport as { renderedPrompts: string[] }).renderedPrompts,
@@ -247,13 +267,18 @@ test('repairs a structurally invalid direct Story and Playbook answer once and r
   if (result.kind !== 'success') return;
   assert.equal(calls.length, 3);
   const [originalPrompt, repairPrompt] = [String(calls[1]?.args[3]), String(calls[2]?.args[3])];
-  assert.equal(repairPrompt.startsWith(originalPrompt), true);
+  assert.deepEqual(calls[2]?.args, [
+    'notebook', 'query', 'notebook_fixture_01', repairPrompt,
+    '--conversation-id', 'direct-unwrapped-story-playbook', '--json',
+  ]);
+  assert.equal(repairPrompt.includes(originalPrompt), false);
   assert.match(repairPrompt, /prior answer was structurally invalid/i);
   assert.match(repairPrompt, /\$\.kind: Expected "nuglet\.lesson\.v1"/);
   assert.match(repairPrompt, /\$\.schemaVersion: Expected "1\.1\.0"/);
   assert.match(repairPrompt, /\$\.payload: Expected the required value type\./);
   assert.match(repairPrompt, /"kind": "nuglet\.lesson\.v1"/);
   assert.match(repairPrompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2))));
+  assert.equal(countOccurrences(repairPrompt, JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)), 1);
   assert.match(repairPrompt, /preserve grounded meaning and accepted citations/i);
   assert.doesNotMatch(repairPrompt, /direct-unwrapped-story-playbook/);
   assert.doesNotMatch(repairPrompt, /source snapshot text/i);
@@ -421,6 +446,28 @@ test('rejects a second structurally invalid Story and Playbook answer as a typed
       && error.needsHumanKind === 'quality',
   );
   assert.equal(calls.length, 3);
+});
+
+test('does not issue a fourth query after malformed and semantic repairs are exhausted', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const invalidAnswer = await directStoryPlaybookFailure('conversation_after_malformed_repair');
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: malformedAnswerEnvelope('conversation_initial_malformed'), stderr: '', exitCode: 0 },
+    { stdout: invalidAnswer, stderr: '', exitCode: 0 },
+    { stdout: await directStoryPlaybookFailure('conversation_after_semantic_repair'), stderr: '', exitCode: 0 },
+    { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
+  ]);
+
+  await assert.rejects(
+    () => provider.execute(input('create_content')),
+    (error: unknown) => error instanceof Error
+      && error.message === 'notebooklm_content_invalid'
+      && 'needsHumanKind' in error
+      && error.needsHumanKind === 'quality',
+  );
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[2]?.args.slice(-3), ['--conversation-id', 'conversation_initial_malformed', '--json']);
+  assert.deepEqual(calls[3]?.args.slice(-3), ['--conversation-id', 'conversation_after_malformed_repair', '--json']);
 });
 
 test('keeps accepted-source citation binding on a semantically repaired Story and Playbook answer', async () => {
@@ -653,7 +700,7 @@ test('uses exactly one repair request for malformed structured output', async ()
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
-      { stdout: 'not json', stderr: '', exitCode: 0 },
+      { stdout: malformedAnswerEnvelope('conversation_malformed_answer'), stderr: '', exitCode: 0 },
       { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
     ]),
     context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
@@ -666,21 +713,27 @@ test('uses exactly one repair request for malformed structured output', async ()
   assert.equal(calls[1]?.args.at(-1), '--json');
   assert.equal(calls[2]?.args.at(-1), '--json');
   assert.equal(calls[1]?.stdin, undefined);
+  assert.deepEqual(calls[2]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
   assert.match(String(calls[2]?.args[3]), /strict JSON object/);
+  assert.equal(String(calls[2]?.args[3]).includes(String(calls[1]?.args[3])), false);
 });
 
-test('rejects malformed structured output after its one repair attempt', async () => {
+test('rejects a malformed repair response without issuing semantic repair', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const provider = new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,
-    process: processWith([], [
+    process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
-      { stdout: 'not json', stderr: '', exitCode: 0 },
-      { stdout: 'still not json', stderr: '', exitCode: 0 },
+      { stdout: malformedAnswerEnvelope('conversation_malformed_answer'), stderr: '', exitCode: 0 },
+      { stdout: malformedAnswerEnvelope('conversation_malformed_repair'), stderr: '', exitCode: 0 },
+      { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
     ]),
     context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
   });
 
   await assert.rejects(() => provider.execute(input('collect_sources')), /notebooklm_malformed_output/);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[2]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
 });
 
 test('rejects citations that do not resolve to a returned source', async () => {
@@ -874,11 +927,11 @@ function storyPlaybookProvider(
   });
 }
 
-async function directStoryPlaybookFailure(): Promise<string> {
+async function directStoryPlaybookFailure(conversationId = 'direct-unwrapped-story-playbook'): Promise<string> {
   const valid = JSON.parse(await fixture('notebooklm-story-playbook.json')) as { answer: { payload: Record<string, unknown> } };
   const payload = valid.answer.payload;
   return JSON.stringify({
-    conversationId: 'direct-unwrapped-story-playbook',
+    conversationId,
     answer: {
       ...payload,
       claims: (payload.claims as Array<Record<string, unknown>>).map((claim) => ({
@@ -902,6 +955,10 @@ async function directStoryPlaybookFailure(): Promise<string> {
       },
     },
   });
+}
+
+function malformedAnswerEnvelope(conversationId: string): string {
+  return JSON.stringify({ conversation_id: conversationId, answer: 'not json' });
 }
 
 type StoryPlaybookAnswer = {
@@ -1073,4 +1130,8 @@ function mediaBaselineFor(recipes: Record<string, { id: string; version: string;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function countOccurrences(value: string, needle: string): number {
+  return value.split(needle).length - 1;
 }

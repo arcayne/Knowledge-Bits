@@ -117,8 +117,13 @@ export class NotebookLmProvider implements ContentProvider {
     if (recipeExecution) {
       const issues = storyPlaybookSemanticIssues(parsed.answer, context.evidence);
       if (issues.length > 0) {
-        const semanticRepairPrompt = renderStoryPlaybookSemanticRepairPrompt(prompt, issues);
-        const semanticRepairResponse = await this.query(context.notebookId, semanticRepairPrompt, input.signal);
+        const semanticRepairPrompt = renderStoryPlaybookSemanticRepairPrompt(issues);
+        const semanticRepairResponse = await this.query(
+          context.notebookId,
+          semanticRepairPrompt,
+          input.signal,
+          parsed.conversationId,
+        );
         const repaired = parseStructuredResponse(semanticRepairResponse.stdout);
         if (!repaired) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
         parsed = {
@@ -207,8 +212,12 @@ export class NotebookLmProvider implements ContentProvider {
     }
   }
 
-  private async query(notebookId: string, prompt: string, signal: AbortSignal) {
-    const response = await this.run(['notebook', 'query', notebookId, prompt, '--json'], signal);
+  private async query(notebookId: string, prompt: string, signal: AbortSignal, conversationId?: string) {
+    const response = await this.run([
+      'notebook', 'query', notebookId, prompt,
+      ...(conversationId ? ['--conversation-id', conversationId] : []),
+      '--json',
+    ], signal);
     this.assertProcessSuccess(response);
     return response;
   }
@@ -222,9 +231,10 @@ export class NotebookLmProvider implements ContentProvider {
     const parsed = parseStructuredResponse(response.stdout);
     if (parsed) return { ...parsed, prompts: [prompt] };
 
-    const repairedPrompt = `${prompt}\n\nReturn the same answer again as one strict JSON object with no markdown fences.`;
-    const repaired = await this.run(['notebook', 'query', notebookId, repairedPrompt, '--json'], signal);
-    this.assertProcessSuccess(repaired);
+    const envelope = parseResponseEnvelope(response.stdout);
+    if (!envelope) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
+    const repairedPrompt = renderMalformedOutputRepairPrompt();
+    const repaired = await this.query(notebookId, repairedPrompt, signal, envelope.conversationId);
     const repairedParsed = parseStructuredResponse(repaired.stdout);
     if (!repairedParsed) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
     return { ...repairedParsed, prompts: [prompt, repairedPrompt] };
@@ -267,7 +277,13 @@ export class NotebookLmProvider implements ContentProvider {
   }
 }
 
-function parseStructuredResponse(raw: string): { raw: string; conversationId: string; answer: Record<string, unknown> } | null {
+interface NotebookLmResponseEnvelope {
+  raw: string;
+  conversationId: string;
+  answer: unknown;
+}
+
+function parseResponseEnvelope(raw: string): NotebookLmResponseEnvelope | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
@@ -276,12 +292,26 @@ function parseStructuredResponse(raw: string): { raw: string; conversationId: st
       ? envelope.conversationId
       : envelope.conversation_id;
     if (typeof conversationId !== 'string' || !conversationId.trim()) return null;
-    const answer = typeof envelope.answer === 'string' ? JSON.parse(envelope.answer) : envelope.answer;
-    if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
-    return { raw, conversationId, answer: answer as Record<string, unknown> };
+    return { raw, conversationId, answer: envelope.answer };
   } catch {
     return null;
   }
+}
+
+function parseStructuredResponse(raw: string): { raw: string; conversationId: string; answer: Record<string, unknown> } | null {
+  const envelope = parseResponseEnvelope(raw);
+  if (!envelope) return null;
+  try {
+    const answer = typeof envelope.answer === 'string' ? JSON.parse(envelope.answer) : envelope.answer;
+    if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
+    return { raw, conversationId: envelope.conversationId, answer: answer as Record<string, unknown> };
+  } catch {
+    return null;
+  }
+}
+
+function renderMalformedOutputRepairPrompt(): string {
+  return 'The prior answer was not valid JSON. Return the same answer again as one strict JSON object with no markdown fences.';
 }
 
 function researchCandidates(answer: Record<string, unknown>, sourceUrls: readonly string[]) {
@@ -439,9 +469,8 @@ function storyPlaybookSemanticIssues(answer: Record<string, unknown>, evidence: 
   return parsed.success ? [] : safeSemanticIssues(parsed.error.issues);
 }
 
-function renderStoryPlaybookSemanticRepairPrompt(originalPrompt: string, issues: readonly string[]): string {
+function renderStoryPlaybookSemanticRepairPrompt(issues: readonly string[]): string {
   return [
-    originalPrompt,
     'The prior answer was structurally invalid. Preserve grounded meaning and accepted citations while correcting only the strict output contract.',
     'Return one strict JSON object with no markdown fences.',
     'Validation issues:',
