@@ -1,4 +1,8 @@
-import type { NugletLessonV1Payload, StoryPlaybookDraft } from '@knowledge-bits/contracts';
+import {
+  normalizeNugletTerminologyTerm,
+  type NugletLessonV1Payload,
+  type StoryPlaybookDraft,
+} from '@knowledge-bits/contracts';
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
 export interface GroundedCitation {
@@ -109,7 +113,7 @@ function checkLegacy(candidate: NugletLessonV1Payload, findings: DeterministicFi
     findings.push({ code: 'duplicate-depth', message: 'Quick, Core, and Deep content must be distinct.' });
   }
 
-  checkCoverage(candidate.claims, candidate.claimCoverage, LEGACY_LEARNER_PATHS, [], findings);
+  checkLegacyCoverage(candidate.claims, candidate.claimCoverage, findings);
 }
 
 function checkStoryPlaybook(payload: StoryPlaybookDraft, findings: DeterministicFinding[]): void {
@@ -174,11 +178,14 @@ function checkStoryPlaybook(payload: StoryPlaybookDraft, findings: Deterministic
     semanticNormalize(payload.learning.action.instruction),
   ];
   const sharedValuesPresent = sharedValues.every((value) => value && storyText.includes(value) && playbookText.includes(value));
+  const terminologyPresent = payload.learning.terminology
+    .map(normalizeNugletTerminologyTerm)
+    .every((term) => containsNormalizedTerm(storyText, term) && containsNormalizedTerm(playbookText, term));
   const actionMatches = semanticNormalize(playbook.action) === semanticNormalize(payload.learning.action.instruction);
   const normalizedDuplicate = sameNormalizedSet(storySegments, playbookSegments)
     || storyText === playbookText
     || tokenSimilarity(storyText, playbookText) >= 0.9;
-  if (!sharedValuesPresent || !actionMatches || normalizedDuplicate) {
+  if (!sharedValuesPresent || !terminologyPresent || !actionMatches || normalizedDuplicate) {
     findings.push({
       code: 'cross-format-consistency',
       message: 'Story and Playbook must share the central idea, line to keep, terminology, and action without becoming normalized duplicates.',
@@ -212,7 +219,25 @@ function checkStoryPlaybook(payload: StoryPlaybookDraft, findings: Deterministic
     ...payload.visual.claimRefs.map((claimId) => ({ path: 'visual', claimId })),
     ...questions.flatMap(({ claimRefs }) => claimRefs.map((claimId) => ({ path: 'quiz', claimId }))),
   ];
-  checkCoverage(payload.claims, payload.claimCoverage, STORY_PLAYBOOK_LEARNER_PATHS, nestedClaimRefs, findings);
+  checkStoryPlaybookCoverage(payload.claims, payload.claimCoverage, STORY_PLAYBOOK_LEARNER_PATHS, nestedClaimRefs, findings);
+}
+
+function checkLegacyCoverage(
+  claims: readonly GroundedClaim[],
+  coverageEntries: readonly { path: string; claimIds: readonly string[] }[],
+  findings: DeterministicFinding[],
+): void {
+  const claimsById = new Map(claims.map((claim) => [claim.claimId, claim]));
+  const coverageByPath = new Map(coverageEntries.map((coverage) => [coverage.path, coverage]));
+  if (coverageByPath.size !== coverageEntries.length) {
+    findings.push({ code: 'claim-coverage', message: 'Learner claim coverage paths must be unique.' });
+  }
+  for (const path of LEGACY_LEARNER_PATHS) {
+    const coverage = coverageByPath.get(path);
+    if (!coverage || coverage.claimIds.length === 0 || coverage.claimIds.some((claimId) => !claimsById.has(claimId))) {
+      findings.push({ code: 'claim-coverage', message: `Learner field ${path} requires valid claim coverage.` });
+    }
+  }
 }
 
 function checkClaims(
@@ -243,7 +268,7 @@ function checkClaims(
   }
 }
 
-function checkCoverage(
+function checkStoryPlaybookCoverage(
   claims: readonly GroundedClaim[],
   coverageEntries: readonly { path: string; claimIds: readonly string[] }[],
   requiredPaths: readonly string[],
@@ -298,5 +323,9 @@ function normalize(value: string): string {
 }
 
 function semanticNormalize(value: string): string {
-  return normalize(value).replace(/[^a-z0-9]+/g, ' ').trim();
+  return normalizeNugletTerminologyTerm(value);
+}
+
+function containsNormalizedTerm(text: string, term: string): boolean {
+  return Boolean(term) && ` ${text} `.includes(` ${term} `);
 }

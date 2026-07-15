@@ -6,6 +6,7 @@ import test from 'node:test';
 import { PiEditorialProvider, type PiSdkClient } from './pi.js';
 import type { ProviderExecutionInput } from './types.js';
 import { canonicalJsonBytes } from '../recipes/file-registry.js';
+import { LocalPiSdkClient, type PiModelsAdapter } from '../runtime.js';
 
 test('Pi receives only review context and execution controls and records editorial provenance', async () => {
   let request: Record<string, unknown> | undefined;
@@ -23,13 +24,38 @@ test('Pi receives only review context and execution controls and records editori
 
   assert.equal(result.kind, 'success');
   assert.deepEqual(Object.keys(request ?? {}).sort(), [
-    'candidate', 'evidence', 'idempotencyKey', 'renderedPrompt', 'rubric', 'signal',
+    'candidate', 'evidence', 'idempotencyKey', 'rubric', 'signal',
   ]);
   if (result.kind !== 'success') return;
   const report = result.executionReport as { promptVersion: string; provider: string; renderedPrompt: string };
   assert.equal(report.promptVersion, 'editorial-check.v1');
   assert.equal(report.provider, 'pi');
   assert.match(report.renderedPrompt, /Check source faithfulness/);
+});
+
+test('legacy PI sends the exact pre-1.1.0 JSON request shape', async () => {
+  let userPrompt: string | undefined;
+  const models: PiModelsAdapter = {
+    async complete(input) {
+      userPrompt = input.userPrompt;
+      return JSON.stringify({ summary: 'Ready.', findings: [] });
+    },
+  };
+  const client = new LocalPiSdkClient({ provider: 'fixture', model: 'fixture', models });
+
+  await client.check({
+    candidate,
+    evidence,
+    rubric: 'Check source faithfulness and practical value.',
+    idempotencyKey: 'operation_fixture',
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(userPrompt, JSON.stringify({
+    candidate,
+    evidence,
+    rubric: 'Check source faithfulness and practical value.',
+  }));
 });
 
 test('runs Story and Playbook editorial QA from the resolved rubric with immutable prompt evidence', async () => {
@@ -53,7 +79,7 @@ test('runs Story and Playbook editorial QA from the resolved rubric with immutab
       candidate: semantic,
       evidence,
       rubric: 'Check source faithfulness and practical value.',
-      generationPlan: {} as never,
+      generationPlan: { schemaVersion: '1.1.0' } as never,
       resolvedRecipes: { editorialQa: editorialRecipe },
     }),
     model: 'pi-fixture-model',

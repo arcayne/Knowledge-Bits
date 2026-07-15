@@ -10,6 +10,7 @@ import type { EvidenceManifest, GroundedClaim } from '../checks/deterministic.js
 import type { VerifiedResearchEvidence } from '../checks/source-verifier.js';
 import {
   nugletLessonV1PayloadSchema,
+  storyPlaybookDraftContractDescriptor,
   storyPlaybookDraftSchema,
   type NugletGenerationPlan,
 } from '@knowledge-bits/contracts';
@@ -88,7 +89,7 @@ export class NotebookLmProvider implements ContentProvider {
       throw new ProviderNeedsHumanError(`notebooklm_unsupported_action:${input.action}`);
     }
     const context = await this.options.context(input);
-    const recipeExecution = input.action === 'create_content' && context.generationPlan
+    const recipeExecution = input.action === 'create_content' && context.generationPlan?.schemaVersion === '1.1.0'
       ? resolvedCreateRecipes(context)
       : undefined;
     const cliVersion = await this.version(input.signal);
@@ -309,53 +310,15 @@ function renderRecipeCreatePrompt(
     ...(context.centralIdea ? { centralIdea: context.centralIdea } : {}),
   };
   return renderPromptSections([
-    [
-      'Return one strict JSON object with no markdown fences.',
-      'The object must be a nuglet.lesson.v1 target with schemaVersion 1.1.0.',
-      'Its payload must use contentModel story-playbook.v1 and materialization draft.',
-      'Return semantic briefs only. Do not include asset references, final media metadata, audio bytes, or transcripts.',
-      'Use UUID claim IDs, accepted source IDs only, short citation excerpts, and complete claim coverage for every learner path.',
-      'The Story must contain opening, evidence, turning_point, and practical_bridge blocks.',
-      'The Playbook must contain one principle, whyItMatters, three to five steps, one example, watchOuts, and the shared action.',
-      'Story and Playbook must reuse the same central idea, oneLineToKeep, terminology, and action while remaining structurally distinct.',
-      'Return exactly three quiz questions.',
-    ].join('\n'),
-    [
-      'Required payload shape:',
-      '- identity: locale, topic {label, categoryId}, tags, title, deck, slugSuggestion',
-      '- learning: centralIdea, whyItMatters, oneLineToKeep, action {label, instruction}',
-      '- hero: altText, accessibilityPurpose, mediaBrief {concept, metaphor, compositionFamily}',
-      '- read.story: title, estimatedMinutes, blocks [{type, text, claimRefs}]',
-      '- read.playbook: title, estimatedMinutes, principle, whyItMatters, steps [{id, title, body, claimRefs}], example {title, body, claimRefs}, watchOuts, action',
-      '- visual: title, altText, textEquivalent, claimRefs, mediaBrief {objective, structure}',
-      '- listen.brief and listen.discussion: editorialBrief {objective, tone, keyPoints}',
-      '- quiz.questions: exactly three items with id, prompt, three or four options [{id, text}], correctOptionId, rationale, reviewConcept, claimRefs',
-      '- publicSources: [{evidenceSourceId, label, publisher}]',
-      '- claims: [{claimId, statement, citations [{sourceId, excerpt}]}]',
-      `- claimCoverage: one entry for each path: ${STORY_PLAYBOOK_COVERAGE_PATHS.join(', ')}`,
-    ].join('\n'),
+    'Return one response encoded as a strict JSON object with no markdown fences.',
     `Named inputs:\n${JSON.stringify(promptInputs, null, 2)}`,
-    `Approved hero direction for the semantic brief:\n${JSON.stringify(context.generationPlan.heroDirection, null, 2)}`,
+    `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2)}`,
     ...recipes.map((recipe) => [
       `Resolved recipe ${recipe.id}@${recipe.version} (canonical JSON):`,
       Buffer.from(recipe.canonicalBytes).toString('utf8'),
     ].join('\n')),
   ]);
 }
-
-const STORY_PLAYBOOK_COVERAGE_PATHS = [
-  'identity.title',
-  'learning.centralIdea',
-  'learning.whyItMatters',
-  'learning.oneLineToKeep',
-  'learning.action',
-  'read.story',
-  'read.playbook',
-  'visual',
-  'listen.brief',
-  'listen.discussion',
-  'quiz',
-] as const;
 
 function validateCitations(answer: Record<string, unknown>, acceptedEvidence?: EvidenceManifest): void {
   const claims = claimsFromAnswer(answer);

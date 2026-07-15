@@ -54,6 +54,19 @@ test('reports cross-format drift from the shared action', async () => {
   assert.ok(report.findings.some(({ code }) => code === 'cross-format-consistency'));
 });
 
+test('reports terminology drift when the other shared values still match', async () => {
+  const candidate = await semanticCandidate();
+  const payload = semanticPayload(candidate);
+  payload.read.playbook = JSON.parse(
+    JSON.stringify(payload.read.playbook).replaceAll('restart marker', 'resume cue'),
+  );
+
+  const report = runDeterministicChecks({ candidate, evidence });
+
+  assert.equal(report.passed, false);
+  assert.ok(report.findings.some(({ code }) => code === 'cross-format-consistency'));
+});
+
 test('reports normalized Story and Playbook duplication', async () => {
   const candidate = await semanticCandidate();
   const payload = semanticPayload(candidate);
@@ -102,6 +115,27 @@ test('reports incomplete semantic claim coverage', async () => {
   assert.ok(report.findings.some(({ code }) => code === 'claim-coverage'));
 });
 
+test('preserves legacy claim-coverage messages and cardinality', () => {
+  const candidate = legacyCandidate();
+  candidate.claimCoverage = [
+    { path: 'title', claimIds: [legacyClaimId] },
+    { path: 'title', claimIds: [legacyClaimId] },
+    { path: 'takeaway', claimIds: [] },
+    { path: 'action', claimIds: ['99999999-9999-4999-8999-999999999999'] },
+    { path: 'depths.quick', claimIds: [legacyClaimId] },
+    { path: 'depths.core', claimIds: [legacyClaimId] },
+  ];
+
+  const report = runDeterministicChecks({ candidate, evidence });
+
+  assert.deepEqual(report.findings.filter(({ code }) => code === 'claim-coverage'), [
+    { code: 'claim-coverage', message: 'Learner claim coverage paths must be unique.' },
+    { code: 'claim-coverage', message: 'Learner field takeaway requires valid claim coverage.' },
+    { code: 'claim-coverage', message: 'Learner field action requires valid claim coverage.' },
+    { code: 'claim-coverage', message: 'Learner field depths.deep requires valid claim coverage.' },
+  ]);
+});
+
 async function semanticCandidate(): Promise<ContentCandidate> {
   const fixture = JSON.parse(await readFile(
     new URL('../providers/fixtures/notebooklm-story-playbook.json', import.meta.url),
@@ -120,6 +154,7 @@ function semanticPayload(candidate: ContentCandidate) {
       learning: {
         centralIdea: string;
         oneLineToKeep: string;
+        terminology: string[];
         action: { instruction: string };
       };
       read: {
@@ -138,4 +173,25 @@ function semanticPayload(candidate: ContentCandidate) {
       claimCoverage: Array<{ path: string; claimIds: string[] }>;
     };
   }).payload;
+}
+
+const legacyClaimId = '66666666-6666-4666-8666-666666666666';
+
+function legacyCandidate(): Extract<ContentCandidate, { title: string }> {
+  return {
+    title: 'Return to one task',
+    takeaway: 'A written next step makes returning easier.',
+    action: 'Write one next task on paper and work on it for five minutes.',
+    depths: {
+      quick: 'Name the next step before you switch tasks.',
+      core: 'Choose the task that matters now, then define the next visible step.',
+      deep: 'Restart friction often comes from having to decide what to do again.',
+    },
+    claims: [{
+      claimId: legacyClaimId,
+      statement: 'A concrete next step reduces restart friction.',
+      citations: [{ sourceId, snapshotArtifactId, excerpt: 'A defined next action lowers restart friction.' }],
+    }],
+    claimCoverage: [],
+  };
 }

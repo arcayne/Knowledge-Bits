@@ -123,6 +123,7 @@ function storyPlaybookTarget() {
         centralIdea: 'A small reserve softens surprise costs.',
         whyItMatters: 'Unexpected expenses otherwise disrupt the month.',
         oneLineToKeep: 'Start with a buffer small enough to repeat.',
+        terminology: ['reserve', 'buffer'],
         action: { label: 'Choose a transfer', instruction: 'Set aside one affordable amount today.' },
       },
       hero: {

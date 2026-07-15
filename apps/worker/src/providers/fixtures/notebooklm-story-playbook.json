@@ -18,6 +18,7 @@
         "centralIdea": "A visible next step reduces restart friction.",
         "whyItMatters": "Returning is easier when the next decision has already been made.",
         "oneLineToKeep": "Leave a visible next step before you stop.",
+        "terminology": ["restart marker"],
         "action": {
           "label": "Write the next step",
           "instruction": "Write the next visible step and work on it for five minutes."
@@ -39,7 +40,7 @@
           "blocks": [
             {
               "type": "opening",
-              "text": "Mara returned to a half-finished report and spent ten minutes reconstructing what she meant to do next. A visible next step reduces restart friction.",
+              "text": "Mara returned to a half-finished report without a restart marker and spent ten minutes reconstructing what she meant to do next. A visible next step reduces restart friction.",
               "claimRefs": []
             },
             {

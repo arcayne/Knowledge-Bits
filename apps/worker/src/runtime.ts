@@ -299,7 +299,7 @@ export class LocalPiSdkClient implements PiSdkClient {
     candidate: ContentCandidate;
     evidence: EvidenceManifest;
     rubric: string;
-    renderedPrompt: string;
+    renderedPrompt?: string;
     idempotencyKey: string;
     signal: AbortSignal;
   }): Promise<unknown> {
@@ -310,7 +310,11 @@ export class LocalPiSdkClient implements PiSdkClient {
         provider: this.options.provider,
         model: this.options.model,
         systemPrompt: 'Return one strict JSON object with summary and findings. Each finding must be exactly {code: string, severity: critical|major|minor, message: string}. Use an empty findings array when there is no issue. Do not rewrite content or request tools.',
-        userPrompt: input.renderedPrompt,
+        userPrompt: input.renderedPrompt ?? JSON.stringify({
+          candidate: input.candidate,
+          evidence: input.evidence,
+          rubric: input.rubric,
+        }),
         sessionId: input.idempotencyKey,
         signal,
       });

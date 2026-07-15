@@ -260,6 +260,91 @@ export const storyPlaybookLearnerContentPathSchema = z.enum([
   'quiz',
 ]);
 
+export function normalizeNugletTerminologyTerm(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+export const storyPlaybookDraftContractDescriptor = {
+  descriptorVersion: 'nuglet.lesson.story-playbook-draft.contract.v1',
+  target: {
+    kind: 'nuglet.lesson.v1',
+    schemaVersion: '1.1.0',
+  },
+  payloadShape: {
+    contentModel: 'story-playbook.v1',
+    materialization: 'draft',
+    identity: ['locale', 'topic.label', 'topic.categoryId', 'tags', 'title', 'deck', 'slugSuggestion'],
+    learning: ['centralIdea', 'whyItMatters', 'oneLineToKeep', 'terminology', 'action.label', 'action.instruction'],
+    hero: ['altText', 'accessibilityPurpose', 'mediaBrief.concept', 'mediaBrief.metaphor', 'mediaBrief.compositionFamily'],
+    read: {
+      story: ['title', 'estimatedMinutes', 'blocks[].type', 'blocks[].text', 'blocks[].claimRefs'],
+      playbook: [
+        'title',
+        'estimatedMinutes',
+        'principle',
+        'whyItMatters',
+        'steps[].id',
+        'steps[].title',
+        'steps[].body',
+        'steps[].claimRefs',
+        'example.title',
+        'example.body',
+        'example.claimRefs',
+        'watchOuts',
+        'action',
+      ],
+    },
+    visual: ['title', 'altText', 'textEquivalent', 'claimRefs', 'mediaBrief.objective', 'mediaBrief.structure'],
+    listen: {
+      brief: ['editorialBrief.objective', 'editorialBrief.tone', 'editorialBrief.keyPoints'],
+      discussion: ['editorialBrief.objective', 'editorialBrief.tone', 'editorialBrief.keyPoints'],
+    },
+    quiz: [
+      'questions[].id',
+      'questions[].prompt',
+      'questions[].options[].id',
+      'questions[].options[].text',
+      'questions[].correctOptionId',
+      'questions[].rationale',
+      'questions[].reviewConcept',
+      'questions[].claimRefs',
+    ],
+    publicSources: ['evidenceSourceId', 'label', 'publisher'],
+    claims: ['claimId', 'statement', 'citations[].sourceId', 'citations[].excerpt'],
+    claimCoverage: ['path', 'claimIds'],
+  },
+  structure: {
+    story: {
+      blockTypes: ['opening', 'turning_point', 'evidence', 'practical_bridge'],
+      requiredBlockTypes: ['opening', 'turning_point', 'evidence', 'practical_bridge'],
+      evidenceBlocksRequireClaimRefs: true,
+    },
+    playbook: {
+      stepCount: { min: 3, max: 5 },
+      requiredFields: ['principle', 'whyItMatters', 'example', 'watchOuts', 'action'],
+    },
+    challenge: {
+      questionCount: 3,
+      optionsPerQuestion: { min: 3, max: 4 },
+    },
+    terminology: {
+      minItems: 1,
+      normalization: ['Unicode NFKC', 'locale-independent lowercase', 'non-letter-or-number runs to one space', 'trim'],
+      requiredUsage: ['read.story', 'read.playbook'],
+    },
+  },
+  claimCoveragePaths: storyPlaybookLearnerContentPathSchema.options,
+  semanticBoundary: {
+    materialization: 'draft',
+    excludedOutput: ['artifact references', 'final media metadata', 'audio bytes', 'transcripts'],
+  },
+} as const;
+
 const claimReferencesSchema = z.array(z.string().uuid());
 
 const storyBlockSchema = z.object({
@@ -312,11 +397,21 @@ const learningSchema = z.object({
   centralIdea: z.string().trim().min(1),
   whyItMatters: z.string().trim().min(1),
   oneLineToKeep: z.string().trim().min(1),
+  terminology: z.array(z.string().trim().min(1)).min(1),
   action: z.object({
     label: z.string().trim().min(1),
     instruction: z.string().trim().min(1),
   }).strict(),
-}).strict();
+}).strict().superRefine(({ terminology }, context) => {
+  const normalized = terminology.map(normalizeNugletTerminologyTerm);
+  if (normalized.some((term) => !term) || new Set(normalized).size !== normalized.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Canonical terminology must be non-empty and unique after normalization',
+      path: ['terminology'],
+    });
+  }
+});
 
 const heroBriefSchema = z.object({
   altText: z.string().trim().min(1),

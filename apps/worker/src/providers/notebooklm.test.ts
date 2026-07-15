@@ -6,6 +6,7 @@ import test from 'node:test';
 import { NotebookLmProvider, type NotebookLmProcess } from './notebooklm.js';
 import type { ProviderExecutionInput } from './types.js';
 import { canonicalJsonBytes } from '../recipes/file-registry.js';
+import { storyPlaybookDraftContractDescriptor } from '@knowledge-bits/contracts';
 
 const sourceId = '11111111-1111-4111-8111-111111111111';
 
@@ -125,6 +126,11 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
   assert.match(prompt, /Return exactly three application questions/);
   assert.match(prompt, /"acceptedSourceIds":\s*\[\s*"11111111-1111-4111-8111-111111111111"/);
   assert.match(prompt, /"audience": "busy knowledge workers"/);
+  assert.match(prompt, new RegExp(escapeRegExp(JSON.stringify(storyPlaybookDraftContractDescriptor, null, 2))));
+  assert.doesNotMatch(prompt, /Required payload shape:/);
+  assert.doesNotMatch(prompt, /The Story must contain/);
+  assert.doesNotMatch(prompt, /Approved hero direction/);
+  assert.doesNotMatch(prompt, /A clear path|One marked step/);
   assert.doesNotMatch(prompt, /depths\.quick/);
 
   const output = result.parsedOutput as {
@@ -597,4 +603,8 @@ function generationPlanFor(recipes: { story: ReturnType<typeof resolvedRecipe>; 
       mustAvoid: ['rigid symmetry'],
     },
   };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

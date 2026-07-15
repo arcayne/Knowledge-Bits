@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as contracts from '../dist/index.js';
 import {
   knowledgeBitsContentSchema,
   knowledgeBitsEvidenceSchema,
@@ -172,6 +173,7 @@ function storyPlaybookDraft() {
       centralIdea: 'A small reserve reduces the disruption caused by surprise costs.',
       whyItMatters: 'Unexpected expenses are easier to absorb when money is already set aside.',
       oneLineToKeep: 'Start with a buffer small enough to build consistently.',
+      terminology: ['rainy day fund', 'reserve'],
       action: {
         label: 'Choose your first transfer',
         instruction: 'Set aside one affordable amount today.',
@@ -512,6 +514,46 @@ test('accepts semantic and materialized Story Playbook payloads for schema 1.1.0
     schemaVersion: 'knowledge-bits.content.v1',
     target: { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0', payload: materialized },
   }).target.payload.materialization, 'materialized');
+});
+
+test('requires a non-empty canonical terminology list for Story Playbook drafts', () => {
+  const draft = storyPlaybookDraft();
+  delete draft.learning.terminology;
+  assert.equal(storyPlaybookDraftSchema.safeParse(draft).success, false);
+
+  const empty = storyPlaybookDraft();
+  empty.learning.terminology = [];
+  assert.equal(storyPlaybookDraftSchema.safeParse(empty).success, false);
+});
+
+test('exports the versioned Story Playbook draft contract descriptor and terminology normalization', () => {
+  assert.equal('storyPlaybookDraftContractDescriptor' in contracts, true);
+  assert.equal('normalizeNugletTerminologyTerm' in contracts, true);
+  const descriptor = contracts.storyPlaybookDraftContractDescriptor;
+  assert.equal(descriptor.descriptorVersion, 'nuglet.lesson.story-playbook-draft.contract.v1');
+  assert.deepEqual(descriptor.target, { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0' });
+  assert.equal(descriptor.structure.challenge.questionCount, 3);
+  assert.deepEqual(descriptor.payloadShape.quiz.slice(0, 2), ['questions[].id', 'questions[].prompt']);
+  assert.deepEqual(descriptor.payloadShape.read.story.slice(0, 2), ['title', 'estimatedMinutes']);
+  assert.deepEqual(descriptor.payloadShape.read.playbook.slice(0, 2), ['title', 'estimatedMinutes']);
+  assert.equal('story' in descriptor.payloadShape, false);
+  assert.equal('playbook' in descriptor.payloadShape, false);
+  assert.equal('challenge' in descriptor.payloadShape, false);
+  assert.deepEqual(descriptor.structure.playbook.stepCount, { min: 3, max: 5 });
+  assert.deepEqual(descriptor.claimCoveragePaths, [
+    'identity.title',
+    'learning.centralIdea',
+    'learning.whyItMatters',
+    'learning.oneLineToKeep',
+    'learning.action',
+    'read.story',
+    'read.playbook',
+    'visual',
+    'listen.brief',
+    'listen.discussion',
+    'quiz',
+  ]);
+  assert.equal(contracts.normalizeNugletTerminologyTerm('  Rainy-day\tFUND  '), 'rainy day fund');
 });
 
 test('keeps the target schema versions structurally separate', () => {
