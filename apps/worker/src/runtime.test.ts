@@ -339,6 +339,51 @@ test('invalid or untrusted Nuglet plans make zero NotebookLM, editorial, and med
   assert.deepEqual(externalCalls, { notebooklm: 0, pi: 0, media: 0 });
 });
 
+test('mismatched Nuglet run and notebook identities make zero provider calls', async () => {
+  const externalCalls = { notebooklm: 0, pi: 0, media: 0 };
+  const runtime: ProviderRuntime = {
+    recipeBindingVerifier: exactRecipeVerifier(generationPlan),
+    notebookProcess: {
+      async run() {
+        externalCalls.notebooklm += 1;
+        throw new Error('NotebookLM must not run');
+      },
+    },
+    notebookContext: async () => ({ notebookId: 'notebook-fixture', sourceUrls: [], topic: 'Focus' }),
+    sourceVerifier: { async verify() { throw new Error('source verifier must not run'); } },
+    piClient: {
+      async check() {
+        externalCalls.pi += 1;
+        throw new Error('Pi must not run');
+      },
+    },
+    piContext: async () => ({ candidate, evidence, rubric: 'Check it.' }),
+    mediaClient: {
+      async generate() {
+        externalCalls.media += 1;
+        throw new Error('media must not run');
+      },
+    },
+    mediaContext: async () => ({ passedCheck: true, content: candidate, contentChecksum: inputChecksum }),
+  };
+  const [notebook, pi, media] = composeWorkerProviders({ env: {}, runtime });
+  assert.ok(notebook && pi && media);
+
+  const wrongRun = nugletBrief();
+  wrongRun.baseline.runId = 'another-run';
+  await assert.rejects(() => notebook.execute(input('collect_sources', [], wrongRun)), /run_brief_invalid/);
+
+  const wrongBriefNotebook = nugletBrief();
+  wrongBriefNotebook.notebookLmNotebookId = 'another-notebook';
+  await assert.rejects(() => pi.execute(input('check_content', [], wrongBriefNotebook)), /run_brief_invalid/);
+
+  const wrongRunNotebook = input('produce_assets', [], nugletBrief());
+  (wrongRunNotebook.job.input as { notebookLmNotebookId: string }).notebookLmNotebookId = 'another-notebook';
+  await assert.rejects(() => media.execute(wrongRunNotebook), /run_notebook_id_mismatch/);
+
+  assert.deepEqual(externalCalls, { notebooklm: 0, pi: 0, media: 0 });
+});
+
 test('executes editorial inference through the local Pi SDK adapter with an abort signal', async () => {
   let observed: Record<string, unknown> | undefined;
   const client = new LocalPiSdkClient({
@@ -541,6 +586,7 @@ function input(
   dependencies: unknown[] = [],
   brief: Record<string, unknown> = { title: 'Focus' },
 ) {
+  const validatedBrief = compatibleRunBrief(brief);
   return {
     action,
     idempotencyKey: 'runtime-test',
@@ -554,10 +600,48 @@ function input(
       executionDeadlineAt: '2026-07-13T10:05:00.000Z',
       attempt: 1,
       revision: 1,
-      input: { brief, notebookLmNotebookId: 'notebook-1', dependencies },
+      input: {
+        brief: validatedBrief,
+        notebookLmNotebookId: typeof validatedBrief.notebookLmNotebookId === 'string'
+          ? validatedBrief.notebookLmNotebookId
+          : 'notebook-1',
+        dependencies,
+      },
     },
     signal: new AbortController().signal,
   } as const;
+}
+
+function compatibleRunBrief(brief: Record<string, unknown>): Record<string, unknown> {
+  const plan = brief.generationPlan;
+  if (!isTestRecord(plan) || plan.contentKind !== 'nuglet.lesson.v1') return brief;
+  const mediaBaseline = plan.mediaBaseline;
+  const descriptor = isTestRecord(mediaBaseline) && isTestRecord(mediaBaseline.descriptor)
+    ? mediaBaseline.descriptor
+    : undefined;
+  return {
+    ...(typeof descriptor?.runId === 'string' ? { baseline: { runId: descriptor.runId } } : {}),
+    ...(typeof descriptor?.notebookId === 'string' ? { notebookLmNotebookId: descriptor.notebookId } : {}),
+    ...brief,
+  };
+}
+
+function isTestRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function nugletBrief(): {
+  title: string;
+  baseline: { runId: string };
+  generationPlan: typeof generationPlan;
+  notebookLmNotebookId: string;
+} {
+  return {
+    title: 'Focus',
+    baseline: { runId: generationPlan.mediaBaseline.descriptor.runId },
+    generationPlan,
+    notebookLmNotebookId: generationPlan.mediaBaseline.descriptor.notebookId,
+  };
 }
 
 function contextClient(bodies: Map<string, Uint8Array>): WorkerEngineClient {

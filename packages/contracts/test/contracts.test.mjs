@@ -6,6 +6,7 @@ import {
   knowledgeBitsEvidenceSchema,
   knowledgeBitsQaSchema,
   knowledgeBitsSchema,
+  knowledgeBitsCreateRunRequestSchema,
   knowledgeBitsRunBriefSchema,
   nugletGenerationPlanSchema,
   storyPlaybookDraftSchema,
@@ -462,6 +463,46 @@ test('binds the Nuglet media baseline identity to the enclosing run brief', () =
   const wrongNotebook = structuredClone(brief);
   wrongNotebook.notebookLmNotebookId = 'another-notebook';
   assert.equal(knowledgeBitsRunBriefSchema.safeParse(wrongNotebook).success, false);
+});
+
+test('enforces the strict Nuglet brief at run intake without narrowing compatible briefs', () => {
+  const generationPlan = validGenerationPlan();
+  const validBrief = {
+    baseline: { runId: 'fixture-run' },
+    generationPlan,
+    notebookLmNotebookId: 'notebook-fixture',
+  };
+  const request = {
+    title: 'Fixture run',
+    locale: 'en',
+    brief: validBrief,
+    notebookLmNotebookId: 'notebook-fixture',
+  };
+  assert.equal(knowledgeBitsCreateRunRequestSchema.safeParse(request).success, true);
+
+  const wrongRun = structuredClone(request);
+  wrongRun.brief.baseline.runId = 'another-run';
+  assert.equal(knowledgeBitsCreateRunRequestSchema.safeParse(wrongRun).success, false);
+
+  const wrongBriefNotebook = structuredClone(request);
+  wrongBriefNotebook.brief.notebookLmNotebookId = 'another-notebook';
+  assert.equal(knowledgeBitsCreateRunRequestSchema.safeParse(wrongBriefNotebook).success, false);
+
+  const wrongRequestNotebook = structuredClone(request);
+  wrongRequestNotebook.notebookLmNotebookId = 'another-notebook';
+  assert.equal(knowledgeBitsCreateRunRequestSchema.safeParse(wrongRequestNotebook).success, false);
+
+  assert.equal(knowledgeBitsCreateRunRequestSchema.safeParse({
+    title: 'Another product',
+    locale: 'en',
+    brief: { contentKind: 'another.product.v1', arbitrary: true },
+    notebookLmNotebookId: 'another-notebook',
+  }).success, true);
+  assert.equal(knowledgeBitsCreateRunRequestSchema.safeParse({
+    title: 'Legacy run',
+    locale: 'en',
+    brief: { objective: 'Keep the historical shape', notebookLmNotebookId: 'legacy-notebook' },
+  }).success, true);
 });
 
 test('requires distinct approved Brief and Discussion baseline artifacts', () => {

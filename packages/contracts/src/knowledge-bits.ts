@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   artifactReferenceSchema,
   checksumSchema,
+  createRunRequestSchema,
   reviewStatusSchema,
   workflowStageSchema,
 } from './workflow.js';
@@ -162,13 +163,7 @@ export type NugletMediaBaseline = z.infer<typeof nugletMediaBaselineSchema>;
 
 export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((brief, context) => {
   const generationPlan = brief.generationPlan;
-  const targetsNuglet = brief.contentKind === 'nuglet.lesson.v1'
-    || (typeof generationPlan === 'object'
-      && generationPlan !== null
-      && !Array.isArray(generationPlan)
-      && 'contentKind' in generationPlan
-      && generationPlan.contentKind === 'nuglet.lesson.v1');
-  if (!targetsNuglet) return;
+  if (!targetsNugletLesson(brief)) return;
   const parsed = nugletGenerationPlanSchema.safeParse(generationPlan);
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
@@ -194,6 +189,30 @@ export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((br
     });
   }
 });
+
+export const knowledgeBitsCreateRunRequestSchema = createRunRequestSchema.superRefine((request, context) => {
+  const parsedBrief = knowledgeBitsRunBriefSchema.safeParse(request.brief);
+  if (!parsedBrief.success) {
+    for (const issue of parsedBrief.error.issues) {
+      context.addIssue({ ...issue, path: ['brief', ...issue.path] });
+    }
+    return;
+  }
+  if (!targetsNugletLesson(parsedBrief.data) || request.notebookLmNotebookId === undefined) return;
+  if (request.notebookLmNotebookId !== parsedBrief.data.notebookLmNotebookId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'request NotebookLM notebook ID must match brief NotebookLM notebook ID',
+      path: ['notebookLmNotebookId'],
+    });
+  }
+});
+
+function targetsNugletLesson(brief: Record<string, unknown>): boolean {
+  const generationPlan = brief.generationPlan;
+  return brief.contentKind === 'nuglet.lesson.v1'
+    || (isUnknownRecord(generationPlan) && generationPlan.contentKind === 'nuglet.lesson.v1');
+}
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

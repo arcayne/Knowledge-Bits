@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 import {
+  knowledgeBitsRunBriefSchema,
   knowledgeBitsQaSchema,
   nugletGenerationPlanSchema,
   nugletLessonV1PayloadSchema,
@@ -166,7 +167,11 @@ export class LeaseScopedJobContextResolver {
 
   async notebook(input: ProviderExecutionInput): Promise<NotebookLmContext> {
     const brief = jobBrief(input);
-    const generation = await validatedGenerationPlan(brief, this.recipeBindingVerifier);
+    const generation = await validatedGenerationPlan(
+      brief,
+      input.job.input.notebookLmNotebookId,
+      this.recipeBindingVerifier,
+    );
     const notebookId = notebookIdFromJob(input);
     const research = input.action === 'create_content' ? await this.verifiedResearch(input) : undefined;
     const topic = stringValue(brief.title) ?? stringValue(brief.topic) ?? stringValue(brief.objective) ?? 'Knowledge Bits lesson';
@@ -184,7 +189,11 @@ export class LeaseScopedJobContextResolver {
   }
 
   async pi(input: ProviderExecutionInput) {
-    const generation = await validatedGenerationPlan(jobBrief(input), this.recipeBindingVerifier);
+    const generation = await validatedGenerationPlan(
+      jobBrief(input),
+      input.job.input.notebookLmNotebookId,
+      this.recipeBindingVerifier,
+    );
     return {
       candidate: await this.content(input),
       evidence: await this.evidence(input),
@@ -194,7 +203,11 @@ export class LeaseScopedJobContextResolver {
   }
 
   async media(input: ProviderExecutionInput) {
-    const generation = await validatedGenerationPlan(jobBrief(input), this.recipeBindingVerifier);
+    const generation = await validatedGenerationPlan(
+      jobBrief(input),
+      input.job.input.notebookLmNotebookId,
+      this.recipeBindingVerifier,
+    );
     const content = await this.content(input);
     const qa = knowledgeBitsQaSchema.parse(await this.readJsonDependency(input, 'check_content', 'parsed_output'));
     const contentChecksum = calculateContentChecksum(content);
@@ -553,6 +566,7 @@ function jobBrief(input: ProviderExecutionInput): Record<string, unknown> {
 
 async function validatedGenerationPlan(
   brief: Record<string, unknown>,
+  runNotebookLmNotebookId: unknown,
   verifier: TrustedRecipeBindingVerifier | undefined,
 ): Promise<{ plan: NugletGenerationPlan; recipes: ResolvedNugletRecipes } | undefined> {
   const value = brief.generationPlan;
@@ -571,6 +585,11 @@ async function validatedGenerationPlan(
   }
   const parsed = nugletGenerationPlanSchema.safeParse(value);
   if (!parsed.success) throw new ProviderNeedsHumanError('generation_plan_invalid');
+  const parsedBrief = knowledgeBitsRunBriefSchema.safeParse(brief);
+  if (!parsedBrief.success) throw new ProviderNeedsHumanError('run_brief_invalid');
+  if (runNotebookLmNotebookId !== parsedBrief.data.notebookLmNotebookId) {
+    throw new ProviderNeedsHumanError('run_notebook_id_mismatch');
+  }
   if (!verifier) throw new ProviderNeedsHumanError('generation_recipe_verifier_unconfigured');
   let recipes: ResolvedNugletRecipes;
   try {
@@ -590,7 +609,11 @@ function trustedContextResolver<T extends { generationPlan?: NugletGenerationPla
   verifier: TrustedRecipeBindingVerifier | undefined,
 ): (input: ProviderExecutionInput) => Promise<T> {
   return async (input) => {
-    const generation = await validatedGenerationPlan(jobBrief(input), verifier);
+    const generation = await validatedGenerationPlan(
+      jobBrief(input),
+      input.job.input.notebookLmNotebookId,
+      verifier,
+    );
     const context = await resolver(input);
     return generation
       ? { ...context, generationPlan: generation.plan, resolvedRecipes: generation.recipes }

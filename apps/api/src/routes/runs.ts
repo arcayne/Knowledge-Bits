@@ -1,4 +1,4 @@
-import { createRunRequestSchema, workflowRunResponseSchema } from '@knowledge-bits/contracts';
+import { knowledgeBitsCreateRunRequestSchema, workflowRunResponseSchema } from '@knowledge-bits/contracts';
 
 import type { Hono } from 'hono';
 
@@ -13,7 +13,7 @@ export function registerRunRoutes(
   app.post('/runs', async (context) => {
     const authFailure = requireEngineScope(context, dependencies.auth, 'api');
     if (authFailure) return authFailure;
-    const input = createRunRequestSchema.safeParse(await readJson(context.req.raw));
+    const input = knowledgeBitsCreateRunRequestSchema.safeParse(await readJson(context.req.raw));
     if (!input.success) return context.json({ error: 'Invalid run input' }, 400);
 
     try {
