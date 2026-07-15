@@ -29,6 +29,8 @@ import { createHash } from 'node:crypto';
 
 export const DEFAULT_NOTEBOOKLM_TIMEOUT_MS = 180_000;
 export const NOTEBOOKLM_RECIPE_CREATE_PROMPT_VERSION = 'notebooklm-recipe-create.v1';
+const DEFAULT_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS = 60;
+const MAX_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS = 3_600;
 
 export interface PromptInputs {
   topic: string;
@@ -250,6 +252,15 @@ export class NotebookLmProvider implements ContentProvider {
       throw new ProviderWaitingError(
         'notebooklm_cooldown',
         new Date(this.now().getTime() + cooldownSeconds * 1_000).toISOString(),
+      );
+    }
+    if (isDurableTransportConfigurationFailure(combined)) {
+      throw new ProviderNeedsHumanError('notebooklm_transport_error');
+    }
+    if (isTemporaryTransportFailure(combined)) {
+      throw new ProviderWaitingError(
+        'notebooklm_transport_unavailable',
+        new Date(this.now().getTime() + transportRetryAfterSeconds(combined) * 1_000).toISOString(),
       );
     }
     throw new ProviderNeedsHumanError('notebooklm_transport_error');
@@ -531,6 +542,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function retryAfterSeconds(value: string): number {
+  return parsedRetryAfterSeconds(value) ?? DEFAULT_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS;
+}
+
+function transportRetryAfterSeconds(value: string): number {
+  const retryAfter = parsedRetryAfterSeconds(value);
+  return retryAfter !== undefined && retryAfter > 0 && retryAfter <= MAX_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS
+    ? retryAfter
+    : DEFAULT_NOTEBOOKLM_TRANSPORT_RETRY_SECONDS;
+}
+
+function parsedRetryAfterSeconds(value: string): number | undefined {
   const match = /retry after\s+(\d+)\s*(?:seconds?|s)?/i.exec(value);
-  return match ? Number(match[1]) : 60;
+  return match ? Number(match[1]) : undefined;
+}
+
+function isTemporaryTransportFailure(value: string): boolean {
+  return /\b(?:http\s*)?5(?:00|02|03|04)\b|bad gateway|gateway (?:error|timeout)|service unavailable|connection (?:reset|refused)|(?:temporary|transient) (?:dns|network|name resolution|failure)|(?:network|dns) (?:failure|error|unreachable)|socket hang ?up|econnreset|econnrefused|etimedout|timed? out|timeout/i.test(value);
+}
+
+function isDurableTransportConfigurationFailure(value: string): boolean {
+  return /\b(?:auth(?:entication|orization)?|unauthori[sz]ed|forbidden|log ?in|credential|api[ _-]?key|token|notebook (?:not found|invalid)|invalid notebook|unknown notebook|no such notebook|command not found|missing (?:cli|command)|invalid (?:argument|option)|unknown option|usage:)\b/i.test(value);
 }

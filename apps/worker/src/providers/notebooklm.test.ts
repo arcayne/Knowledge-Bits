@@ -515,6 +515,115 @@ test('classifies a provider cooldown without attempting a structured repair', as
   );
 });
 
+test('classifies temporary NotebookLM transport responses as waits without exposing provider output', async (context) => {
+  const now = '2026-07-13T10:00:00.000Z';
+  const secret = 'provider-response-secret-DO-NOT-EXPOSE';
+  const cases = [
+    { name: 'HTTP 502', output: 'HTTP 502 Bad Gateway' },
+    { name: 'HTTP 503', output: 'HTTP 503 Service Unavailable' },
+    { name: 'gateway error', output: 'upstream gateway error' },
+    { name: 'service unavailable', output: 'service unavailable' },
+    { name: 'network reset', output: 'read ECONNRESET: connection reset by peer' },
+  ];
+
+  for (const testCase of cases) {
+    await context.test(testCase.name, async () => {
+      const provider = new NotebookLmProvider({
+        sourceVerifier: fakeSourceVerifier,
+        now: () => new Date(now),
+        process: processWith([], [
+          { stdout: secret, stderr: testCase.output, exitCode: 1 },
+        ]),
+        context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
+      });
+
+      await assert.rejects(
+        () => provider.execute(input('collect_sources')),
+        (error: unknown) => error instanceof Error
+          && error.message === 'notebooklm_transport_unavailable'
+          && !error.message.includes(secret)
+          && !error.message.includes(testCase.output)
+          && 'retryAt' in error
+          && (error as { retryAt: string }).retryAt === '2026-07-13T10:01:00.000Z',
+      );
+    });
+  }
+});
+
+test('honors a safe retry-after delay for a temporary NotebookLM transport response', async () => {
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    now: () => new Date('2026-07-13T10:00:00.000Z'),
+    process: processWith([], [
+      { stdout: '', stderr: 'HTTP 503 Service Unavailable, retry after 90 seconds', exitCode: 1 },
+    ]),
+    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
+  });
+
+  await assert.rejects(
+    () => provider.execute(input('collect_sources')),
+    (error: unknown) => error instanceof Error
+      && error.message === 'notebooklm_transport_unavailable'
+      && 'retryAt' in error
+      && (error as { retryAt: string }).retryAt === '2026-07-13T10:01:30.000Z',
+  );
+});
+
+test('keeps NotebookLM authentication and notebook failures as human configuration work', async (context) => {
+  const cases = [
+    { name: 'authentication', output: 'authentication required: please login' },
+    { name: 'authentication with timeout text', output: 'authentication request timed out: please login' },
+    { name: 'invalid notebook', output: 'invalid notebook ID' },
+  ];
+
+  for (const testCase of cases) {
+    await context.test(testCase.name, async () => {
+      const provider = new NotebookLmProvider({
+        sourceVerifier: fakeSourceVerifier,
+        process: processWith([], [
+          { stdout: '', stderr: testCase.output, exitCode: 1 },
+        ]),
+        context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
+      });
+
+      await assert.rejects(
+        () => provider.execute(input('collect_sources')),
+        (error: unknown) => error instanceof Error
+          && error.message === 'notebooklm_transport_error'
+          && !error.message.includes(testCase.output)
+          && 'needsHumanKind' in error
+          && error.needsHumanKind === 'configuration',
+      );
+    });
+  }
+});
+
+test('classifies original-query transport failures without adding a repair query', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: '', stderr: 'service unavailable', exitCode: 1 },
+    ]),
+    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
+  });
+
+  await assert.rejects(() => provider.execute(input('collect_sources')), /notebooklm_transport_unavailable/);
+  assert.equal(calls.length, 2);
+});
+
+test('classifies semantic-repair transport failures without adding another query', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: await directStoryPlaybookFailure(), stderr: '', exitCode: 0 },
+    { stdout: '', stderr: 'socket hangup', exitCode: 1 },
+  ]);
+
+  await assert.rejects(() => provider.execute(input('create_content')), /notebooklm_transport_unavailable/);
+  assert.equal(calls.length, 3);
+});
+
 test('uses exactly one repair request for malformed structured output', async () => {
   const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const provider = new NotebookLmProvider({

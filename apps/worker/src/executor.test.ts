@@ -20,6 +20,7 @@ import { FixtureProvider } from './providers/fixture.js';
 import { composeWorkerProviders, runProcess } from './runtime.js';
 import {
   ProviderNeedsHumanError,
+  ProviderWaitingError,
   type ProviderExecution,
   type WorkerProvider,
 } from './providers/types.js';
@@ -43,6 +44,26 @@ test('reports a provider wait without creating fallback artifacts', async () => 
   assert.equal(client.results[0]?.retryAt, retryAt);
   assert.equal(client.completedArtifacts.length, 0);
   assert.equal(client.uploadedArtifacts.length, 0);
+});
+
+test('reports a typed NotebookLM transport wait as a durable scheduler retry', async () => {
+  const client = new FakeEngineClient();
+  const provider: WorkerProvider = {
+    name: 'notebooklm',
+    capabilities: ['collect_sources'],
+    async execute() {
+      throw new ProviderWaitingError('notebooklm_transport_unavailable', retryAt);
+    },
+  };
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('research'));
+
+  assert.equal(client.results.length, 1);
+  assert.equal(client.results[0]?.result.state, 'waiting');
+  assert.equal(client.results[0]?.result.error, 'notebooklm_transport_unavailable');
+  assert.equal(client.results[0]?.retryAt, retryAt);
+  assert.equal(client.completedArtifacts.length, 0);
 });
 
 test('delegates delivery claims to the API delivery service without a worker provider', async () => {
