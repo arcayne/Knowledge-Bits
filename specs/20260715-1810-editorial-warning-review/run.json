@@ -5,7 +5,7 @@
   "status": "complete",
   "taskFit": "broad-ticket",
   "specPath": "specs/20260715-1810-editorial-warning-review/spec.md",
-  "approval": "User explicitly decided editorial_check_failed quality verdicts must continue to human review with a warning and never become a blind pipeline stop.",
+  "approval": "User explicitly limited warning-bearing editorial QA to the current Story/Playbook 1.1.0 pipeline and required legacy Pi blocking behavior to remain intact.",
   "activeRole": "parent",
   "activeModel": "runtime-default",
   "modelLedger": [{ "role": "parent", "model": "runtime-default", "source": "runtime-default" }],
@@ -15,6 +15,8 @@
     "apps/worker/src/providers/pi.test.ts",
     "apps/worker/src/runtime.ts",
     "apps/worker/src/runtime.test.ts",
+    "apps/worker/src/checks/editorial.ts",
+    "apps/worker/src/checks/checks.test.ts",
     "apps/worker/src/executor.test.ts",
     "packages/contracts/src/knowledge-bits.ts",
     "packages/contracts/test/contracts.test.mjs",
@@ -23,54 +25,91 @@
     "apps/api/src/routes/reviews.test.ts",
     "apps/review/src/review-client.mjs",
     "apps/review/src/review-client.test.mjs",
+    "apps/review/src/review-browser.test.mjs",
     "apps/review/src/pages/runs/[runId].astro",
+    "specs/20260715-1810-editorial-warning-review/spec.md",
     "specs/20260715-1810-editorial-warning-review/run.json",
     "specs/20260715-1810-editorial-warning-review/notes.md"
   ],
   "validationEvidence": [
     {
       "phase": "red",
-      "command": "pnpm --filter @knowledge-bits/worker exec tsx --test src/runtime.test.ts",
-      "result": "Failed as expected before the runtime change: blocking editorial findings set passedCheck to false for both legacy and Story/Playbook candidates."
+      "command": "pnpm --filter @knowledge-bits/worker exec tsx --test src/checks/checks.test.ts src/providers/pi.test.ts",
+      "result": "Failed as expected before the repair: blank summaries were accepted and legacy Pi returned success for blocking findings."
+    },
+    {
+      "phase": "red",
+      "command": "pnpm --filter @knowledge-bits/contracts test",
+      "result": "Failed as expected before the contract change: whitespace-only editorial summaries were accepted."
+    },
+    {
+      "phase": "red",
+      "command": "pnpm --filter @knowledge-bits/api exec tsx --test src/services/review-packages.test.ts",
+      "result": "Failed as expected before the fallback change: a separate media assembly failure discarded readable editorial warnings."
+    },
+    {
+      "phase": "red",
+      "command": "pnpm --filter @knowledge-bits/review exec node --test src/review-browser.test.mjs",
+      "result": "Failed as expected before the CSS change: the fixed decision area had no bounded warning height."
     },
     {
       "phase": "green",
-      "command": "pnpm --filter @knowledge-bits/worker typecheck && pnpm --filter @knowledge-bits/worker test",
-      "result": "Passed: 138 tests."
+      "command": "pnpm --filter @knowledge-bits/worker exec tsx --test src/checks/checks.test.ts src/providers/pi.test.ts src/runtime.test.ts",
+      "result": "Passed: 28 focused tests, including Story/Playbook media eligibility and legacy no-call coverage."
     },
     {
       "phase": "green",
-      "command": "pnpm --filter @knowledge-bits/contracts typecheck && pnpm --filter @knowledge-bits/contracts test",
+      "command": "pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/contracts test",
       "result": "Passed: 32 tests."
     },
     {
       "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/api exec tsx --test src/services/review-packages.test.ts",
+      "result": "Passed: 14 focused review-package tests."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/review exec node --test src/review-browser.test.mjs src/review-client.test.mjs",
+      "result": "Passed: 6 focused tests, including a 390px-wide Playwright warning-bound test."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/contracts typecheck && pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/contracts test",
+      "result": "Passed: typecheck, build, and 32 tests."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/worker typecheck && pnpm --filter @knowledge-bits/worker test",
+      "result": "Passed: typecheck and 139 tests."
+    },
+    {
+      "phase": "green",
       "command": "pnpm --filter @knowledge-bits/pipeline typecheck && pnpm --filter @knowledge-bits/pipeline test",
-      "result": "Passed: 34 tests."
+      "result": "Passed: typecheck and 34 tests."
     },
     {
       "phase": "green",
       "command": "pnpm --filter @knowledge-bits/api typecheck && pnpm --filter @knowledge-bits/api test",
-      "result": "Passed: 112 tests, including the warning-bearing check to asset production sequence."
+      "result": "Passed: typecheck and 113 tests."
     },
     {
       "phase": "green",
       "command": "pnpm --filter @knowledge-bits/review typecheck && pnpm --filter @knowledge-bits/review build && pnpm --filter @knowledge-bits/review test",
-      "result": "Completed with zero Astro diagnostics; the production review build and focused client behavior tests passed."
+      "result": "Passed: zero Astro diagnostics, production build, and 16 tests."
     }
   ],
   "findings": [
     {
       "severity": "resolved",
-      "detail": "Runtime media eligibility previously treated blocking editorial findings as failed QA. It now depends only on deterministic QA and the semantic content checksum."
+      "detail": "Only validated Story/Playbook 1.1.0 editorial checks keep blocking findings as warnings. Legacy Pi restores editorial_check_failed, and the media adapter rejects legacy contexts before any provider call."
     },
     {
       "severity": "resolved",
-      "detail": "Review warnings are a separate read-model field. Hard issues remain the only review-package blockers."
+      "detail": "Blank summaries are malformed, fallback responses retain readable warnings alongside hard issues, and the fixed decision area bounds long warning lists."
     }
   ],
   "knownGaps": [
     "Validation ran with Node 26.5.0 while the package declares >=24 <25. pnpm emitted its engine warning, and the review build reported that Vercel will use Node 24."
   ],
-  "nextAction": "Completed and committed on codex/nuglet-generation-v03."
+  "nextAction": "Repair committed on codex/nuglet-generation-v03."
 }

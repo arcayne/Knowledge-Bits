@@ -17,11 +17,11 @@ export function parseEditorialCheck(value: unknown): EditorialCheckReport {
     throw new TypeError('Editorial response must be an object');
   }
   const response = value as Record<string, unknown>;
-  if (typeof response.summary !== 'string' || !Array.isArray(response.findings)) {
+  if (typeof response.summary !== 'string' || !response.summary.trim() || !Array.isArray(response.findings)) {
     throw new TypeError('Editorial response requires summary and findings');
   }
   const findings = response.findings.map((finding) => parseFinding(finding));
-  return { summary: response.summary, findings };
+  return { summary: response.summary.trim(), findings };
 }
 
 export function requiresEditorialFailure(report: EditorialCheckReport): boolean {

@@ -95,3 +95,9 @@ test('editorial parsing uses only critical, major, and minor severities', () => 
   assert.equal(report.findings[0]?.blocking, true);
   assert.throws(() => parseEditorialCheck({ findings: [{ code: 'tone', severity: 'warning', message: 'No.' }], summary: 'No.' }), /severity/i);
 });
+
+test('editorial parsing rejects empty and whitespace-only summaries', () => {
+  for (const summary of ['', '   ']) {
+    assert.throws(() => parseEditorialCheck({ findings: [], summary }), /summary/i);
+  }
+});

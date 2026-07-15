@@ -1062,6 +1062,12 @@ test('QA requires the engine-calculated content checksum and explicit blocking f
       findings: [{ code: 'unsupported-claim', severity: 'major', blocking: true, message: 'Missing support.' }],
     },
   }).editorial.findings[0].blocking, true);
+  for (const summary of ['', '   ']) {
+    assert.throws(() => knowledgeBitsQaSchema.parse({
+      deterministic: { passed: true, contentChecksum: checksum, findings: [] },
+      editorial: { summary, findings: [] },
+    }), /summary/i);
+  }
 });
 
 test('job outcomes distinguish configuration action from quality revision', () => {

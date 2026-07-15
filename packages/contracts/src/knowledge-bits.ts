@@ -949,7 +949,7 @@ export const knowledgeBitsQaSchema = z.object({
     }).strict()),
   }).strict(),
   editorial: z.object({
-    summary: z.string().min(1),
+    summary: z.string().trim().min(1),
     findings: z.array(z.object({
       code: z.string().min(1),
       severity: z.enum(['critical', 'major', 'minor']),

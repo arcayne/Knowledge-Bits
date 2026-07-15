@@ -21,7 +21,7 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
     <style>
       :root { color: #202526; background: #f2f4f3; font-family: Arial, sans-serif; }
       * { box-sizing: border-box; }
-      body { margin: 0; padding-bottom: 9rem; }
+      body { margin: 0; padding-bottom: 14rem; }
       main { max-width: 980px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
       header { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; border-bottom: 1px solid #bcc4c2; padding-bottom: .9rem; }
       h1, h2, h3, h4, p { margin-top: 0; }
@@ -60,7 +60,7 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
       button:disabled { cursor: not-allowed; opacity: .45; }
       .decision-bar { position: fixed; inset: auto 0 0; z-index: 10; background: #202526; color: #fff; border-top: 1px solid #0f1112; padding: .75rem 1.25rem; }
       .decision-inner { max-width: 980px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
-      .editorial-warnings { flex: 1 1 100%; border-left: 3px solid #d7ee72; padding-left: .65rem; color: #fff; }
+      .editorial-warnings { flex: 1 1 100%; max-block-size: 8rem; overflow-y: auto; border-left: 3px solid #d7ee72; padding-left: .65rem; color: #fff; overscroll-behavior: contain; }
       .editorial-warnings strong { display: block; }
       .editorial-warnings ul { margin: .25rem 0 0; padding-left: 1.1rem; }
       button { border: 1px solid transparent; padding: .55rem .8rem; font: inherit; cursor: pointer; }

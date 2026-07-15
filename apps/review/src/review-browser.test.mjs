@@ -73,7 +73,57 @@ test('browser renders the complete approved payload and submits its displayed ch
   assert.equal(csrf, 'browser-csrf-token');
 });
 
-function reviewModel() {
+test('mobile browser bounds long editorial warnings without covering decision controls', { timeout: 30_000 }, async (t) => {
+  const [clientSource, pageSource] = await Promise.all([
+    readFile(new URL('./review-client.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('./pages/runs/[runId].astro', import.meta.url), 'utf8'),
+  ]);
+  assert.match(pageSource, /\.editorial-warnings\s*\{[^}]*max-block-size:\s*8rem;[^}]*overflow-y:\s*auto;/s);
+  const server = createServer((request, response) => {
+    if (request.url === '/review-client.mjs') {
+      response.setHeader('Content-Type', 'text/javascript');
+      response.end(clientSource);
+      return;
+    }
+    if (request.url?.startsWith('/api/review')) {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify(reviewModel({
+        warnings: Array.from({ length: 12 }, (_, index) => (
+          `Editorial warning ${index + 1}: ${'Evidence needs a specific source before publication. '.repeat(8)}`
+        )),
+      })));
+      return;
+    }
+    response.setHeader('Content-Type', 'text/html');
+    response.end(browserFixtureHtml());
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(`http://127.0.0.1:${address.port}`);
+  await page.waitForSelector('#review:not([hidden])');
+
+  const warningMetrics = await page.locator('#editorial-warnings').evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  const warnings = await page.locator('#editorial-warnings').boundingBox();
+  const approve = await page.getByRole('button', { name: 'Approve' }).boundingBox();
+  const changes = await page.getByRole('button', { name: 'Request changes' }).boundingBox();
+
+  assert.ok(warningMetrics.scrollHeight > warningMetrics.clientHeight);
+  assert.ok(warnings && approve && changes);
+  assert.ok(warnings.y + warnings.height <= approve.y);
+  assert.ok(warnings.y + warnings.height <= changes.y);
+});
+
+function reviewModel({ warnings = [] } = {}) {
   const claimId = '11111111-1111-4111-8111-111111111111';
   const sourceId = '22222222-2222-4222-8222-222222222222';
   const snapshotArtifactId = '33333333-3333-4333-8333-333333333333';
@@ -142,7 +192,7 @@ function reviewModel() {
   return {
     runId: '44444444-4444-4444-8444-444444444444',
     title: 'Return to one task', currentStage: 'human_review', currentRevision: 1, reviewStatus: 'pending',
-    currentPackageChecksum: checksum, decisionAllowed: true, issues: [],
+    currentPackageChecksum: checksum, decisionAllowed: true, issues: [], warnings,
     package: {
       packageChecksum: checksum,
       content: { target: { schemaVersion: '1.1.0', payload } },
@@ -203,7 +253,14 @@ function generationExecution(role, recipeId, index) {
 }
 
 function browserFixtureHtml() {
-  return `<!doctype html><html><head><meta name="review-csrf-token" content="browser-csrf-token"></head><body>
+  return `<!doctype html><html><head><meta name="review-csrf-token" content="browser-csrf-token"><style>
+    body { margin: 0; padding-bottom: 10rem; font-family: Arial, sans-serif; }
+    .decision-bar { position: fixed; inset: auto 0 0; background: #202526; color: #fff; padding: .75rem 1.25rem; }
+    .decision-inner { max-width: 980px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+    .editorial-warnings { flex: 1 1 100%; max-block-size: 8rem; overflow-y: auto; border-left: 3px solid #d7ee72; padding-left: .65rem; }
+    .editorial-warnings ul { margin: .25rem 0 0; padding-left: 1.1rem; }
+    @media (max-width: 720px) { .decision-inner { align-items: stretch; } }
+  </style></head><body>
     <main data-run-id="44444444-4444-4444-8444-444444444444"><h1 id="title"></h1><p id="status"></p><p id="checksum"></p><p id="error" hidden></p><div id="review" hidden>
       <section id="story-section"><h3 id="story-title"></h3><p id="story-meta"></p><div id="story-blocks"></div></section>
       <section id="playbook-section"><h3 id="playbook-title"></h3><p id="playbook-principle"></p><p id="playbook-why"></p><div id="playbook-steps"></div><div id="playbook-example"></div><ul id="playbook-watch-outs"></ul><p id="playbook-action"></p></section>
@@ -213,8 +270,7 @@ function browserFixtureHtml() {
       <div id="quiz"></div><ul id="claim-coverage"></ul><ul id="accepted-sources"></ul><ul id="rejected-sources"></ul><ul id="coverage-gaps"></ul><ul id="claims"></ul>
       <p id="qa"></p><ul id="qa-findings"></ul><details id="generation-provenance"><summary>Generation provenance</summary><div id="generation-executions"></div></details>
     </div></main>
-    <span id="decision-status"></span><button data-decision="approve" disabled>Approve</button><button data-decision="request_changes" disabled>Request changes</button>
-    <form id="change-form"><textarea id="comment" name="comment"></textarea><button disabled>Send changes</button></form>
+    <footer class="decision-bar"><div class="decision-inner"><span id="decision-status"></span><section class="editorial-warnings" id="editorial-warnings" hidden></section><button data-decision="approve" disabled>Approve</button><button data-decision="request_changes" disabled>Request changes</button><form id="change-form"><textarea id="comment" name="comment"></textarea><button disabled>Send changes</button></form></div></footer>
     <script type="module">import { mountReviewPage } from '/review-client.mjs'; mountReviewPage();</script>
   </body></html>`;
 }

@@ -59,30 +59,31 @@ export class ReviewPackageService {
     const mediaIssues = REVIEW_ASSETS
       .filter(({ key }) => assets[key].state === 'missing')
       .map(({ kind }) => `Required review media is missing: ${kind}`);
+    let warnings: string[] = [];
 
     try {
+      const qaArtifact = requiredParsedArtifact(packageArtifacts, 'check_content', 'QA');
+      const qaOutput = await this.readJson(qaArtifact, 'QA');
+      const qa = knowledgeBitsQaSchema.parse(qaOutput);
+      warnings = editorialWarnings(qa);
       for (const kind of REVIEW_ASSET_KINDS) {
         const artifact = latestArtifact(packageArtifacts, kind);
         if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
       }
       const evidenceArtifact = requiredParsedArtifact(packageArtifacts, 'collect_sources', 'evidence');
       const contentArtifact = requiredParsedArtifact(packageArtifacts, 'create_content', 'content');
-      const qaArtifact = requiredParsedArtifact(packageArtifacts, 'check_content', 'QA');
       const contentOutput = await this.readJson(contentArtifact, 'content');
-      const qaOutput = await this.readJson(qaArtifact, 'QA');
       const assembled = assembleContent(run.brief, contentOutput, packageArtifacts);
       const content = assembled.content;
       const generationExecutions = assembled.generationExecutions;
       const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
       const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, packageArtifacts, content.target.payload.claims);
-      const qa = knowledgeBitsQaSchema.parse(qaOutput);
       const artifactInventory = packageArtifacts.map(toArtifactReference);
       const approvalIssues = [
         ...mediaIssues,
         ...qaApprovalIssues(qa, assembled.semanticChecksum),
         ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum),
       ];
-      const warnings = editorialWarnings(qa);
       const packageChecksum = calculatePackageChecksum({
         content,
         evidence,
@@ -151,7 +152,7 @@ export class ReviewPackageService {
         currentPackageChecksum: run.packageChecksum,
         decisionAllowed: false,
         issues: [assemblyErrorMessage(error)],
-        warnings: [],
+        warnings,
         package: null,
         assets,
         generationExecutions: emptyGenerationExecutions(),

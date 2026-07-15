@@ -250,6 +250,19 @@ test('keeps editorial warnings visible when a separate hard gate blocks decision
   ]);
 });
 
+test('keeps editorial warnings visible when a separate media assembly failure blocks decisions', async () => {
+  const { repository, storage, artifactKeys } = await fixture({ blockingEditorial: true });
+  storage.objects.delete(artifactKeys.hero);
+
+  const model = await new ReviewPackageService({ repository, storage }).load(runId);
+
+  assert.equal(model.decisionAllowed, false);
+  assert.match(model.issues.join(' '), /missing|unreadable/i);
+  assert.deepEqual(model.warnings, [
+    'Editorial warning: unsupported-claim: A claim is unsupported.',
+  ]);
+});
+
 test('excludes superseded assets so approval is bound to the displayed canonical package', async () => {
   const { repository, storage, mediaId, staleMediaId } = await fixture({ includeStaleHero: true });
   const service = new ReviewPackageService({ repository, storage });

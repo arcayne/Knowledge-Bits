@@ -162,7 +162,7 @@ test('Pi rejects malformed editorial responses instead of converting them to war
   await assert.rejects(() => provider.execute(input()), /Editorial finding requires code and message/);
 });
 
-test('Pi persists blocking editorial findings as successful QA without a rewrite or scheduling interface', async () => {
+test('legacy Pi blocks editorial findings before unavailable media can be scheduled', async () => {
   const client: PiSdkClient = {
     async check() {
       return {
@@ -179,44 +179,7 @@ test('Pi persists blocking editorial findings as successful QA without a rewrite
     context: async () => ({ candidate, evidence, rubric: 'Evaluate the candidate.' }),
   });
 
-  const result = await provider.execute(input());
-
-  assert.equal(result.kind, 'success');
-  if (result.kind !== 'success') return;
-  assert.deepEqual(JSON.parse(Buffer.from(result.rawResponse).toString('utf8')), {
-    findings: [
-      { code: 'unsupported-claim', severity: 'major', message: 'The claim has no usable source.' },
-      { code: 'tone', severity: 'critical', message: 'The draft makes a harmful assertion.' },
-    ],
-    summary: 'Not ready.',
-  });
-  const parsed = result.parsedOutput as {
-    deterministic: { passed: boolean; contentChecksum: string; findings: unknown[] };
-    editorial: unknown;
-  };
-  assert.deepEqual(parsed.deterministic, {
-    passed: true,
-    contentChecksum: parsed.deterministic.contentChecksum,
-    findings: [],
-  });
-  assert.match(parsed.deterministic.contentChecksum, /^[a-f0-9]{64}$/);
-  assert.deepEqual(parsed.editorial, {
-    summary: 'Not ready.',
-    findings: [
-      {
-        code: 'unsupported-claim',
-        severity: 'major',
-        blocking: true,
-        message: 'The claim has no usable source.',
-      },
-      {
-        code: 'tone',
-        severity: 'critical',
-        blocking: true,
-        message: 'The draft makes a harmful assertion.',
-      },
-    ],
-  });
+  await assert.rejects(() => provider.execute(input()), /editorial_check_failed/);
   assert.equal('rewrite' in client, false);
   assert.equal('schedule' in client, false);
 });

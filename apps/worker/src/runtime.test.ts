@@ -168,7 +168,7 @@ test('reconstructs Pi and media context from lease-scoped artifact dependencies'
   assert.equal(media.contentChecksum, calculateContentChecksum(candidate));
 });
 
-test('keeps a valid blocking legacy editorial QA response eligible for asset production', async () => {
+test('legacy editorial QA cannot invoke media generation without a 1.1.0 plan', async () => {
   const createId = '66666666-6666-4666-8666-666666666661';
   const checkId = '66666666-6666-4666-8666-666666666662';
   const client = contextClient(new Map([
@@ -192,10 +192,28 @@ test('keeps a valid blocking legacy editorial QA response eligible for asset pro
     { artifactId: checkId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'check_content' },
   ];
 
-  const media = await resolver.media(input('produce_assets', dependencies));
+  let mediaCalls = 0;
+  const providers = composeWorkerProviders({
+    env: {},
+    runtime: {
+      recipeBindingVerifier: acceptingRecipeVerifier(),
+      mediaClient: {
+        async generate() {
+          mediaCalls += 1;
+          return [];
+        },
+      },
+      mediaContext: (execution) => resolver.media(execution),
+    },
+  });
+  const media = providers[2];
+  assert.ok(media);
 
-  assert.equal(media.passedCheck, true);
-  assert.equal(media.contentChecksum, calculateContentChecksum(candidate));
+  await assert.rejects(
+    () => media.execute(input('produce_assets', dependencies)),
+    /media_generation_plan_required/,
+  );
+  assert.equal(mediaCalls, 0);
 });
 
 test('builds Create context from accepted source URLs instead of brief candidates', async () => {

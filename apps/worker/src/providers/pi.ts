@@ -1,4 +1,4 @@
-import { parseEditorialCheck } from '../checks/editorial.js';
+import { parseEditorialCheck, requiresEditorialFailure } from '../checks/editorial.js';
 import { isStoryPlaybookCandidate, runDeterministicChecks, type ContentCandidate, type EvidenceManifest } from '../checks/deterministic.js';
 import { EDITORIAL_CHECK_PROMPT_VERSION, renderEditorialCheckPrompt } from '../prompts/editorial-check.v1.js';
 import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
@@ -103,6 +103,7 @@ export class PiEditorialProvider implements ContentProvider {
       signal: input.signal,
     });
     const editorial = parseEditorialCheck(response);
+    if (requiresEditorialFailure(editorial)) throw new ProviderNeedsHumanError('editorial_check_failed', 'quality');
 
     return {
       kind: 'success',
