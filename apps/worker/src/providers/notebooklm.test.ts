@@ -481,7 +481,7 @@ test('rejects an oversized UTF-8 query before invoking the query process with a 
     ]),
     context: async () => ({
       notebookId: 'notebook_fixture_01',
-      sourceUrls: [],
+      sourceUrls: ['https://example.com/source-that-must-not-be-imported'],
       topic: `${secret}${'\u00e9'.repeat(4_000)}`,
     }),
   });
@@ -494,7 +494,7 @@ test('rejects an oversized UTF-8 query before invoking the query process with a 
       && 'needsHumanKind' in error
       && error.needsHumanKind === 'configuration',
   );
-  assert.deepEqual(calls.map(({ args }) => args), [['--version']]);
+  assert.deepEqual(calls, []);
 });
 
 test('semantically repairs extra root keys and object-shaped claim coverage', async (context) => {

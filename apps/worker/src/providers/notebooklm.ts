@@ -109,8 +109,6 @@ export class NotebookLmProvider implements ContentProvider {
     const recipeExecution = input.action === 'create_content' && context.generationPlan?.schemaVersion === '1.1.0'
       ? resolvedCreateRecipes(context)
       : undefined;
-    const cliVersion = await this.version(input.signal);
-    await this.importSources(context, input.signal);
     const promptBytes = input.action === 'collect_sources'
       ? renderPromptSections([renderNotebookLmResearchPrompt({ topic: context.topic })])
       : recipeExecution
@@ -121,11 +119,14 @@ export class NotebookLmProvider implements ContentProvider {
           sources: context.evidence?.sources,
         })]);
     const prompt = Buffer.from(promptBytes).toString('utf8');
+    assertNotebookLmQueryPromptSize(prompt);
     const promptVersion = input.action === 'collect_sources'
       ? NOTEBOOKLM_RESEARCH_PROMPT_VERSION
       : recipeExecution
         ? NOTEBOOKLM_RECIPE_CREATE_PROMPT_VERSION
         : NOTEBOOKLM_CREATE_PROMPT_VERSION;
+    const cliVersion = await this.version(input.signal);
+    await this.importSources(context, input.signal);
     const response = await this.query(context.notebookId, prompt, input.signal);
     let parsed = await this.parseOrRepair(context.notebookId, prompt, response, input.signal);
     validateCitations(parsed.answer, input.action === 'create_content' ? context.evidence : undefined);
