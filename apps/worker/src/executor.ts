@@ -7,6 +7,7 @@ import {
   ProviderNeedsHumanError,
   ProviderWaitingError,
   type ProviderExecution,
+  type ProviderSupportArtifact,
   type WorkerAction,
   type WorkerProvider,
 } from './providers/types.js';
@@ -19,6 +20,13 @@ const ACTION_BY_STAGE: Readonly<Record<WorkflowStage, WorkerAction | null>> = {
   human_review: null,
   deliver: 'deliver_package',
 };
+
+class GenerationProvenanceError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = 'GenerationProvenanceError';
+  }
+}
 
 export interface IntervalScheduler {
   setInterval(callback: () => void | Promise<void>, delay: number): unknown;
@@ -128,7 +136,19 @@ export class WorkerExecutor {
         }, controller.signal);
         return;
       }
-      await this.uploadExecutionArtifacts(job, provider.name, execution, reportBytes, controller.signal);
+      try {
+        await this.uploadExecutionArtifacts(job, provider.name, execution, reportBytes, controller.signal);
+      } catch (error) {
+        if (error instanceof GenerationProvenanceError) {
+          await this.reportTypedResult(job, {
+            kind: 'needs_human',
+            needsHumanKind: 'configuration',
+            reason: error.code,
+          }, controller.signal);
+          return;
+        }
+        throw error;
+      }
       if (!reportingAllowed || controller.signal.aborted) return;
 
       await this.options.client.reportResult({
@@ -219,16 +239,22 @@ export class WorkerExecutor {
     const rawChecksum = checksum(execution.rawResponse);
     const parsedBytes = canonicalJsonBytes(execution.parsedOutput);
     const parsedChecksum = checksum(parsedBytes);
-    const generationProvenance = executionProvenance(job, provider, execution);
+    const supportArtifacts = execution.supportArtifacts ?? [];
+    const generationProvenance = supportArtifacts.length > 0
+      ? validateGenerationProvenance(job, provider, supportArtifacts)
+      : undefined;
     const artifacts: ExecutionArtifact[] = [
-      ...(execution.supportArtifacts ?? [])
+      ...supportArtifacts
         .filter((artifact) => artifact.kind !== 'generation.execution.report')
         .map((artifact) => ({
           kind: artifact.kind,
           body: artifact.body,
           mediaType: artifact.mediaType,
           inputChecksum: artifact.inputChecksum,
-          provenance: sanitizeProvenance({ ...generationProvenance, ...artifact.provenance }),
+          provenance: {
+            ...sanitizeProvenance(artifact.provenance),
+            ...generationProvenance,
+          },
         })),
       ...(execution.assets ?? []).map((asset) => ({
         kind: asset.kind,
@@ -243,7 +269,7 @@ export class WorkerExecutor {
         kind: 'generation.execution.report',
         body: reportBytes,
         inputChecksum: parsedChecksum,
-        provenance: sanitizeProvenance(generationProvenance),
+        provenance: generationProvenance,
       },
     ];
 
@@ -270,14 +296,7 @@ export class WorkerExecutor {
         byteSize: artifact.body.byteLength,
         provider,
         inputChecksum: artifact.inputChecksum,
-        provenance: {
-          action: actionForStage(job.stage),
-          idempotencyKey: operationIdempotencyKey(job, actionForStage(job.stage)!),
-          jobId: job.jobId,
-          provider,
-          attempt: job.attempt,
-          ...sanitizeProvenance(artifact.provenance ?? {}),
-        },
+        provenance: bindExecutorProvenance(job, provider, artifact.provenance),
       };
       await this.options.client.completeArtifact(completion, signal);
       if (signal?.aborted) return;
@@ -316,34 +335,97 @@ export class WorkerExecutor {
   }
 }
 
-function executionProvenance(
+function validateGenerationProvenance(
   job: JobClaim,
   provider: string,
-  execution: Extract<ProviderExecution, { kind: 'success' }>,
-): Readonly<Record<string, unknown>> {
-  const evidence = execution.supportArtifacts?.map(({ provenance }) => provenance) ?? [];
-  const report = isRecord(execution.executionReport) ? execution.executionReport : {};
+  artifacts: readonly ProviderSupportArtifact[],
+): GenerationProvenance {
+  const recipeSnapshots = artifacts.filter(({ kind }) => kind === 'generation.recipe.snapshot');
+  const prompts = artifacts.filter(({ kind }) => kind === 'generation.prompt.rendered');
+  if (recipeSnapshots.length !== 1 || prompts.length !== 1) {
+    throw new GenerationProvenanceError('generation_provenance_missing');
+  }
+
+  const provenance = artifacts.map(({ provenance: candidate }) => readGenerationProvenance(candidate));
+  const expected = provenance[0]!;
+  if (provenance.some((candidate) => !sameGenerationProvenance(candidate, expected))) {
+    throw new GenerationProvenanceError('generation_provenance_conflict');
+  }
+  const executorProvenance = executorProvenanceFor(job, provider);
+  for (const { provenance: candidate } of artifacts) {
+    for (const [key, value] of Object.entries(executorProvenance)) {
+      if (candidate[key] !== undefined && !sameValue(candidate[key], value)) {
+        throw new GenerationProvenanceError('generation_provenance_conflict');
+      }
+    }
+  }
+  if (expected.recipeChecksum !== prefixedChecksum(recipeSnapshots[0]!.body)
+    || expected.promptChecksum !== prefixedChecksum(prompts[0]!.body)) {
+    throw new GenerationProvenanceError('generation_provenance_checksum_mismatch');
+  }
+  return expected;
+}
+
+function readGenerationProvenance(value: Readonly<Record<string, unknown>>): GenerationProvenance {
+  const recipeId = requiredString(value.recipeId);
+  const recipeVersion = requiredString(value.recipeVersion);
+  const recipeChecksum = requiredChecksum(value.recipeChecksum);
+  const promptChecksum = requiredChecksum(value.promptChecksum);
+  const model = requiredString(value.model);
+  const referenceChecksums = requiredChecksums(value.referenceChecksums);
+  if (!recipeId || !recipeVersion || !recipeChecksum || !promptChecksum || !model || !referenceChecksums) {
+    throw new GenerationProvenanceError('generation_provenance_missing');
+  }
+  return { recipeId, recipeVersion, recipeChecksum, promptChecksum, model, referenceChecksums };
+}
+
+function requiredString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function requiredChecksum(value: unknown): string | undefined {
+  return typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value) ? value : undefined;
+}
+
+function requiredChecksums(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value) || !value.every((checksum) => requiredChecksum(checksum))) return undefined;
+  return value;
+}
+
+function sameGenerationProvenance(left: GenerationProvenance, right: GenerationProvenance): boolean {
+  return left.recipeId === right.recipeId
+    && left.recipeVersion === right.recipeVersion
+    && left.recipeChecksum === right.recipeChecksum
+    && left.promptChecksum === right.promptChecksum
+    && left.model === right.model
+    && sameValue(left.referenceChecksums, right.referenceChecksums);
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function executorProvenanceFor(job: JobClaim, provider: string): Readonly<Record<string, unknown>> {
+  const action = actionForStage(job.stage);
+  if (!action) throw new TypeError(`No worker action exists for ${job.stage}`);
   return {
-    recipeId: firstProvenanceValue(evidence, 'recipeId') ?? null,
-    recipeVersion: firstProvenanceValue(evidence, 'recipeVersion') ?? null,
-    recipeChecksum: firstProvenanceValue(evidence, 'recipeChecksum') ?? null,
-    promptChecksum: firstProvenanceValue(evidence, 'promptChecksum') ?? null,
+    action,
+    idempotencyKey: operationIdempotencyKey(job, action),
+    jobId: job.jobId,
     provider,
-    model: firstProvenanceValue(evidence, 'model') ?? safeString(report.model) ?? 'unknown',
     attempt: job.attempt,
-    referenceChecksums: firstProvenanceValue(evidence, 'referenceChecksums') ?? [],
   };
 }
 
-function firstProvenanceValue(
-  provenance: readonly Readonly<Record<string, unknown>>[],
-  key: string,
-): unknown {
-  return provenance.find((candidate) => candidate[key] !== undefined)?.[key];
-}
-
-function safeString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+function bindExecutorProvenance(
+  job: JobClaim,
+  provider: string,
+  provenance: Readonly<Record<string, unknown>> | undefined,
+): Readonly<Record<string, unknown>> {
+  return {
+    ...sanitizeProvenance(provenance ?? {}),
+    ...executorProvenanceFor(job, provider),
+  };
 }
 
 function redactExecutionReport(value: unknown): unknown {
@@ -360,8 +442,7 @@ function sanitizeProvenance(value: Readonly<Record<string, unknown>>): Readonly<
 
 function redactValue(value: unknown, secrets: readonly string[], seen: WeakSet<object>): unknown {
   if (typeof value === 'string') {
-    if (looksLikeAbsolutePath(value)) return '[REDACTED_PATH]';
-    return secrets.reduce((safe, secret) => safe.replaceAll(secret, '[REDACTED]'), value);
+    return redactString(value, secrets);
   }
   if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
   if (Array.isArray(value)) {
@@ -381,15 +462,23 @@ function redactValue(value: unknown, secrets: readonly string[], seen: WeakSet<o
   return null;
 }
 
-function looksLikeAbsolutePath(value: string): boolean {
-  return /^(?:file:\/\/|~(?:[\\/]|$)|[A-Za-z]:[\\/]|\/(?:Users|home|private|tmp|var)(?:[\\/]|$))/i.test(value.trim());
+function redactString(value: string, secrets: readonly string[]): string {
+  const withoutEnvironmentSecrets = secrets.reduce((safe, secret) => safe.replaceAll(secret, '[REDACTED]'), value);
+  const withoutCredentialLiterals = withoutEnvironmentSecrets
+    .replace(/\b(?:bearer|basic|token)\s+[A-Za-z0-9._~+\/=:-]{8,}\b/gi, '[REDACTED]')
+    .replace(/\b(?:sk|pk|rk|api)[_-][A-Za-z0-9_-]{8,}\b/gi, '[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
+    .replace(/\b(?:api.?key|credential|password|secret|token)\s*[=:]\s*[^\s,;]+/gi, '[REDACTED]');
+  return withoutCredentialLiterals
+    .replace(/file:\/\/[^\s"'`<>{}\[\]()]+/gi, '[REDACTED_PATH]')
+    .replace(/(^|[\s([{"'=,;:])(?:~[\\/][^\s"'`<>{}\[\]()]+|[A-Za-z]:[\\/][^\s"'`<>{}\[\]()]+|\/(?!\/)[^\s"'`<>{}\[\]()]+)/g, '$1[REDACTED_PATH]');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const SENSITIVE_KEY = /(?:api.?key|authorization|bearer|cookie|credential|password|private.?key|secret|token)/i;
+const SENSITIVE_KEY = /(?:access.?key|api.?key|authorization|auth(?:entication)?|bearer|client.?secret|connection.?string|cookie|credential|dsn|keyfile|oauth|pass(?:word|phrase)|private.?key|secret|session|signature|signing.?key|token)/i;
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY.test(key);
@@ -397,8 +486,21 @@ function isSensitiveKey(key: string): boolean {
 
 function isPathKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return ['path', 'root', 'directory', 'dir'].some((suffix) => normalized.endsWith(suffix));
+  return ['path', 'root', 'directory', 'dir'].some((suffix) => normalized.endsWith(suffix))
+    || new Set([
+      'cwd', 'filename', 'file', 'filepath', 'loadedfrom', 'workdir', 'workingdirectory',
+      'homedir', 'tempdir', 'temporarydirectory', 'basedir', 'configfile', 'sourcefile', 'location',
+    ]).has(normalized);
 }
+
+type GenerationProvenance = Readonly<Record<string, unknown>> & {
+  recipeId: string;
+  recipeVersion: string;
+  recipeChecksum: string;
+  promptChecksum: string;
+  model: string;
+  referenceChecksums: readonly string[];
+};
 
 interface ExecutionArtifact {
   kind: string;
@@ -437,6 +539,10 @@ function deadlineWait(now: Date): Extract<ProviderExecution, { kind: 'waiting' }
 
 function checksum(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function prefixedChecksum(bytes: Uint8Array): string {
+  return `sha256:${checksum(bytes)}`;
 }
 
 function canonicalJsonBytes(value: unknown): Uint8Array {

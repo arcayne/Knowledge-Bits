@@ -60,16 +60,16 @@ test('recalculates canonical bytes and rejects a same-version checksum mismatch'
   );
 });
 
-test('renders prompt sections with LF endings and no trailing whitespace without reordering', () => {
+test('renders prompt sections with LF endings and trailing whitespace removed without changing leading content', () => {
   const rendered = renderPromptSections([
-    'FIRST SECTION  \r\nline one\t\r\n',
-    '\r\nSECOND SECTION\r\nline two   ',
+    '  FIRST SECTION  \r\n    line one\t\r\n',
+    'SECOND SECTION\r\n\tline two   ',
     'THIRD SECTION',
   ]);
 
   assert.equal(
     Buffer.from(rendered).toString('utf8'),
-    'FIRST SECTION\nline one\n\nSECOND SECTION\nline two\n\nTHIRD SECTION',
+    '  FIRST SECTION\n    line one\n\nSECOND SECTION\n\tline two\n\nTHIRD SECTION',
   );
 });
 

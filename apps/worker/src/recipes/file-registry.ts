@@ -86,7 +86,7 @@ export function renderPromptSections(sections: readonly string[]): Uint8Array {
       .split('\n')
       .map((line) => line.replace(/[\t ]+$/g, ''))
       .join('\n')
-      .trim())
+      .replace(/\n+$/g, ''))
     .filter(Boolean)
     .join('\n\n');
   return Buffer.from(rendered);

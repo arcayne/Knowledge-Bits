@@ -253,6 +253,7 @@ test('uploads the audit artifact triplet before reporting a non-asset success', 
 
 test('uploads immutable recipe and prompt support artifacts during a non-media stage', async () => {
   const client = new FakeEngineClient();
+  const claimedJob = job('research');
   const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
   const promptBody = Buffer.from('Create the Story.');
   const provenance = generationProvenance(recipeBody, promptBody);
@@ -277,7 +278,7 @@ test('uploads immutable recipe and prompt support artifacts during a non-media s
   });
   const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
 
-  await executor.execute(job('research'));
+  await executor.execute(claimedJob);
 
   assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
     'generation.recipe.snapshot',
@@ -294,6 +295,77 @@ test('uploads immutable recipe and prompt support artifacts during a non-media s
       ].includes(key)).sort(),
       ['attempt', 'model', 'promptChecksum', 'provider', 'recipeChecksum', 'recipeId', 'recipeVersion', 'referenceChecksums'],
     );
+    assert.equal(artifact.provenance.action, 'collect_sources');
+    assert.equal(artifact.provenance.jobId, claimedJob.jobId);
+    assert.equal(artifact.provenance.provider, 'fixture-provider');
+    assert.equal(artifact.provenance.attempt, claimedJob.attempt);
+    assert.equal(artifact.provenance.idempotencyKey, operationIdempotencyKey(claimedJob, 'collect_sources'));
+  }
+});
+
+test('rejects missing, conflicting, and body-mismatched generation provenance before uploading artifacts', async (context) => {
+  const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Create the Story.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const cases: Array<{
+    name: string;
+    reason: string;
+    provenance: Readonly<Record<string, unknown>>;
+    promptProvenance?: Readonly<Record<string, unknown>>;
+  }> = [
+    {
+      name: 'missing reference checksums',
+      reason: 'generation_provenance_missing',
+      provenance: Object.fromEntries(Object.entries(provenance).filter(([key]) => key !== 'referenceChecksums')),
+    },
+    {
+      name: 'conflicting executor-bound provider',
+      reason: 'generation_provenance_conflict',
+      provenance: { ...provenance, provider: 'forged-provider' },
+    },
+    {
+      name: 'conflicting prompt provenance',
+      reason: 'generation_provenance_conflict',
+      provenance,
+      promptProvenance: { ...provenance, model: 'different-model' },
+    },
+    {
+      name: 'recipe checksum that does not match the recipe snapshot',
+      reason: 'generation_provenance_checksum_mismatch',
+      provenance: { ...provenance, recipeChecksum: `sha256:${'f'.repeat(64)}` },
+    },
+  ];
+
+  for (const scenario of cases) {
+    await context.test(scenario.name, async () => {
+      const client = new FakeEngineClient();
+      const provider = providerFor('collect_sources', {
+        ...successOutput(),
+        supportArtifacts: [
+          {
+            kind: 'generation.recipe.snapshot',
+            mediaType: 'application/json',
+            body: recipeBody,
+            inputChecksum: null,
+            provenance: scenario.provenance,
+          },
+          {
+            kind: 'generation.prompt.rendered',
+            mediaType: 'text/plain',
+            body: promptBody,
+            inputChecksum: prefixedChecksum(recipeBody),
+            provenance: scenario.promptProvenance ?? scenario.provenance,
+          },
+        ],
+      });
+      const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+      await executor.execute(job('research'));
+
+      assert.equal(client.completedArtifacts.length, 0);
+      assert.equal(client.results[0]?.result.state, 'needs_human');
+      assert.equal(client.results[0]?.result.error, scenario.reason);
+    });
   }
 });
 
@@ -334,8 +406,11 @@ test('keeps learner media stage-restricted while allowing research source snapsh
   assert.equal(researchClient.results[0]?.result.state, 'done');
 });
 
-test('removes credentials, environment secrets, and absolute paths from generation execution reports', async () => {
+test('removes credentials, path fields, and embedded absolute paths from generation execution reports', async () => {
   const secret = 'task-four-secret-value';
+  const credential = 'sk_live_task_four_credential';
+  const recipeBody = Buffer.from('{"id":"safe"}\n');
+  const promptBody = Buffer.from('safe prompt');
   const previous = process.env.TASK_FOUR_SECRET;
   process.env.TASK_FOUR_SECRET = secret;
   try {
@@ -345,19 +420,32 @@ test('removes credentials, environment secrets, and absolute paths from generati
       supportArtifacts: [{
         kind: 'generation.recipe.snapshot',
         mediaType: 'application/json',
-        body: Buffer.from('{"id":"safe"}\n'),
+        body: recipeBody,
         inputChecksum: null,
         provenance: {
-          ...generationProvenance(Buffer.from('recipe'), Buffer.from('prompt')),
+          ...generationProvenance(recipeBody, promptBody),
           secretToken: secret,
           localPath: '/Users/private/recipes',
+          cwd: '/srv/knowledge-bits',
+          loadedFrom: '/opt/worker/config.json',
+          filename: '/workspace/recipe.json',
         },
+      }, {
+        kind: 'generation.prompt.rendered',
+        mediaType: 'text/plain',
+        body: promptBody,
+        inputChecksum: prefixedChecksum(recipeBody),
+        provenance: generationProvenance(recipeBody, promptBody),
       }],
       executionReport: {
         model: 'provider-model',
         apiKey: secret,
         nested: { authorization: `Bearer ${secret}` },
         recipeRoot: '/Users/private/recipes',
+        cwd: '/srv/knowledge-bits',
+        loadedFrom: '/opt/worker/config.json',
+        filename: '/workspace/recipe.json',
+        error: `Could not load:/mnt/recipes/manifest.json with token=${credential}`,
         safeSetting: 'kept',
       },
     });
@@ -372,6 +460,14 @@ test('removes credentials, environment secrets, and absolute paths from generati
     assert.equal(report.includes('apiKey'), false);
     assert.equal(report.includes('authorization'), false);
     assert.equal(report.includes('recipeRoot'), false);
+    assert.equal(report.includes('cwd'), false);
+    assert.equal(report.includes('loadedFrom'), false);
+    assert.equal(report.includes('filename'), false);
+    assert.equal(report.includes('/srv/knowledge-bits'), false);
+    assert.equal(report.includes('/opt/worker/config.json'), false);
+    assert.equal(report.includes('/workspace/recipe.json'), false);
+    assert.equal(report.includes('/mnt/recipes/manifest.json'), false);
+    assert.equal(report.includes(credential), false);
     assert.match(report, /safeSetting/);
     const recipeProvenance = JSON.stringify(client.completedArtifacts.find(
       ({ kind }) => kind === 'generation.recipe.snapshot',
@@ -380,6 +476,9 @@ test('removes credentials, environment secrets, and absolute paths from generati
     assert.equal(recipeProvenance.includes('/Users/private/recipes'), false);
     assert.equal(recipeProvenance.includes('secretToken'), false);
     assert.equal(recipeProvenance.includes('localPath'), false);
+    assert.equal(recipeProvenance.includes('cwd'), false);
+    assert.equal(recipeProvenance.includes('loadedFrom'), false);
+    assert.equal(recipeProvenance.includes('filename'), false);
   } finally {
     if (previous === undefined) delete process.env.TASK_FOUR_SECRET;
     else process.env.TASK_FOUR_SECRET = previous;
