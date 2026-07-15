@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
-import type { NugletGenerationPlan, NugletLessonV1Payload } from '@knowledge-bits/contracts';
+import { nugletGenerationPlanSchema, type NugletGenerationPlan, type NugletLessonV1Payload } from '@knowledge-bits/contracts';
 
 import type { ArtifactStorageAdapter } from './artifacts.js';
 import {
@@ -12,6 +14,7 @@ import {
   assembleGenerationExecutions,
   ReviewPackageService,
 } from './review-packages.js';
+import { calculateStoryPlaybookGenerationInputChecksum } from './nuglet-package-materializer.js';
 import { createApp } from '../app.js';
 import {
   createInMemoryWorkflowStore,
@@ -226,20 +229,32 @@ test('blocks approval for failed deterministic QA or stale asset inputs', async 
   }
 });
 
-test('keeps blocking editorial findings as decision-ready review warnings', async () => {
-  const { repository, storage } = await fixture({ blockingEditorial: true });
+test('keeps blocking editorial findings as decision-ready warnings for materialized Story Playbook packages', async () => {
+  const { repository, storage } = await storyPlaybookFixture({ blockingEditorial: true });
 
   const model = await new ReviewPackageService({ repository, storage }).load(runId);
 
   assert.equal(model.decisionAllowed, true);
+  assert.equal(model.package?.content.target.schemaVersion, '1.1.0');
+  assert.equal(model.package?.content.target.payload.materialization, 'materialized');
   assert.deepEqual(model.issues, []);
   assert.deepEqual(model.warnings, [
     'Editorial warning: unsupported-claim: A claim is unsupported.',
   ]);
 });
 
+test('keeps blocking editorial findings as approval blockers for legacy packages', async () => {
+  const { repository, storage } = await fixture({ blockingEditorial: true });
+
+  const model = await new ReviewPackageService({ repository, storage }).load(runId);
+
+  assert.equal(model.decisionAllowed, false);
+  assert.match(model.issues.join(' '), /editorial/i);
+  assert.deepEqual(model.warnings, []);
+});
+
 test('keeps editorial warnings visible when a separate hard gate blocks decisions', async () => {
-  const { repository, storage } = await fixture({ blockingEditorial: true, qaPassed: false });
+  const { repository, storage } = await storyPlaybookFixture({ blockingEditorial: true, qaPassed: false });
 
   const model = await new ReviewPackageService({ repository, storage }).load(runId);
 
@@ -251,7 +266,7 @@ test('keeps editorial warnings visible when a separate hard gate blocks decision
 });
 
 test('keeps editorial warnings visible when a separate media assembly failure blocks decisions', async () => {
-  const { repository, storage, artifactKeys } = await fixture({ blockingEditorial: true });
+  const { repository, storage, artifactKeys } = await storyPlaybookFixture({ blockingEditorial: true });
   storage.objects.delete(artifactKeys.hero);
 
   const model = await new ReviewPackageService({ repository, storage }).load(runId);
@@ -547,6 +562,256 @@ async function fixture(options: {
     mediaId: options.includeMedia === false ? null : '20000000-0000-4000-8000-000000000004',
     staleMediaId: options.includeStaleHero ? '10000000-0000-4000-8000-000000000007' : null,
   };
+}
+
+async function storyPlaybookFixture(options: {
+  qaPassed?: boolean;
+  blockingEditorial?: boolean;
+} = {}) {
+  const repository = new WorkflowRepository(createInMemoryWorkflowStore());
+  repository.listArtifactsForSuccessfulStageJobs = (id, revision) => repository.listArtifacts(id, revision);
+  const storage = new ReadableStorage();
+  const plan = storyPlaybookPlan();
+  const semantic = await storyPlaybookSemanticOutput();
+  const inputChecksum = calculateStoryPlaybookGenerationInputChecksum(semantic, plan);
+  const { artifacts } = generationProvenanceFixture();
+  const artifactKeys = { hero: '' };
+
+  await repository.createRun({
+    id: runId,
+    title: 'Leave a clear way back',
+    locale: 'en-GB',
+    brief: { generationPlan: plan },
+    currentStage: 'human_review',
+    packageChecksum: workerChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+
+  for (const artifact of artifacts) {
+    const body = storyArtifactBody(artifact, semantic);
+    const mediaType = storyMediaType(artifact.kind, artifact.mediaType);
+    const isMedia = ['hero', 'infographic', 'audio_brief', 'audio_discussion'].includes(artifact.kind);
+    artifact.mediaType = mediaType;
+    artifact.byteSize = body.byteLength;
+    if (isMedia) {
+      artifact.inputChecksum = inputChecksum;
+      Object.assign(artifact.provenance, storyMediaProvenance(artifact, plan));
+      if (artifact.kind === 'hero') artifactKeys.hero = artifact.storageKey;
+    }
+    storage.objects.set(artifact.storageKey, { body, mediaType });
+    await repository.recordArtifact(artifact);
+  }
+
+  await recordStoryArtifact({
+    repository,
+    storage,
+    id: snapshotArtifactId,
+    kind: 'source_snapshot',
+    storageKey: 'objects/story-snapshot',
+    action: 'collect_sources',
+    stage: 'research',
+    mediaType: 'text/plain',
+    body: 'A defined next action lowers restart friction.',
+    provenance: { sourceId },
+  });
+  await recordStoryArtifact({
+    repository,
+    storage,
+    id: '30000000-0000-4000-8000-000000000001',
+    kind: 'parsed_output',
+    storageKey: 'objects/story-evidence',
+    action: 'collect_sources',
+    stage: 'research',
+    mediaType: 'application/json',
+    body: {
+      acceptedSources: [{
+        sourceId,
+        title: 'Focused work evidence',
+        url: 'https://example.test/focused-work',
+        retrievedAt: '2026-07-15T10:00:00.000Z',
+        snapshotChecksum: 'a'.repeat(64),
+        readability: { passed: true, reason: null },
+        credibility: { passed: true, policy: 'fixture-trusted-hosts.v1', reason: null },
+      }],
+      rejectedSources: [],
+      coverageGaps: [],
+    },
+  });
+  await recordStoryArtifact({
+    repository,
+    storage,
+    id: '30000000-0000-4000-8000-000000000002',
+    kind: 'parsed_output',
+    storageKey: 'objects/story-qa',
+    action: 'check_content',
+    stage: 'check',
+    mediaType: 'application/json',
+    body: {
+      deterministic: {
+        passed: options.qaPassed !== false,
+        contentChecksum: calculateContentChecksum(semantic),
+        findings: options.qaPassed === false ? [{ code: 'claim-coverage', message: 'Coverage is incomplete.' }] : [],
+      },
+      editorial: {
+        summary: options.blockingEditorial ? 'Needs revision.' : 'Ready for structural review.',
+        findings: options.blockingEditorial
+          ? [{ code: 'unsupported-claim', severity: 'major', blocking: true, message: 'A claim is unsupported.' }]
+          : [],
+      },
+    },
+  });
+
+  return { repository, storage, artifactKeys };
+}
+
+function storyPlaybookPlan(): NugletGenerationPlan {
+  const binding = (id: string, digit: string) => ({
+    id,
+    version: '1.0.0',
+    checksum: `sha256:${digit.repeat(64)}`,
+  });
+  const recipes = {
+    story: binding('nuglet.lesson.story', '1'),
+    playbook: binding('nuglet.lesson.playbook', '2'),
+    challenge: binding('nuglet.challenge', '3'),
+    infographic: binding('nuglet.visual.infographic', '4'),
+    audioBrief: binding('nuglet.audio.brief', '5'),
+    audioDiscussion: binding('nuglet.audio.discussion', '6'),
+    hero: binding('nuglet.hero', '7'),
+    editorialQa: binding('nuglet.qa.editorial', '8'),
+  };
+  const baseline = (role: 'infographic' | 'audioBrief' | 'audioDiscussion', path: string, digit: string) => {
+    const artifactId = `baseline-${role}`;
+    const prompt = Buffer.from(`Generate ${role}`);
+    const recipe = recipes[role];
+    return {
+      checksum: `sha256:${digit.repeat(64)}`,
+      generation: {
+        artifactId,
+        model: 'notebooklm-cli:fixture',
+        notebookId: 'notebook-fixture',
+        prompt: {
+          bytesBase64: prompt.toString('base64'),
+          checksum: `sha256:${createHash('sha256').update(prompt).digest('hex')}`,
+        },
+        provider: 'notebooklm' as const,
+        recipe,
+      },
+      mediaType: role === 'infographic' ? 'image/webp' : 'audio/mp4',
+      path,
+      providerArtifactId: artifactId,
+    };
+  };
+  return nugletGenerationPlanSchema.parse({
+    contentKind: 'nuglet.lesson.v1',
+    schemaVersion: '1.1.0',
+    recipes,
+    heroDirection: {
+      concept: 'Returning to focused work',
+      metaphor: 'One marked step on an unfinished path',
+      compositionFamily: 'asymmetrical-story',
+      mustInclude: ['a marked next step'],
+      mustAvoid: ['text overlays'],
+    },
+    mediaBaseline: {
+      descriptorChecksum: `sha256:${'b'.repeat(64)}`,
+      descriptorPath: 'knowledge-bits/media-baseline.v1.json',
+      descriptor: {
+        artifacts: {
+          infographic: baseline('infographic', 'images/infographic.webp', 'c'),
+          audioBrief: baseline('audioBrief', 'audio/notebooklm-short-brief.m4a', 'd'),
+          audioDiscussion: baseline('audioDiscussion', 'audio/notebooklm-medium-debate.m4a', 'e'),
+        },
+        notebookId: 'notebook-fixture',
+        runFolder: 'runs/fixture',
+        runId: 'baseline-run-fixture',
+        schemaVersion: 'nuglet.media-baseline.v1',
+      },
+    },
+  });
+}
+
+async function storyPlaybookSemanticOutput(): Promise<Record<string, unknown>> {
+  const fixture = JSON.parse(await readFile(
+    new URL('../../../worker/src/providers/fixtures/notebooklm-story-playbook.json', import.meta.url),
+    'utf8',
+  )) as { answer: Record<string, unknown> };
+  const semantic = structuredClone(fixture.answer);
+  const payload = semantic.payload as Record<string, unknown>;
+  const claims = payload.claims as Array<{ citations: Array<Record<string, unknown>> }>;
+  for (const claim of claims) {
+    for (const citation of claim.citations) citation.snapshotArtifactId = snapshotArtifactId;
+  }
+  return semantic;
+}
+
+function storyArtifactBody(artifact: WorkflowArtifact, semantic: Record<string, unknown>): Buffer {
+  if (artifact.kind === 'parsed_output' && artifact.action === 'create_content') {
+    return Buffer.from(JSON.stringify(semantic));
+  }
+  if (['hero', 'infographic', 'audio_brief', 'audio_discussion'].includes(artifact.kind)) {
+    return Buffer.alloc(256, artifact.kind.charCodeAt(0));
+  }
+  return Buffer.from(JSON.stringify({ kind: artifact.kind }));
+}
+
+function storyMediaType(kind: string, original: string): string {
+  if (kind === 'hero' || kind === 'infographic') return 'image/webp';
+  if (kind === 'audio_brief' || kind === 'audio_discussion') return 'audio/mpeg';
+  return original;
+}
+
+function storyMediaProvenance(artifact: WorkflowArtifact, plan: NugletGenerationPlan): Record<string, unknown> {
+  const base = { byteSize: artifact.byteSize };
+  if (artifact.kind === 'hero') {
+    return {
+      ...base,
+      width: 1200,
+      height: 900,
+      focalPoint: { x: 0.5, y: 0.5 },
+      cropSafeArea: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 },
+      styleProfileChecksum: plan.recipes.hero.checksum,
+    };
+  }
+  if (artifact.kind === 'infographic') return { ...base, width: 1200, height: 900 };
+  return {
+    ...base,
+    durationSeconds: 60,
+    transcript: `${artifact.kind} transcript.`,
+    transcriptSource: 'notebooklm',
+    transcriptAudioChecksum: `sha256:${artifact.checksum}`,
+  };
+}
+
+async function recordStoryArtifact(input: {
+  repository: WorkflowRepository;
+  storage: ReadableStorage;
+  id: string;
+  kind: string;
+  storageKey: string;
+  action: string;
+  stage: NonNullable<WorkflowArtifact['stage']>;
+  mediaType: string;
+  body: unknown;
+  provenance?: Record<string, unknown>;
+}): Promise<void> {
+  const bytes = typeof input.body === 'string' ? Buffer.from(input.body) : Buffer.from(JSON.stringify(input.body));
+  input.storage.objects.set(input.storageKey, { body: bytes, mediaType: input.mediaType });
+  await input.repository.recordArtifact({
+    id: input.id,
+    runId,
+    revision: 1,
+    kind: input.kind,
+    mediaType: input.mediaType,
+    checksum: 'a'.repeat(64),
+    storageKey: input.storageKey,
+    byteSize: bytes.byteLength,
+    provenance: { action: input.action, provider: 'fixture', ...input.provenance },
+    inputChecksum: null,
+    jobId: `job-${input.id}`,
+    stage: input.stage,
+    action: input.action,
+  });
 }
 
 function generationProvenanceFixture(

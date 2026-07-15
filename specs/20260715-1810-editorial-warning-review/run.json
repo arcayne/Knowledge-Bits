@@ -49,6 +49,11 @@
     },
     {
       "phase": "red",
+      "command": "pnpm --filter @knowledge-bits/api exec tsx --test src/services/review-packages.test.ts",
+      "result": "Failed as expected before the ReviewPackageService scope repair: the legacy blocking editorial fixture was decision-allowed instead of returning a hard issue."
+    },
+    {
+      "phase": "red",
       "command": "pnpm --filter @knowledge-bits/review exec node --test src/review-browser.test.mjs",
       "result": "Failed as expected before the CSS change: the fixed decision area had no bounded warning height."
     },
@@ -65,7 +70,7 @@
     {
       "phase": "green",
       "command": "pnpm --filter @knowledge-bits/api exec tsx --test src/services/review-packages.test.ts",
-      "result": "Passed: 14 focused review-package tests."
+      "result": "Passed: 15 focused review-package tests, including materialized Story/Playbook warnings and legacy hard-block regressions."
     },
     {
       "phase": "green",
@@ -90,7 +95,7 @@
     {
       "phase": "green",
       "command": "pnpm --filter @knowledge-bits/api typecheck && pnpm --filter @knowledge-bits/api test",
-      "result": "Passed: typecheck and 113 tests."
+      "result": "Passed: typecheck and 114 tests."
     },
     {
       "phase": "green",
@@ -111,5 +116,5 @@
   "knownGaps": [
     "Validation ran with Node 26.5.0 while the package declares >=24 <25. pnpm emitted its engine warning, and the review build reported that Vercel will use Node 24."
   ],
-  "nextAction": "Repair committed on codex/nuglet-generation-v03."
+  "nextAction": "No further implementation action remains; this commit records the validated ReviewPackageService scope repair."
 }

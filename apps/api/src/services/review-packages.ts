@@ -65,23 +65,24 @@ export class ReviewPackageService {
       const qaArtifact = requiredParsedArtifact(packageArtifacts, 'check_content', 'QA');
       const qaOutput = await this.readJson(qaArtifact, 'QA');
       const qa = knowledgeBitsQaSchema.parse(qaOutput);
-      warnings = editorialWarnings(qa);
-      for (const kind of REVIEW_ASSET_KINDS) {
-        const artifact = latestArtifact(packageArtifacts, kind);
-        if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
-      }
       const evidenceArtifact = requiredParsedArtifact(packageArtifacts, 'collect_sources', 'evidence');
       const contentArtifact = requiredParsedArtifact(packageArtifacts, 'create_content', 'content');
       const contentOutput = await this.readJson(contentArtifact, 'content');
       const assembled = assembleContent(run.brief, contentOutput, packageArtifacts);
       const content = assembled.content;
       const generationExecutions = assembled.generationExecutions;
+      const editorialWarningsAllowed = isMaterializedStoryPlaybook(content.target);
+      warnings = editorialWarningsAllowed ? editorialWarnings(qa) : [];
+      for (const kind of REVIEW_ASSET_KINDS) {
+        const artifact = latestArtifact(packageArtifacts, kind);
+        if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
+      }
       const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
       const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, packageArtifacts, content.target.payload.claims);
       const artifactInventory = packageArtifacts.map(toArtifactReference);
       const approvalIssues = [
         ...mediaIssues,
-        ...qaApprovalIssues(qa, assembled.semanticChecksum),
+        ...qaApprovalIssues(qa, assembled.semanticChecksum, editorialWarningsAllowed),
         ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum),
       ];
       const packageChecksum = calculatePackageChecksum({
@@ -563,11 +564,26 @@ function normalizeEvidence(
   });
 }
 
-function qaApprovalIssues(qa: ReturnType<typeof knowledgeBitsQaSchema.parse>, contentChecksum: string): string[] {
+function qaApprovalIssues(
+  qa: ReturnType<typeof knowledgeBitsQaSchema.parse>,
+  contentChecksum: string,
+  editorialWarningsAllowed: boolean,
+): string[] {
   return [
     ...(!qa.deterministic.passed ? ['Deterministic QA did not pass'] : []),
     ...(qa.deterministic.contentChecksum !== contentChecksum ? ['Deterministic QA content checksum does not match learner content'] : []),
+    ...(!editorialWarningsAllowed && qa.editorial.findings.some((finding) => finding.blocking)
+      ? ['Editorial QA contains blocking findings']
+      : []),
   ];
+}
+
+function isMaterializedStoryPlaybook(target: Record<string, unknown>): boolean {
+  const payload = target.payload;
+  return target.kind === 'nuglet.lesson.v1'
+    && target.schemaVersion === '1.1.0'
+    && isRecord(payload)
+    && payload.materialization === 'materialized';
 }
 
 function editorialWarnings(qa: ReturnType<typeof knowledgeBitsQaSchema.parse>): string[] {

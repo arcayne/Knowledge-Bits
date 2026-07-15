@@ -347,7 +347,7 @@ test('automatic quality revision carries accepted evidence through package assem
   assert.equal((await approved.json()).reviewStatus, 'approved');
 });
 
-test('a successful editorial check with blocking findings queues asset production', async () => {
+test('a legacy editorial check with blocking findings queues asset production but blocks review approval', async () => {
   const { repository, storage } = createTestApp();
   const run = await repository.bootstrapRun({
     title: 'Editorial warning review',
@@ -392,10 +392,9 @@ test('a successful editorial check with blocking findings queues asset productio
   await completeClaim(repository, assets, 'asset-worker');
 
   const model = await new ReviewPackageService({ repository, storage }).load(run.id);
-  assert.equal(model.decisionAllowed, true);
-  assert.deepEqual(model.warnings, [
-    'Editorial warning: unsupported-claim: A claim needs a stronger source.',
-  ]);
+  assert.equal(model.decisionAllowed, false);
+  assert.match(model.issues.join(' '), /editorial/i);
+  assert.deepEqual(model.warnings, []);
 });
 
 test('only the run-level review endpoint is available', async () => {
