@@ -154,6 +154,44 @@ snapshots, and passes content to the local Pi and media adapters. Provider calls
 bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
 moves the affected stage to `needs_human`; production never falls back to fixture content.
 
+### Local supervisor
+
+Supabase is the durable workflow ledger. It does not run NotebookLM, Vertex, or local provider tools.
+On the Mac that has those provider sessions and credentials, install the local supervisor to keep the
+API available and run one worker claim every five minutes:
+
+```bash
+git clone git@github.com:arcayne/Knowledge-Bits.git ~/Developer/knowledge-bits
+cd ~/Developer/knowledge-bits
+KNOWLEDGE_BITS_ENV_FILE="/absolute/path/to/knowledge-bits/.env" \
+  scripts/local-supervisor/install-launchd.zsh
+```
+
+The runtime checkout must live outside macOS protected folders such as `Documents`, `Desktop`, and
+`Downloads`. `launchd` cannot reliably read provider scripts from those folders. A development checkout
+can still run a temporary clock from an interactive terminal, but that temporary process does not restart
+after a Mac restart.
+
+The API is restarted automatically if it exits. The worker is a one-shot process: each five-minute tick
+claims at most one eligible job and exits. A filesystem lock prevents overlapping ticks when a provider
+call takes longer than five minutes. Provider cooldowns remain in the Supabase ledger as `waiting` jobs;
+later ticks continue with other eligible work.
+
+The supervisor writes only local logs and local filesystem artifacts under the repository:
+
+```text
+.local-supervisor/api.log
+.local-supervisor/worker.log
+.local-artifacts/
+```
+
+To stop it later:
+
+```bash
+launchctl bootout "gui/$(id -u)/app.knowledge-bits.api"
+launchctl bootout "gui/$(id -u)/app.knowledge-bits.worker-tick"
+```
+
 Fixture mode reads committed provider responses from `WORKER_FIXTURE_DIRECTORY`. The clean proof
 starts a fresh PostgreSQL container, provisions a restricted runtime login, runs every stage, interrupts
 and reclaims a lease, authenticates the reviewer, approves once, and resumes delivery verification
