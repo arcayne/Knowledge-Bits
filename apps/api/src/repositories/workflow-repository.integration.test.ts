@@ -14,7 +14,7 @@ import {
   createWorkflowRepository,
   WorkflowConflictError,
 } from './workflow-repository.js';
-import { strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
+import { strictLegacyReplacementBrief, strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 
 const apiRoot = fileURLToPath(new URL('../../', import.meta.url));
 const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0;
@@ -195,6 +195,35 @@ test(
       revision: 2,
       kind: 'raw_response',
     }), true);
+    assert.equal(await repository.hasActiveArtifactLease({
+      workerId: 'audit-worker',
+      jobId: auditJob.id,
+      runId: auditRunId,
+      revision: 2,
+      kind: 'execution_report',
+    }), true);
+    assert.equal(await repository.hasActiveArtifactLease({
+      workerId: 'audit-worker',
+      jobId: auditJob.id,
+      runId: auditRunId,
+      revision: 2,
+      kind: 'generation.recipe.snapshot',
+    }), true);
+    const generationArtifact = await repository.recordArtifactForActiveLease({
+      workerId: 'audit-worker',
+      jobId: auditJob.id,
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      runId: auditRunId,
+      revision: 2,
+      kind: 'generation.execution.report',
+      mediaType: 'application/json',
+      checksum,
+      storageKey: 'integration/artifacts/generation-execution-report.json',
+      byteSize: 128,
+      provenance: { provider: 'integration' },
+      inputChecksum: checksum,
+    });
+    assert.equal(generationArtifact.kind, 'generation.execution.report');
     assert.equal(await repository.hasActiveArtifactLease({
       workerId: 'audit-worker',
       jobId: auditJob.id,
@@ -814,6 +843,74 @@ test(
     const ambiguous = applySql(containerName, 'ambiguous_deliveries', deliveryMigration, false);
     assert.notEqual(ambiguous.status, 0);
     assert.match(`${ambiguous.stdout}\n${ambiguous.stderr}`, /Ambiguous historical delivery package version match/);
+  },
+);
+
+test(
+  'Prisma prepares a guarded legacy revision without replacing immutable history',
+  { skip: dockerUnavailable ? 'Docker is unavailable; Prisma legacy revision proof requires OrbStack' : false, timeout: 120_000 },
+  async (t) => {
+    const containerName = `knowledge-bits-legacy-revision-${randomUUID()}`;
+    const databaseName = 'knowledge_bits_legacy_revision_test';
+    const databaseUrl = await startPostgres(containerName, databaseName);
+    t.after(() => removeContainer(containerName));
+    await deployMigrations(databaseUrl);
+    const runtimeDatabaseUrl = createRestrictedRuntimeLogin(containerName, databaseName, databaseUrl);
+    const prisma = createIsolatedPrismaClient({ ENGINE_DATABASE_URL: runtimeDatabaseUrl });
+    t.after(() => prisma.$disconnect());
+    const repository = createWorkflowRepository(prisma);
+    const runId = randomUUID();
+    const legacyPackage = strictPackageVersionInput(runId, 'legacy');
+    await repository.createRun({
+      id: runId,
+      title: 'Prisma legacy revision',
+      locale: 'en',
+      brief: { objective: 'Historical unreadable package', notebookLmNotebookId: 'notebook-fixture' },
+      notebookLmNotebookId: 'notebook-fixture',
+      currentStage: 'human_review',
+      packageChecksum: legacyPackage.packageChecksum,
+      stages: [{ name: 'human_review', state: 'needs_human' }],
+    });
+    const immutable = await repository.recordPackageVersion(legacyPackage);
+    const oldJob = await repository.queueJob({
+      runId,
+      stage: 'create',
+      action: 'create_content',
+      idempotencyKey: `legacy-old:${runId}`,
+      input: { brief: { objective: 'old' } },
+    });
+    await repository.claimJob({ workerId: 'legacy-worker', capabilities: ['create_content'], leaseSeconds: 60 });
+    const input = {
+      runId,
+      expectedRevision: 1,
+      expectedPackageChecksum: legacyPackage.packageChecksum,
+      notebookLmNotebookId: 'notebook-fixture',
+      brief: strictLegacyReplacementBrief(),
+      comment: 'Replace the unreadable legacy package with the validated baseline.',
+      operatorId: 'editor-1',
+    };
+    const prepared = await repository.prepareLegacyRevision(input);
+    const replay = await repository.prepareLegacyRevision(input);
+
+    assert.equal(prepared.run.currentRevision, 2);
+    assert.equal(prepared.run.notebookLmNotebookId, 'notebook-fixture');
+    assert.equal((await repository.getPackageVersion(runId, legacyPackage.packageChecksum))?.id, immutable.id);
+    assert.deepEqual(replay, prepared);
+    const persistedOldJob = await prisma.job.findUnique({ where: { id: oldJob.id } });
+    assert.equal(persistedOldJob?.state, 'superseded');
+    assert.equal(persistedOldJob?.leaseOwner, null);
+    assert.equal(persistedOldJob?.leaseExpiresAt, null);
+    assert.equal(persistedOldJob?.executionDeadlineAt, null);
+    assert.equal(await prisma.job.count({ where: { runId, stage: 'research', state: 'queued' } }), 1);
+    assert.equal(await prisma.job.count({ where: { runId, stage: 'human_review', state: 'queued' } }), 0);
+    const effect = await prisma.workflowEffect.findFirst({ where: { runId, type: 'prepare_legacy_revision' } });
+    assert.ok(effect);
+    assert.equal((effect.payload as { newRevision?: unknown }).newRevision, 2);
+    const serializedEffect = JSON.stringify(effect.payload);
+    assert.match(serializedEffect, /editor-1/);
+    assert.doesNotMatch(serializedEffect, /bytesBase64|Generate infographic-artifact/);
+    await assert.rejects(repository.prepareLegacyRevision({ ...input, expectedRevision: 2 }), /expected (revision|package checksum)/i);
+    await assert.rejects(repository.prepareLegacyRevision({ ...input, comment: 'Different comment.' }), /existing operation/i);
   },
 );
 

@@ -4,17 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.vercel.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.vercel.json",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/pipeline build && pnpm prisma:generate && tsx --test src/**/*.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "tsx scripts/migrate-local.ts",
     "prisma:migrate:production": "tsx scripts/migrate-production.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1085.0",
+    "@aws-sdk/s3-request-presigner": "^3.1085.0",
+    "@hono/node-server": "2.0.8",
     "@knowledge-bits/contracts": "workspace:*",
     "@knowledge-bits/pipeline": "workspace:*",
-    "@hono/node-server": "2.0.8",
     "@prisma/client": "6.15.0",
     "hono": "4.12.29",
     "zod": "3.24.1"

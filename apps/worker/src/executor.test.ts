@@ -20,6 +20,7 @@ import { FixtureProvider } from './providers/fixture.js';
 import { composeWorkerProviders, runProcess } from './runtime.js';
 import {
   ProviderNeedsHumanError,
+  ProviderWaitingError,
   type ProviderExecution,
   type WorkerProvider,
 } from './providers/types.js';
@@ -43,6 +44,26 @@ test('reports a provider wait without creating fallback artifacts', async () => 
   assert.equal(client.results[0]?.retryAt, retryAt);
   assert.equal(client.completedArtifacts.length, 0);
   assert.equal(client.uploadedArtifacts.length, 0);
+});
+
+test('reports a typed NotebookLM transport wait as a durable scheduler retry', async () => {
+  const client = new FakeEngineClient();
+  const provider: WorkerProvider = {
+    name: 'notebooklm',
+    capabilities: ['collect_sources'],
+    async execute() {
+      throw new ProviderWaitingError('notebooklm_transport_unavailable', retryAt);
+    },
+  };
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('research'));
+
+  assert.equal(client.results.length, 1);
+  assert.equal(client.results[0]?.result.state, 'waiting');
+  assert.equal(client.results[0]?.result.error, 'notebooklm_transport_unavailable');
+  assert.equal(client.results[0]?.retryAt, retryAt);
+  assert.equal(client.completedArtifacts.length, 0);
 });
 
 test('delegates delivery claims to the API delivery service without a worker provider', async () => {
@@ -98,6 +119,7 @@ test('reports malformed media provider configuration after claiming the job', as
   const client = new FakeEngineClient();
   const providers = composeWorkerProviders({
     env: {
+      PRODUCT_RECIPE_ROOTS: JSON.stringify({ 'nuglet.lesson.v1': process.cwd() }),
       MEDIA_GENERATION_COMMAND: 'media-provider',
       MEDIA_GENERATION_ARGS: '{',
     },
@@ -182,12 +204,69 @@ test('uploads raw response, parsed output, and execution report before a success
   assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
     'raw_response',
     'parsed_output',
-    'execution_report',
+    'generation.execution.report',
   ]);
   assert.equal(client.results.length, 1);
   assert.equal(client.results[0]?.result.state, 'done');
   assert.equal(client.events.at(-1), 'report:done');
   assert.match(client.results[0]?.result.outputChecksum ?? '', /^[a-f0-9]{64}$/);
+});
+
+test('persists warning-bearing editorial QA and provenance before completing check', async () => {
+  const client = new FakeEngineClient();
+  const recipeBody = Buffer.from('{"id":"nuglet.qa.editorial","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Review the candidate.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const checkJob = jobWithRecipePlan('check', { editorialQa: recipeBinding(provenance) });
+  const provider = providerFor('check_content', {
+    kind: 'success',
+    rawResponse: Buffer.from('{"summary":"Review before publishing."}\n'),
+    parsedOutput: {
+      deterministic: { passed: true, contentChecksum: 'a'.repeat(64), findings: [] },
+      editorial: {
+        summary: 'Review before publishing.',
+        findings: [{
+          code: 'unsupported-claim',
+          severity: 'major',
+          blocking: true,
+          message: 'This claim needs a stronger source.',
+        }],
+      },
+    },
+    executionReport: { provider: 'pi', promptVersion: 'nuglet.qa.editorial@1.0.0' },
+    supportArtifacts: [
+      {
+        kind: 'generation.recipe.snapshot',
+        mediaType: 'application/json',
+        body: recipeBody,
+        inputChecksum: null,
+        provenance,
+      },
+      {
+        kind: 'generation.prompt.rendered',
+        mediaType: 'text/plain',
+        body: promptBody,
+        inputChecksum: prefixedChecksum(recipeBody),
+        provenance,
+      },
+    ],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(checkJob);
+
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+    'raw_response',
+    'parsed_output',
+    'generation.execution.report',
+  ]);
+  const parsed = client.uploadedArtifacts.find(({ artifactId }) => (
+    client.completedArtifacts.find((artifact) => artifact.artifactId === artifactId)?.kind === 'parsed_output'
+  ));
+  assert.match(Buffer.from(parsed?.body ?? []).toString('utf8'), /unsupported-claim/);
+  assert.equal(client.results[0]?.result.state, 'done');
 });
 
 test('uploads generated media bytes with their media metadata and content checksum before audit artifacts', async () => {
@@ -215,7 +294,7 @@ test('uploads generated media bytes with their media metadata and content checks
     'audio',
     'raw_response',
     'parsed_output',
-    'execution_report',
+    'generation.execution.report',
   ]);
   assert.deepEqual(client.uploadedArtifacts.slice(0, 3).map(({ body }) => Buffer.from(body)), [hero, infographic, audio]);
   assert.deepEqual(client.completedArtifacts.slice(0, 3).map(({ mediaType }) => mediaType), [
@@ -246,9 +325,441 @@ test('uploads the audit artifact triplet before reporting a non-asset success', 
   assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
     'raw_response',
     'parsed_output',
-    'execution_report',
+    'generation.execution.report',
   ]);
   assert.equal(client.events.at(-1), 'report:done');
+});
+
+test('uploads immutable recipe and prompt support artifacts during a non-media stage', async () => {
+  const client = new FakeEngineClient();
+  const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Create the Story.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const claimedJob = jobWithRecipePlan('research', {
+    story: recipeBinding(provenance),
+  });
+  const provider = providerFor('collect_sources', {
+    ...successOutput(),
+    supportArtifacts: [
+      {
+        kind: 'generation.recipe.snapshot',
+        mediaType: 'application/json',
+        body: recipeBody,
+        inputChecksum: null,
+        provenance,
+      },
+      {
+        kind: 'generation.prompt.rendered',
+        mediaType: 'text/plain',
+        body: promptBody,
+        inputChecksum: prefixedChecksum(recipeBody),
+        provenance,
+      },
+    ],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(claimedJob);
+
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+    'raw_response',
+    'parsed_output',
+    'generation.execution.report',
+  ]);
+  for (const artifact of client.completedArtifacts.filter(({ kind }) => kind.startsWith('generation.'))) {
+    assert.deepEqual(
+      Object.keys(artifact.provenance).filter((key) => [
+        'recipeId', 'recipeVersion', 'recipeChecksum', 'promptChecksum',
+        'provider', 'model', 'attempt', 'referenceChecksums',
+      ].includes(key)).sort(),
+      ['attempt', 'model', 'promptChecksum', 'provider', 'recipeChecksum', 'recipeId', 'recipeVersion', 'referenceChecksums'],
+    );
+    assert.equal(artifact.provenance.action, 'collect_sources');
+    assert.equal(artifact.provenance.jobId, claimedJob.jobId);
+    assert.equal(artifact.provenance.provider, 'fixture-provider');
+    assert.equal(artifact.provenance.attempt, claimedJob.attempt);
+    assert.equal(artifact.provenance.idempotencyKey, operationIdempotencyKey(claimedJob, 'collect_sources'));
+  }
+});
+
+test('keeps generation support artifacts optional for current Nuglet jobs', async (context) => {
+  for (const supportArtifacts of [undefined, []] as const) {
+    await context.test(supportArtifacts === undefined ? 'omitted support artifacts' : 'empty support artifacts', async () => {
+      const client = new FakeEngineClient();
+      const provider = providerFor('collect_sources', {
+        ...successOutput(),
+        ...(supportArtifacts === undefined ? {} : { supportArtifacts }),
+      });
+      const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+      await executor.execute(nugletJob('research'));
+
+      assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+        'raw_response',
+        'parsed_output',
+        'generation.execution.report',
+      ]);
+      assert.equal(client.results[0]?.result.state, 'done');
+    });
+  }
+});
+
+test('accepts exactly one immutable artifact pair for each material recipe prompt execution', async () => {
+  const client = new FakeEngineClient();
+  const firstRecipe = Buffer.from('{"id":"nuglet.hero","version":"1.0.0"}\n');
+  const firstPrompt = Buffer.from('Create the hero.');
+  const secondRecipe = Buffer.from('{"id":"nuglet.visual.infographic","version":"1.0.0"}\n');
+  const secondPrompt = Buffer.from('Create the infographic.');
+  const pairs = [[firstRecipe, firstPrompt], [secondRecipe, secondPrompt]] as const;
+  const outputs = [
+    { kind: 'hero', body: Buffer.from('hero-output') },
+    { kind: 'infographic', body: Buffer.from('infographic-output') },
+  ] as const;
+  const provider = providerFor('produce_assets', {
+    ...successOutput(),
+    assets: outputs.map((output) => ({
+      ...output,
+      mediaType: 'image/webp',
+      inputChecksum: null,
+    })),
+    supportArtifacts: pairs.flatMap(([recipeBody, promptBody], index) => {
+      const output = outputs[index]!;
+      const provenance = {
+        ...generationProvenance(recipeBody, promptBody),
+        outputKind: output.kind,
+        outputChecksum: prefixedChecksum(output.body),
+      };
+      return [{
+        kind: 'generation.recipe.snapshot' as const,
+        mediaType: 'application/json' as const,
+        body: recipeBody,
+        inputChecksum: null,
+        provenance,
+      }, {
+        kind: 'generation.prompt.rendered' as const,
+        mediaType: 'text/plain' as const,
+        body: promptBody,
+        inputChecksum: checksum(recipeBody),
+        provenance,
+      }];
+    }),
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(nugletJob('produce_assets', {
+    hero: prefixedChecksum(firstRecipe),
+    infographic: prefixedChecksum(secondRecipe),
+  }));
+
+  assert.equal(client.results[0]?.result.state, 'done');
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+    'hero',
+    'infographic',
+    'raw_response',
+    'parsed_output',
+    'generation.execution.report',
+  ]);
+  const report = client.completedArtifacts.at(-1)?.provenance.generationExecutions;
+  assert.equal(Array.isArray(report) ? report.length : 0, 2);
+});
+
+test('rejects valid artifact bytes when their recipe identity is not bound to the claimed plan', async () => {
+  const client = new FakeEngineClient();
+  const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Create the Story.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const provider = providerFor('collect_sources', {
+    ...successOutput(),
+    supportArtifacts: [{
+      kind: 'generation.recipe.snapshot',
+      mediaType: 'application/json',
+      body: recipeBody,
+      inputChecksum: null,
+      provenance,
+    }, {
+      kind: 'generation.prompt.rendered',
+      mediaType: 'text/plain',
+      body: promptBody,
+      inputChecksum: checksum(recipeBody),
+      provenance,
+    }],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(nugletJob('research'));
+
+  assert.equal(client.completedArtifacts.length, 0);
+  assert.equal(client.results[0]?.result.error, 'generation_provenance_recipe_mismatch');
+});
+
+test('rejects recipe and prompt evidence when the job has no claimed generation plan', async () => {
+  const client = new FakeEngineClient();
+  const recipeBody = Buffer.from('{"id":"fixture.recipe","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Create the fixture.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const provider = providerFor('collect_sources', {
+    ...successOutput(),
+    supportArtifacts: [{
+      kind: 'generation.recipe.snapshot',
+      mediaType: 'application/json',
+      body: recipeBody,
+      inputChecksum: null,
+      provenance,
+    }, {
+      kind: 'generation.prompt.rendered',
+      mediaType: 'text/plain',
+      body: promptBody,
+      inputChecksum: prefixedChecksum(recipeBody),
+      provenance,
+    }],
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('research'));
+
+  assert.equal(client.completedArtifacts.length, 0);
+  assert.equal(client.results[0]?.result.state, 'needs_human');
+  assert.equal(client.results[0]?.result.error, 'generation_provenance_recipe_mismatch');
+});
+
+test('rejects missing, conflicting, and body-mismatched generation provenance before uploading artifacts', async (context) => {
+  const recipeBody = Buffer.from('{"id":"nuglet.lesson.story","version":"1.0.0"}\n');
+  const promptBody = Buffer.from('Create the Story.');
+  const provenance = generationProvenance(recipeBody, promptBody);
+  const cases: Array<{
+    name: string;
+    reason: string;
+    provenance: Readonly<Record<string, unknown>>;
+    promptProvenance?: Readonly<Record<string, unknown>>;
+  }> = [
+    {
+      name: 'missing reference checksums',
+      reason: 'generation_provenance_missing',
+      provenance: Object.fromEntries(Object.entries(provenance).filter(([key]) => key !== 'referenceChecksums')),
+    },
+    {
+      name: 'conflicting executor-bound provider',
+      reason: 'generation_provenance_conflict',
+      provenance: { ...provenance, provider: 'forged-provider' },
+    },
+    {
+      name: 'conflicting prompt provenance',
+      reason: 'generation_provenance_conflict',
+      provenance,
+      promptProvenance: { ...provenance, model: 'different-model' },
+    },
+    {
+      name: 'recipe checksum that does not match the recipe snapshot',
+      reason: 'generation_provenance_checksum_mismatch',
+      provenance: { ...provenance, recipeChecksum: `sha256:${'f'.repeat(64)}` },
+    },
+  ];
+
+  for (const scenario of cases) {
+    await context.test(scenario.name, async () => {
+      const client = new FakeEngineClient();
+      const provider = providerFor('collect_sources', {
+        ...successOutput(),
+        supportArtifacts: [
+          {
+            kind: 'generation.recipe.snapshot',
+            mediaType: 'application/json',
+            body: recipeBody,
+            inputChecksum: null,
+            provenance: scenario.provenance,
+          },
+          {
+            kind: 'generation.prompt.rendered',
+            mediaType: 'text/plain',
+            body: promptBody,
+            inputChecksum: prefixedChecksum(recipeBody),
+            provenance: scenario.promptProvenance ?? scenario.provenance,
+          },
+        ],
+      });
+      const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+      await executor.execute(jobWithRecipePlan('research', {
+        scenario: recipeBinding(scenario.provenance),
+      }));
+
+      assert.equal(client.completedArtifacts.length, 0);
+      assert.equal(client.results[0]?.result.state, 'needs_human');
+      assert.equal(client.results[0]?.result.error, scenario.reason);
+    });
+  }
+});
+
+test('keeps learner media stage-restricted while allowing research source snapshots', async () => {
+  const blockedClient = new FakeEngineClient();
+  const blockedProvider = providerFor('create_content', {
+    ...successOutput(),
+    assets: [{
+      kind: 'hero',
+      mediaType: 'image/webp',
+      body: Buffer.from('not-allowed'),
+      inputChecksum: null,
+    }],
+  });
+  const blockedExecutor = new WorkerExecutor({ client: blockedClient, providers: [blockedProvider], now: () => new Date(now) });
+
+  await blockedExecutor.execute(job('create'));
+
+  assert.equal(blockedClient.results[0]?.result.state, 'needs_human');
+  assert.equal(blockedClient.results[0]?.result.error, 'provider_assets_not_allowed_for_stage');
+  assert.equal(blockedClient.completedArtifacts.length, 0);
+
+  const researchClient = new FakeEngineClient();
+  const researchProvider = providerFor('collect_sources', {
+    ...successOutput(),
+    assets: [{
+      kind: 'source_snapshot',
+      mediaType: 'text/html',
+      body: Buffer.from('<main>source</main>'),
+      inputChecksum: null,
+    }],
+  });
+  const researchExecutor = new WorkerExecutor({ client: researchClient, providers: [researchProvider], now: () => new Date(now) });
+
+  await researchExecutor.execute(job('research'));
+
+  assert.equal(researchClient.completedArtifacts[0]?.kind, 'source_snapshot');
+  assert.equal(researchClient.results[0]?.result.state, 'done');
+});
+
+test('removes credentials, path fields, and embedded absolute paths from generation execution reports', async () => {
+  const secret = 'task-four-secret-value';
+  const credential = 'sk_live_task_four_credential';
+  const recipeBody = Buffer.from('{"id":"safe"}\n');
+  const promptBody = Buffer.from('safe prompt');
+  const previous = process.env.TASK_FOUR_SECRET;
+  process.env.TASK_FOUR_SECRET = secret;
+  try {
+    const client = new FakeEngineClient();
+    const provider = providerFor('collect_sources', {
+      ...successOutput(),
+      supportArtifacts: [{
+        kind: 'generation.recipe.snapshot',
+        mediaType: 'application/json',
+        body: recipeBody,
+        inputChecksum: null,
+        provenance: {
+          ...generationProvenance(recipeBody, promptBody),
+          secretToken: secret,
+          localPath: '/Users/private/recipes',
+          cwd: '/srv/knowledge-bits',
+          loadedFrom: '/opt/worker/config.json',
+          filename: '/workspace/recipe.json',
+        },
+      }, {
+        kind: 'generation.prompt.rendered',
+        mediaType: 'text/plain',
+        body: promptBody,
+        inputChecksum: prefixedChecksum(recipeBody),
+        provenance: generationProvenance(recipeBody, promptBody),
+      }],
+      executionReport: {
+        model: 'provider-model',
+        apiKey: secret,
+        nested: { authorization: `Bearer ${secret}` },
+        recipeRoot: '/Users/private/recipes',
+        cwd: '/srv/knowledge-bits',
+        loadedFrom: '/opt/worker/config.json',
+        filename: '/workspace/recipe.json',
+        error: [
+          `Could not load:/mnt/recipes/manifest.json with token=${credential}`,
+          'connect postgresql://worker:supersecret@db.internal/app',
+          'open `/srv/recipes/manifest.json` or </opt/worker/config.json>',
+          'open "/Users/name/My Project/private.json" or <C:\\Build Output\\private.json>',
+          "open '/srv/My Project/private.json' or `D:\\Build Output\\private.json`",
+        ].join('; '),
+        endpoint: [
+          `https://api.example.test/run?endpoint=${secret}`,
+          'https://api.example.test/run?token=query-credential-12345',
+          'https://api.example.test/run#access_token=fragment-credential-12345',
+          'https://worker:query-credential-12345@api.example.test/run',
+          'https://worker:ipv6-password@[2001:db8::1]/run',
+          'https://api.example.test/run?value=sk_live_query%5Fcredential_12345',
+          'https://api.example.test/run#value=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturepart',
+          'file:///Users/name/My%20Project/private.json',
+          'file:///Users/name/My (Secret Project) [draft]/private.json',
+          'plain /Users/Alice/My Secret [draft]/private.json',
+          'plain /Users/Alice/My (Secret) [draft]/private.json',
+          'open "\\\\server\\share\\My Project\\private.json"',
+          'open <\\\\?\\C:\\Build Output\\private.json>',
+          'open [\\\\server\\share\\My (Secret) [draft]\\private.json]',
+          'open <\\\\?\\C:\\Build Output\\My (Secret) [draft]\\private.json>',
+          'open "D:\\Build Output\\My (Secret) [draft]\\private.json"',
+          'open C:\\Build\\My(Secret)[draft]\\private.json',
+        ],
+        safeSetting: 'kept',
+      },
+    });
+    const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+    await executor.execute(jobWithRecipePlan('research', {
+      safe: recipeBinding(generationProvenance(recipeBody, promptBody)),
+    }));
+
+    const reportIndex = client.completedArtifacts.findIndex(({ kind }) => kind === 'generation.execution.report');
+    const report = Buffer.from(client.uploadedArtifacts[reportIndex]!.body).toString('utf8');
+    assert.equal(report.includes(secret), false);
+    assert.equal(report.includes('/Users/private/recipes'), false);
+    assert.equal(report.includes('apiKey'), false);
+    assert.equal(report.includes('authorization'), false);
+    assert.equal(report.includes('recipeRoot'), false);
+    assert.equal(report.includes('cwd'), false);
+    assert.equal(report.includes('loadedFrom'), false);
+    assert.equal(report.includes('filename'), false);
+    assert.equal(report.includes('/srv/knowledge-bits'), false);
+    assert.equal(report.includes('/opt/worker/config.json'), false);
+    assert.equal(report.includes('/workspace/recipe.json'), false);
+    assert.equal(report.includes('/mnt/recipes/manifest.json'), false);
+    assert.equal(report.includes('supersecret'), false);
+    assert.equal(report.includes('postgresql://worker:'), false);
+    assert.equal(report.includes('`/srv/recipes/manifest.json`'), false);
+    assert.equal(report.includes('</opt/worker/config.json>'), false);
+    assert.equal(report.includes('Project/private.json'), false);
+    assert.equal(report.includes('Output\\\\private.json'), false);
+    assert.equal(report.includes(credential), false);
+    assert.equal(report.includes('query-credential-12345'), false);
+    assert.equal(report.includes('fragment-credential-12345'), false);
+    assert.equal(report.includes('ipv6-password'), false);
+    assert.equal(report.includes('2001:db8::1'), false);
+    assert.equal(report.includes('sk_live_query%5Fcredential_12345'), false);
+    assert.equal(report.includes('sk_live_query_credential_12345'), false);
+    assert.equal(report.includes('eyJhbGciOiJIUzI1NiJ9'), false);
+    assert.equal(report.includes('My%20Project/private.json'), false);
+    assert.equal(report.includes('Secret Project'), false);
+    assert.equal(report.includes('server\\share\\My Project\\private.json'), false);
+    assert.equal(report.includes('Build Output\\private.json'), false);
+    assert.equal(report.includes('My (Secret) [draft]\\private.json'), false);
+    assert.equal(report.includes('Build\\My(Secret)[draft]\\private.json'), false);
+    assert.equal(report.includes('My Secret [draft]/private.json'), false);
+    assert.equal(report.includes('My (Secret) [draft]/private.json'), false);
+    assert.equal(report.includes('private.json'), false);
+    assert.match(report, /endpoint/);
+    assert.match(report, /safeSetting/);
+    const recipeProvenance = JSON.stringify(client.completedArtifacts.find(
+      ({ kind }) => kind === 'generation.recipe.snapshot',
+    )?.provenance);
+    assert.equal(recipeProvenance.includes(secret), false);
+    assert.equal(recipeProvenance.includes('/Users/private/recipes'), false);
+    assert.equal(recipeProvenance.includes('secretToken'), false);
+    assert.equal(recipeProvenance.includes('localPath'), false);
+    assert.equal(recipeProvenance.includes('cwd'), false);
+    assert.equal(recipeProvenance.includes('loadedFrom'), false);
+    assert.equal(recipeProvenance.includes('filename'), false);
+  } finally {
+    if (previous === undefined) delete process.env.TASK_FOUR_SECRET;
+    else process.env.TASK_FOUR_SECRET = previous;
+  }
 });
 
 test('uses the claimed revision for audit artifacts instead of an executor default', async () => {
@@ -398,6 +909,77 @@ function job(
   };
 }
 
+function nugletJob(
+  stage: JobClaim['stage'],
+  checksums: Partial<Record<
+    'story' | 'playbook' | 'challenge' | 'infographic' | 'audioBrief' | 'audioDiscussion' | 'hero' | 'editorialQa',
+    string
+  >> = {},
+): JobClaim {
+  const claimed = job(stage);
+  const recipe = (role: keyof typeof checksums, id: string) => ({
+    id,
+    version: '1.0.0',
+    checksum: checksums[role] ?? `sha256:${'a'.repeat(64)}`,
+  });
+  return {
+    ...claimed,
+    input: {
+      ...claimed.input,
+      brief: {
+        generationPlan: {
+          contentKind: 'nuglet.lesson.v1',
+          schemaVersion: '1.1.0',
+          recipes: {
+            story: recipe('story', 'nuglet.lesson.story'),
+            playbook: recipe('playbook', 'nuglet.lesson.playbook'),
+            challenge: recipe('challenge', 'nuglet.challenge'),
+            infographic: recipe('infographic', 'nuglet.visual.infographic'),
+            audioBrief: recipe('audioBrief', 'nuglet.audio.brief'),
+            audioDiscussion: recipe('audioDiscussion', 'nuglet.audio.discussion'),
+            hero: recipe('hero', 'nuglet.hero'),
+            editorialQa: recipe('editorialQa', 'nuglet.qa.editorial'),
+          },
+          heroDirection: {
+            concept: 'A clear path',
+            metaphor: 'One marked step',
+            compositionFamily: 'asymmetrical-story',
+            mustInclude: ['one focal object'],
+            mustAvoid: ['rigid symmetry'],
+          },
+        },
+      },
+    },
+  };
+}
+
+function jobWithRecipePlan(
+  stage: JobClaim['stage'],
+  recipes: Readonly<Record<string, { id: string; version: string; checksum: string }>>,
+): JobClaim {
+  const claimed = job(stage);
+  return {
+    ...claimed,
+    input: {
+      ...claimed.input,
+      brief: {
+        generationPlan: {
+          contentKind: 'fixture.generic.v1',
+          recipes,
+        },
+      },
+    },
+  };
+}
+
+function recipeBinding(provenance: Readonly<Record<string, unknown>>): { id: string; version: string; checksum: string } {
+  return {
+    id: String(provenance.recipeId),
+    version: String(provenance.recipeVersion),
+    checksum: String(provenance.recipeChecksum),
+  };
+}
+
 function successOutput(): Extract<ProviderExecution, { kind: 'success' }> {
   return {
     kind: 'success',
@@ -527,4 +1109,20 @@ function deferred<T>() {
 
 function checksum(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function prefixedChecksum(bytes: Uint8Array): string {
+  return `sha256:${checksum(bytes)}`;
+}
+
+function generationProvenance(recipeBody: Uint8Array, promptBody: Uint8Array) {
+  const recipe = JSON.parse(Buffer.from(recipeBody).toString('utf8')) as { id?: unknown; version?: unknown };
+  return {
+    recipeId: typeof recipe.id === 'string' ? recipe.id : 'nuglet.lesson.story',
+    recipeVersion: typeof recipe.version === 'string' ? recipe.version : '1.0.0',
+    recipeChecksum: prefixedChecksum(recipeBody),
+    promptChecksum: prefixedChecksum(promptBody),
+    model: 'fixture-model',
+    referenceChecksums: ['sha256:'.concat('b'.repeat(64))],
+  };
 }

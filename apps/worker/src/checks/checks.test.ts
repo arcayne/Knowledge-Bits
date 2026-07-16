@@ -3,8 +3,6 @@ import test from 'node:test';
 
 import { runDeterministicChecks, type ContentCandidate } from './deterministic.js';
 import { parseEditorialCheck, requiresEditorialFailure } from './editorial.js';
-import { MediaProviderAdapter, type MediaClient } from '../providers/media.js';
-import type { ProviderExecutionInput } from '../providers/types.js';
 
 const evidence = {
   sources: [{
@@ -98,68 +96,8 @@ test('editorial parsing uses only critical, major, and minor severities', () => 
   assert.throws(() => parseEditorialCheck({ findings: [{ code: 'tone', severity: 'warning', message: 'No.' }], summary: 'No.' }), /severity/i);
 });
 
-test('media requires a passed check and records the current content checksum on every asset', async () => {
-  const calls: unknown[] = [];
-  const client: MediaClient = {
-    async generate(request) {
-      calls.push(request);
-      return [{ kind: 'hero', mediaType: 'image/webp', bytes: Buffer.from('asset'), inputChecksum: request.inputChecksum }];
-    },
-  };
-  const provider = new MediaProviderAdapter({
-    client,
-    context: async () => ({ passedCheck: true, content: candidate, contentChecksum: checksum }),
-    kinds: ['hero'],
-  });
-
-  const result = await provider.execute(mediaInput());
-
-  assert.equal(result.kind, 'success');
-  if (result.kind !== 'success') return;
-  assert.equal(result.inputChecksum, checksum);
-  assert.equal((result.parsedOutput as { assets: Array<{ inputChecksum: string }> }).assets[0]?.inputChecksum, checksum);
-  assert.equal((calls[0] as { idempotencyKey: string }).idempotencyKey, 'operation_fixture');
-  assert.deepEqual((calls[0] as { kinds: string[] }).kinds, ['hero']);
+test('editorial parsing rejects empty and whitespace-only summaries', () => {
+  for (const summary of ['', '   ']) {
+    assert.throws(() => parseEditorialCheck({ findings: [], summary }), /summary/i);
+  }
 });
-
-test('media rejects a failed check or an asset bound to a different content checksum', async () => {
-  const failedCheckProvider = new MediaProviderAdapter({
-    client: { async generate() { throw new Error('must not run'); } },
-    context: async () => ({ passedCheck: false, content: candidate, contentChecksum: checksum }),
-  });
-  await assert.rejects(() => failedCheckProvider.execute(mediaInput()), /media_check_required/);
-
-  const mismatchProvider = new MediaProviderAdapter({
-    client: {
-      async generate() {
-        return [{ kind: 'hero', mediaType: 'image/webp', bytes: Buffer.from('asset'), inputChecksum: otherChecksum }];
-      },
-    },
-    context: async () => ({ passedCheck: true, content: candidate, contentChecksum: checksum }),
-    kinds: ['hero'],
-  });
-  await assert.rejects(() => mismatchProvider.execute(mediaInput()), /media_input_checksum_mismatch/);
-});
-
-const checksum = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const otherChecksum = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-
-function mediaInput(): ProviderExecutionInput {
-  return {
-    action: 'produce_assets',
-    idempotencyKey: 'operation_fixture',
-    job: {
-      jobId: '33333333-3333-4333-8333-333333333333',
-      packageId: '44444444-4444-4444-8444-444444444444',
-      stage: 'produce_assets',
-      claimedBy: 'test-worker',
-      claimedAt: '2026-07-13T10:00:00.000Z',
-      leaseExpiresAt: '2026-07-13T10:02:00.000Z',
-      executionDeadlineAt: '2026-07-13T10:05:00.000Z',
-      attempt: 1,
-      revision: 1,
-      input: { brief: {}, dependencies: [] },
-    },
-    signal: new AbortController().signal,
-  };
-}

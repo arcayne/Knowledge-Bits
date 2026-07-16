@@ -26,3 +26,8 @@ export async function forwardReviewRequest({ apiUrl, token, reviewerId, path, in
     return Response.json({ error: 'The review service is unavailable' }, { status: 503 });
   }
 }
+
+export function runtimeEnvironment(importMetaEnv, key) {
+  const value = importMetaEnv?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : process.env[key]?.trim();
+}

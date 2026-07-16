@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { nugletGenerationPlanSchema } from '@knowledge-bits/contracts';
+import { calculateNugletGenerationInputChecksum } from '@knowledge-bits/pipeline';
+
 import {
   type ProviderBinaryAsset,
   type ProviderExecution,
@@ -19,6 +22,11 @@ const FIXTURE_FILE_BY_ACTION: Readonly<Record<WorkerAction, string>> = {
   deliver_package: 'deliver-package.json',
 };
 
+const SCHEMA_1_1_FIXTURE_FILE_BY_ACTION: Partial<Record<WorkerAction, string>> = {
+  create_content: 'create-content-story-playbook.json',
+  produce_assets: 'produce-assets-dual-audio.json',
+};
+
 export class FixtureProvider implements WorkerProvider {
   readonly name = 'fixture';
   readonly capabilities = Object.keys(FIXTURE_FILE_BY_ACTION) as WorkerAction[];
@@ -29,11 +37,12 @@ export class FixtureProvider implements WorkerProvider {
   }
 
   async execute(input: ProviderExecutionInput): Promise<ProviderExecution> {
-    const fixtureName = FIXTURE_FILE_BY_ACTION[input.action];
+    const fixtureName = fixtureFileFor(input);
     const rawResponse = await readFile(new URL(fixtureName, this.fixtureDirectory));
     const fixture = JSON.parse(rawResponse.toString('utf8')) as unknown;
     const fixtureChecksum = createHash('sha256').update(rawResponse).digest('hex');
-    const parsed = parseFixture(fixture, input.job);
+    const fixtureValues = await resolveFixtureValues(input, this.fixtureDirectory);
+    const parsed = parseFixture(fixture, input.job, fixtureValues);
 
     return {
       kind: 'success',
@@ -46,8 +55,41 @@ export class FixtureProvider implements WorkerProvider {
         provider: this.name,
       },
       ...(parsed.assets ? { assets: parsed.assets } : {}),
+      ...(parsed.supportArtifacts ? { supportArtifacts: parsed.supportArtifacts } : {}),
     };
   }
+}
+
+async function resolveFixtureValues(
+  input: ProviderExecutionInput,
+  fixtureDirectory: URL,
+): Promise<{ generationInputChecksum?: string }> {
+  if (input.action !== 'produce_assets') return {};
+  const brief = input.job.input.brief;
+  const generationPlan = isRecord(brief) ? brief.generationPlan : undefined;
+  if (!isRecord(generationPlan) || generationPlan.schemaVersion !== '1.1.0') return {};
+  const rawContent = await readFile(new URL('create-content-story-playbook.json', fixtureDirectory));
+  const contentFixture: unknown = JSON.parse(rawContent.toString('utf8'));
+  if (!isRecord(contentFixture) || !('parsedOutput' in contentFixture)) {
+    throw new TypeError('Schema 1.1.0 content fixture is invalid');
+  }
+  const semanticTarget = resolveFixturePlaceholders(contentFixture.parsedOutput, input.job, {});
+  return {
+    generationInputChecksum: calculateNugletGenerationInputChecksum({
+      semanticTarget,
+      generationPlan: nugletGenerationPlanSchema.parse(generationPlan),
+    }),
+  };
+}
+
+function fixtureFileFor(input: ProviderExecutionInput): string {
+  const brief = input.job.input.brief;
+  const generationPlan = isRecord(brief) && isRecord(brief.generationPlan)
+    ? brief.generationPlan
+    : undefined;
+  return generationPlan?.schemaVersion === '1.1.0'
+    ? SCHEMA_1_1_FIXTURE_FILE_BY_ACTION[input.action] ?? FIXTURE_FILE_BY_ACTION[input.action]
+    : FIXTURE_FILE_BY_ACTION[input.action];
 }
 
 function fixtureDirectoryUrl(directory: string | URL | undefined): URL {
@@ -60,53 +102,130 @@ function trailingSlashUrl(url: URL): URL {
   return url.href.endsWith('/') ? url : new URL(`${url.href}/`);
 }
 
-function parseFixture(value: unknown, job: ProviderExecutionInput['job']): {
+function parseFixture(
+  value: unknown,
+  job: ProviderExecutionInput['job'],
+  fixtureValues: { generationInputChecksum?: string },
+): {
   parsedOutput: unknown;
   assets?: ProviderBinaryAsset[];
+  supportArtifacts?: Array<{
+    kind: 'generation.recipe.snapshot' | 'generation.prompt.rendered' | 'generation.execution.report';
+    mediaType: 'application/json' | 'text/plain';
+    body: Uint8Array;
+    inputChecksum: string | null;
+    provenance: Readonly<Record<string, unknown>>;
+  }>;
 } {
   if (!isRecord(value) || value.fixtureSchemaVersion !== 'knowledge-bits.fixture-provider.v1') {
-    return { parsedOutput: resolveFixturePlaceholders(value, job) };
+    return { parsedOutput: resolveFixturePlaceholders(value, job, fixtureValues) };
   }
   if (!('parsedOutput' in value)) throw new TypeError('Fixture provider envelope requires parsedOutput');
-  if (value.assets === undefined) {
-    return { parsedOutput: resolveFixturePlaceholders(value.parsedOutput, job) };
+  if (value.assets !== undefined && !Array.isArray(value.assets)) {
+    throw new TypeError('Fixture provider assets must be an array');
   }
-  if (!Array.isArray(value.assets)) throw new TypeError('Fixture provider assets must be an array');
+  if (value.supportArtifacts !== undefined && !Array.isArray(value.supportArtifacts)) {
+    throw new TypeError('Fixture provider supportArtifacts must be an array');
+  }
 
   return {
-    parsedOutput: resolveFixturePlaceholders(value.parsedOutput, job),
-    assets: value.assets.map((asset) => {
-      if (!isRecord(asset)
-        || typeof asset.kind !== 'string'
-        || !asset.kind.trim()
-        || typeof asset.mediaType !== 'string'
-        || !asset.mediaType.trim()
-        || typeof asset.bodyBase64 !== 'string'
-        || !(asset.inputChecksum === null || typeof asset.inputChecksum === 'string')
-        || (typeof asset.inputChecksum === 'string'
-          && asset.inputChecksum !== '$contentChecksum'
-          && !/^[a-f0-9]{64}$/.test(asset.inputChecksum))
-        || (asset.provenance !== undefined && !isRecord(asset.provenance))) {
-        throw new TypeError('Fixture provider asset is invalid');
-      }
-      const body = Buffer.from(asset.bodyBase64, 'base64');
-      if (!body.byteLength) throw new TypeError('Fixture provider asset body is empty');
-      return {
-        kind: asset.kind,
-        mediaType: asset.mediaType,
-        body,
-        inputChecksum: asset.inputChecksum === '$contentChecksum'
-          ? contentChecksumDependency(job)
-          : asset.inputChecksum,
-        ...(asset.provenance ? { provenance: asset.provenance } : {}),
-      };
-    }),
+    parsedOutput: resolveFixturePlaceholders(value.parsedOutput, job, fixtureValues),
+    ...(value.assets ? { assets: value.assets.map((asset) => parseBinaryAsset(asset, job, fixtureValues)) } : {}),
+    ...(value.supportArtifacts ? {
+      supportArtifacts: value.supportArtifacts.map((artifact) => parseSupportArtifact(artifact, job, fixtureValues)),
+    } : {}),
   };
 }
 
-function resolveFixturePlaceholders(value: unknown, job: ProviderExecutionInput['job']): unknown {
+function parseBinaryAsset(
+  value: unknown,
+  job: ProviderExecutionInput['job'],
+  fixtureValues: { generationInputChecksum?: string },
+): ProviderBinaryAsset {
+  if (!isRecord(value)
+    || typeof value.kind !== 'string'
+    || !value.kind.trim()
+    || typeof value.mediaType !== 'string'
+    || !value.mediaType.trim()
+    || typeof value.bodyBase64 !== 'string'
+    || !validInputChecksum(value.inputChecksum)
+    || (value.provenance !== undefined && !isRecord(value.provenance))) {
+    throw new TypeError('Fixture provider asset is invalid');
+  }
+  return {
+    kind: value.kind,
+    mediaType: value.mediaType,
+    body: requiredBody(value.bodyBase64, 'asset'),
+    inputChecksum: resolvedInputChecksum(value.inputChecksum, job, fixtureValues),
+    ...(value.provenance ? {
+      provenance: resolveFixturePlaceholders(value.provenance, job, fixtureValues) as Record<string, unknown>,
+    } : {}),
+  };
+}
+
+function parseSupportArtifact(
+  value: unknown,
+  job: ProviderExecutionInput['job'],
+  fixtureValues: { generationInputChecksum?: string },
+) {
+  if (!isRecord(value)
+    || !['generation.recipe.snapshot', 'generation.prompt.rendered', 'generation.execution.report'].includes(String(value.kind))
+    || !['application/json', 'text/plain'].includes(String(value.mediaType))
+    || typeof value.bodyBase64 !== 'string'
+    || !validInputChecksum(value.inputChecksum)
+    || !isRecord(value.provenance)) {
+    throw new TypeError('Fixture provider support artifact is invalid');
+  }
+  return {
+    kind: value.kind as 'generation.recipe.snapshot' | 'generation.prompt.rendered' | 'generation.execution.report',
+    mediaType: value.mediaType as 'application/json' | 'text/plain',
+    body: requiredBody(value.bodyBase64, 'support artifact'),
+    inputChecksum: resolvedInputChecksum(value.inputChecksum, job, fixtureValues),
+    provenance: resolveFixturePlaceholders(value.provenance, job, fixtureValues) as Record<string, unknown>,
+  };
+}
+
+function validInputChecksum(value: unknown): value is string | null {
+  return value === null
+    || value === '$contentChecksum'
+    || value === '$generationInputChecksum'
+    || (typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
+}
+
+function resolvedInputChecksum(
+  value: string | null,
+  job: ProviderExecutionInput['job'],
+  fixtureValues: { generationInputChecksum?: string },
+): string | null {
+  if (value === '$contentChecksum') return contentChecksumDependency(job);
+  if (value === '$generationInputChecksum') {
+    if (!fixtureValues.generationInputChecksum) {
+      throw new TypeError('Fixture provider cannot resolve the generation input checksum');
+    }
+    return fixtureValues.generationInputChecksum;
+  }
+  return value;
+}
+
+function requiredBody(value: string, label: string): Uint8Array {
+  const body = Buffer.from(value, 'base64');
+  if (!body.byteLength) throw new TypeError(`Fixture provider ${label} body is empty`);
+  return body;
+}
+
+function resolveFixturePlaceholders(
+  value: unknown,
+  job: ProviderExecutionInput['job'],
+  fixtureValues: { generationInputChecksum?: string },
+): unknown {
   if (typeof value === 'string') {
     if (value === '$contentChecksum') return contentChecksumDependency(job);
+    if (value === '$generationInputChecksum') {
+      if (!fixtureValues.generationInputChecksum) {
+        throw new TypeError('Fixture provider cannot resolve the generation input checksum');
+      }
+      return fixtureValues.generationInputChecksum;
+    }
     const prefix = '$snapshotArtifactId:';
     if (value.startsWith(prefix)) {
       const sourceId = value.slice(prefix.length);
@@ -118,11 +237,11 @@ function resolveFixturePlaceholders(value: unknown, job: ProviderExecutionInput[
     }
     return value;
   }
-  if (Array.isArray(value)) return value.map((item) => resolveFixturePlaceholders(item, job));
+  if (Array.isArray(value)) return value.map((item) => resolveFixturePlaceholders(item, job, fixtureValues));
   if (isRecord(value)) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [
       key,
-      resolveFixturePlaceholders(item, job),
+      resolveFixturePlaceholders(item, job, fixtureValues),
     ]));
   }
   return value;

@@ -48,6 +48,19 @@ test('fails closed for missing identity configuration, missing tokens, and unaut
   );
 });
 
+test('accepts an explicit local operator only when the caller enables local mode', async () => {
+  const env = { REVIEW_LOCAL_OPERATOR_ID: 'local-reviewer' };
+  const request = new Request('http://127.0.0.1:4321/runs/local');
+
+  const principal = await authenticateOperator(request, env, { allowLocalOperator: true });
+  assert.deepEqual(principal, { reviewerId: 'local-reviewer' });
+
+  await assert.rejects(
+    authenticateOperator(request, env, { allowLocalOperator: false }),
+    (error) => error instanceof Error && 'status' in error && error.status === 503,
+  );
+});
+
 test('requires exact origin and CSRF token binding for review mutations', () => {
   const token = createCsrfToken();
   const valid = new Request('https://review.example.test/api/review', {

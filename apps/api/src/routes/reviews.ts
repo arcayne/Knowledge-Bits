@@ -1,4 +1,6 @@
 import {
+  prepareLegacyRevisionRequestSchema,
+  prepareLegacyRevisionResponseSchema,
   reviewRunRequestSchema,
   reviewRunResponseSchema,
 } from '@knowledge-bits/contracts';
@@ -11,6 +13,7 @@ import {
   WorkflowConflictError,
   WorkflowNotFoundError,
   WorkflowValidationError,
+  type WorkflowRun,
   type WorkflowRepository,
 } from '../repositories/workflow-repository.js';
 import {
@@ -59,6 +62,22 @@ export function registerReviewRoutes(
     }
   });
 
+  app.post('/runs/:id/retry', async (context) => {
+    const principal = requireReviewPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    try {
+      return context.json(await dependencies.repository.retryStage({
+        runId: context.req.param('id'),
+        stage: await currentRetryableStage(dependencies.repository, context.req.param('id')),
+      }));
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
+      throw error;
+    }
+  });
+
   app.post('/runs/:id/review', async (context) => {
     const principal = requireReviewPrincipal(context, dependencies.auth);
     if (principal instanceof Response) return principal;
@@ -98,6 +117,51 @@ export function registerReviewRoutes(
       throw error;
     }
   });
+
+  app.post('/runs/:id/prepare-legacy-revision', async (context) => {
+    const principal = requireReviewPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const input = prepareLegacyRevisionRequestSchema.safeParse(await readJson(context.req.raw));
+    if (!input.success) return context.json({ error: 'Invalid legacy revision preparation input' }, 400);
+    try {
+      const prepared = await dependencies.repository.prepareLegacyRevision({
+        runId: context.req.param('id'),
+        operatorId: principal,
+        ...input.data,
+      });
+      return context.json(prepareLegacyRevisionResponseSchema.parse({
+        ...prepared,
+        run: toRunResponse(prepared.run),
+      }));
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
+      throw error;
+    }
+  });
+}
+
+function toRunResponse(run: WorkflowRun) {
+  return {
+    ...run,
+    notebookLmNotebookId: run.notebookLmNotebookId ?? null,
+    nextRetryAt: run.nextRetryAt?.toISOString() ?? null,
+    createdAt: run.createdAt.toISOString(),
+    updatedAt: run.updatedAt.toISOString(),
+  };
+}
+
+async function currentRetryableStage(
+  repository: WorkflowRepository,
+  runId: string,
+): Promise<Exclude<WorkflowRun['currentStage'], 'human_review' | 'deliver'>> {
+  const run = await repository.getRun(runId);
+  if (!run) throw new WorkflowNotFoundError('Run not found');
+  if (run.currentStage === 'human_review' || run.currentStage === 'deliver') {
+    throw new WorkflowConflictError('Only an automated stage can be retried');
+  }
+  return run.currentStage;
 }
 
 async function readJson(request: Request): Promise<unknown> {

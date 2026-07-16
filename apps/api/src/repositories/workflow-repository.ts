@@ -13,6 +13,7 @@ import type {
   StageState,
   WorkflowStage,
 } from '@knowledge-bits/contracts';
+import { knowledgeBitsRunBriefSchema, nugletGenerationPlanSchema } from '@knowledge-bits/contracts';
 import {
   calculatePackageChecksum,
   nextTransition,
@@ -36,13 +37,21 @@ const ACTION_BY_STAGE: Readonly<Record<Exclude<WorkflowStage, 'human_review'>, s
   produce_assets: 'produce_assets',
   deliver: 'deliver_package',
 };
-const AUDIT_ARTIFACT_KINDS = new Set(['raw_response', 'parsed_output', 'execution_report']);
+const AUDIT_ARTIFACT_KINDS = new Set([
+  'raw_response',
+  'parsed_output',
+  'execution_report',
+  'generation.recipe.snapshot',
+  'generation.prompt.rendered',
+  'generation.execution.report',
+]);
 
 export interface WorkflowRun {
   id: string;
   title: string;
   locale: string;
   brief: JsonObject;
+  notebookLmNotebookId?: string;
   currentStage: WorkflowStage;
   currentRevision: number;
   packageChecksum: string | null;
@@ -145,6 +154,7 @@ export interface CreateRunInput {
   title: string;
   locale: string;
   brief: JsonObject;
+  notebookLmNotebookId?: string;
   currentStage?: WorkflowStage;
   currentRevision?: number;
   packageChecksum?: string | null;
@@ -203,6 +213,7 @@ export interface BootstrapRunInput {
   title: string;
   locale: string;
   brief: JsonObject;
+  notebookLmNotebookId?: string;
 }
 
 export interface WorkflowJobContext {
@@ -308,6 +319,27 @@ export interface RetryDeliveryResult {
   nextAttempt: number;
 }
 
+export interface RetryStageInput {
+  runId: string;
+  stage: Exclude<WorkflowStage, 'human_review' | 'deliver'>;
+}
+
+export interface PrepareLegacyRevisionInput {
+  runId: string;
+  expectedRevision: number;
+  expectedPackageChecksum: string;
+  notebookLmNotebookId: string;
+  brief: JsonObject;
+  comment: string;
+  operatorId: string;
+}
+
+export interface PrepareLegacyRevisionResult {
+  run: WorkflowRun;
+  previousRevision: number;
+  previousPackageChecksum: string;
+}
+
 export interface WorkflowStore {
   createRun(input: CreateRunInput): Promise<WorkflowRun>;
   bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun>;
@@ -335,6 +367,8 @@ export interface WorkflowStore {
   recordDelivery(input: RecordDeliveryInput): Promise<WorkflowDelivery>;
   transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery>;
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
+  retryStage(input: RetryStageInput): Promise<WorkflowRun>;
+  prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
   recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion>;
@@ -451,6 +485,14 @@ export class WorkflowRepository implements WorkflowStore {
     return this.store.retryDelivery(deliveryId);
   }
 
+  retryStage(input: RetryStageInput): Promise<WorkflowRun> {
+    return this.store.retryStage(input);
+  }
+
+  prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
+    return this.store.prepareLegacyRevision(input);
+  }
+
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
     return this.store.reviewRun(input);
   }
@@ -491,6 +533,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
         title: input.title,
         locale: input.locale,
         brief: toPrismaJson(input.brief),
+        notebookLmNotebookId: input.notebookLmNotebookId,
           currentStage,
           currentRevision: input.currentRevision ?? 1,
           packageChecksum: input.packageChecksum,
@@ -514,12 +557,22 @@ export class PrismaWorkflowStore implements WorkflowStore {
 
   async bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun> {
     return this.prisma.$transaction(async (transaction) => {
+      if (input.notebookLmNotebookId) {
+        const existing = await transaction.run.findUnique({
+          where: { notebookLmNotebookId: input.notebookLmNotebookId },
+          select: { id: true },
+        });
+        if (existing && existing.id !== input.id) {
+          throw new WorkflowConflictError(`NotebookLM notebook ${input.notebookLmNotebookId} is already assigned to run ${existing.id}`);
+        }
+      }
       const run = await transaction.run.create({
         data: {
           id: input.id,
           title: input.title,
           locale: input.locale,
           brief: toPrismaJson(input.brief),
+          notebookLmNotebookId: input.notebookLmNotebookId,
           currentStage: 'research',
           reviewStatus: 'pending',
           stages: {
@@ -535,7 +588,10 @@ export class PrismaWorkflowStore implements WorkflowStore {
           action: ACTION_BY_STAGE.research,
           state: 'queued',
           idempotencyKey: initialJobIdempotencyKey(run.id),
-          input: toPrismaJson({ brief: input.brief }),
+          input: toPrismaJson({
+            brief: input.brief,
+            ...(input.notebookLmNotebookId ? { notebookLmNotebookId: input.notebookLmNotebookId } : {}),
+          }),
         },
       });
       return toWorkflowRun(run);
@@ -664,6 +720,137 @@ export class PrismaWorkflowStore implements WorkflowStore {
     return toWorkflowJob(job);
   }
 
+  async retryStage(input: RetryStageInput): Promise<WorkflowRun> {
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
+      const run = await transaction.run.findUnique({ where: { id: input.runId }, include: { stages: true } });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      if (run.currentStage !== input.stage) throw new WorkflowConflictError('Only the current stage can be retried');
+      const stage = run.stages.find((candidate) => candidate.name === input.stage);
+      if (!stage || stage.state !== 'needs_human') {
+        throw new WorkflowConflictError('Only a stage needing human intervention can be retried');
+      }
+      const previousJob = await transaction.job.findFirst({
+        where: { runId: input.runId, stage: input.stage, state: 'needs_human' },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (!previousJob) throw new WorkflowConflictError('No completed worker action is available to retry');
+      const now = new Date();
+      await transaction.job.create({
+        data: {
+          id: randomUUID(),
+          runId: input.runId,
+          stage: input.stage,
+          action: previousJob.action,
+          state: 'queued',
+          idempotencyKey: `workflow:${input.runId}:${input.stage}:manual-retry:${randomUUID()}`,
+          availableAt: now,
+          input: toPrismaJson({
+            ...(previousJob.input as unknown as JsonObject),
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+          }),
+        },
+      });
+      await transaction.stage.update({
+        where: { runId_name: { runId: input.runId, name: input.stage } },
+        data: { state: 'queued', reason: null },
+      });
+      return toWorkflowRun(await transaction.run.findUniqueOrThrow({
+        where: { id: input.runId },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      }));
+    });
+  }
+
+  async prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
+    assertStrictLegacyReplacement(input);
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
+      const run = await transaction.run.findUnique({
+        where: { id: input.runId },
+        include: { stages: true },
+      });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      const operation = legacyRevisionOperation(input);
+      const existingEffect = await transaction.workflowEffect.findUnique({ where: { effectKey: operation.effectKey } });
+      if (existingEffect) {
+        assertLegacyRevisionReplay(existingEffect.payload, operation.payload);
+        if (run.currentRevision !== input.expectedRevision + 1
+          || run.currentStage !== 'research'
+          || run.packageChecksum !== null
+          || run.approvedChecksum !== null
+          || run.reviewStatus !== 'pending'
+          || legacyBriefChecksum(run.brief as JsonObject) !== operation.replacementBriefChecksum) {
+          throw new WorkflowConflictError('Legacy revision preparation replay does not match the prepared run');
+        }
+        return {
+          run: toWorkflowRun(run),
+          previousRevision: input.expectedRevision,
+          previousPackageChecksum: input.expectedPackageChecksum,
+        };
+      }
+      assertLegacyRevisionFence(run, input);
+      const nextRevision = run.currentRevision + 1;
+      const now = new Date();
+      await transaction.job.updateMany({
+        where: { runId: run.id, state: { in: ['queued', 'running'] } },
+        data: {
+          state: 'superseded',
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          executionDeadlineAt: null,
+        },
+      });
+      for (const stage of WORKFLOW_STAGES) {
+        await transaction.stage.upsert({
+          where: { runId_name: { runId: run.id, name: stage } },
+          update: { state: 'queued', reason: null, attempt: 0, revisionAttempt: 0 },
+          create: { runId: run.id, name: stage, state: 'queued', reason: null, attempt: 0, revisionAttempt: 0 },
+        });
+      }
+      await transaction.run.update({
+        where: { id: run.id },
+        data: {
+          brief: toPrismaJson(input.brief),
+          currentStage: 'research',
+          currentRevision: nextRevision,
+          packageChecksum: null,
+          approvedChecksum: null,
+          reviewStatus: 'pending',
+        },
+      });
+      await transaction.job.create({
+        data: {
+          runId: run.id,
+          stage: 'research',
+          action: ACTION_BY_STAGE.research,
+          state: 'queued',
+          idempotencyKey: transitionJobIdempotencyKey(run.id, 'research', nextRevision),
+          availableAt: now,
+          input: toPrismaJson({ brief: input.brief, notebookLmNotebookId: input.notebookLmNotebookId }),
+        },
+      });
+      await transaction.workflowEffect.create({
+        data: {
+          runId: run.id,
+          jobId: `legacy-revision:${input.expectedRevision}`,
+          effectKey: operation.effectKey,
+          type: 'prepare_legacy_revision',
+          payload: toPrismaJson(operation.payload),
+        },
+      });
+      const updated = await transaction.run.findUniqueOrThrow({
+        where: { id: run.id },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      });
+      return {
+        run: toWorkflowRun(updated),
+        previousRevision: input.expectedRevision,
+        previousPackageChecksum: input.expectedPackageChecksum,
+      };
+    });
+  }
+
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
     assertWorkerId(input.workerId);
     assertLeaseSeconds(input.leaseSeconds);
@@ -676,6 +863,33 @@ export class PrismaWorkflowStore implements WorkflowStore {
       ? Prisma.sql`AND "action" IN (${Prisma.join(input.capabilities)})`
       : Prisma.empty;
     return this.prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw(Prisma.sql`
+        WITH released AS (
+          UPDATE "Job"
+          SET "state" = 'queued',
+              "leaseOwner" = NULL,
+              "leaseExpiresAt" = NULL,
+              "executionDeadlineAt" = NULL,
+              "availableAt" = ${claimedAt},
+              "updatedAt" = ${claimedAt}
+          WHERE "state" = 'running' AND "leaseExpiresAt" <= ${claimedAt}
+          RETURNING "id", "runId", "stage"
+        )
+        UPDATE "Stage"
+        SET "state" = 'queued',
+            "reason" = NULL,
+            "updatedAt" = ${claimedAt}
+        FROM (SELECT DISTINCT "runId", "stage" FROM released) AS "released"
+        WHERE "Stage"."runId" = "released"."runId"
+          AND "Stage"."name" = "released"."stage"
+          AND "Stage"."state" = 'running'
+          AND NOT EXISTS (
+            SELECT 1 FROM "Job"
+            WHERE "Job"."runId" = "Stage"."runId"
+              AND "Job"."stage" = "Stage"."name"
+              AND "Job"."state" = 'running'
+          )
+      `);
       const rows = await transaction.$queryRaw<ClaimedJobRow[]>(Prisma.sql`
       UPDATE "Job"
       SET "state" = 'running',
@@ -917,6 +1131,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               revision: nextRevision,
               input: {
                 brief: job.run.brief as JsonObject,
+                ...(job.run.notebookLmNotebookId ? { notebookLmNotebookId: job.run.notebookLmNotebookId } : {}),
                 dependencies: nextJobDependencies(job.input as JsonObject, completedArtifacts, effect.stage),
               },
             });
@@ -939,6 +1154,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               revision: nextRevision,
               input: {
                 brief: job.run.brief as JsonObject,
+                ...(job.run.notebookLmNotebookId ? { notebookLmNotebookId: job.run.notebookLmNotebookId } : {}),
                 deliveryId,
                 packageChecksum: effect.packageChecksum,
                 packageVersionId: packageVersion.id,
@@ -1095,7 +1311,14 @@ export class PrismaWorkflowStore implements WorkflowStore {
               AND "Job"."action" = 'collect_sources'
             )
             OR (
-              ${input.kind} IN ('raw_response', 'parsed_output', 'execution_report')
+              ${input.kind} IN (
+                'raw_response',
+                'parsed_output',
+                'execution_report',
+                'generation.recipe.snapshot',
+                'generation.prompt.rendered',
+                'generation.execution.report'
+              )
               AND (
                 ("Job"."stage" = 'research' AND "Job"."action" = 'collect_sources')
                 OR ("Job"."stage" = 'create' AND "Job"."action" = 'create_content')
@@ -1408,6 +1631,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               revision: nextRevision,
               input: {
                 brief: run.brief as JsonObject,
+                ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
                 deliveryId,
                 packageChecksum: effect.packageChecksum,
                 packageVersionId: packageVersion.id,
@@ -1442,6 +1666,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               revision: nextRevision,
               input: {
                 brief: run.brief as JsonObject,
+                ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
                 dependencies: packageArtifacts.map(toWorkflowArtifact).map(toJobArtifactDependency),
                 review: { comment: input.comment!, packageChecksum: input.packageChecksum },
               },
@@ -1583,6 +1808,7 @@ export function createInMemoryWorkflowStore(
 
 class InMemoryWorkflowStore implements WorkflowStore {
   private readonly runs = new Map<string, WorkflowRun>();
+  private readonly runsByNotebookLmNotebookId = new Map<string, string>();
   private readonly jobs = new Map<string, WorkflowJob>();
   private readonly jobsByIdempotencyKey = new Map<string, string>();
   private readonly artifactsById = new Map<string, WorkflowArtifact>();
@@ -1607,6 +1833,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       title: input.title,
       locale: input.locale,
       brief: input.brief,
+      ...(input.notebookLmNotebookId ? { notebookLmNotebookId: input.notebookLmNotebookId } : {}),
       currentStage: input.currentStage ?? 'research',
       currentRevision: input.currentRevision ?? 1,
       packageChecksum: input.packageChecksum ?? null,
@@ -1618,7 +1845,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
       updatedAt: now,
     };
     if (this.runs.has(run.id)) throw new WorkflowConflictError('Run already exists');
+    this.assertNotebookLmNotebookIdAvailable(run.notebookLmNotebookId, run.id);
     this.runs.set(run.id, run);
+    if (run.notebookLmNotebookId) this.runsByNotebookLmNotebookId.set(run.notebookLmNotebookId, run.id);
     return run;
   }
 
@@ -1634,6 +1863,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       title: input.title,
       locale: input.locale,
       brief: input.brief,
+      ...(input.notebookLmNotebookId ? { notebookLmNotebookId: input.notebookLmNotebookId } : {}),
       currentStage: 'research',
       currentRevision: 1,
       packageChecksum: null,
@@ -1644,6 +1874,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       createdAt: now,
       updatedAt: now,
     };
+    this.assertNotebookLmNotebookIdAvailable(run.notebookLmNotebookId, run.id);
     const job: WorkflowJob = {
       id: this.idGenerator(),
       runId,
@@ -1656,13 +1887,17 @@ class InMemoryWorkflowStore implements WorkflowStore {
       leaseExpiresAt: null,
       executionDeadlineAt: null,
       attempt: 0,
-      input: { brief: input.brief },
+      input: {
+        brief: input.brief,
+        ...(input.notebookLmNotebookId ? { notebookLmNotebookId: input.notebookLmNotebookId } : {}),
+      },
       result: null,
       completionReceipt: null,
       createdAt: now,
       updatedAt: now,
     };
     this.runs.set(run.id, run);
+    if (run.notebookLmNotebookId) this.runsByNotebookLmNotebookId.set(run.notebookLmNotebookId, run.id);
     this.jobs.set(job.id, job);
     this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
     return run;
@@ -1672,6 +1907,14 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const run = this.runs.get(id);
     if (!run) return null;
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
+  private assertNotebookLmNotebookIdAvailable(notebookId: string | undefined, runId: string): void {
+    if (!notebookId) return;
+    const existingRunId = this.runsByNotebookLmNotebookId.get(notebookId);
+    if (existingRunId && existingRunId !== runId) {
+      throw new WorkflowConflictError(`NotebookLM notebook ${notebookId} is already assigned to run ${existingRunId}`);
+    }
   }
 
   async listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
@@ -1771,6 +2014,121 @@ class InMemoryWorkflowStore implements WorkflowStore {
     this.jobs.set(job.id, job);
     this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
     return job;
+  }
+
+  async retryStage(input: RetryStageInput): Promise<WorkflowRun> {
+    const run = this.requireRun(input.runId);
+    if (run.currentStage !== input.stage) throw new WorkflowConflictError('Only the current stage can be retried');
+    const stage = run.stages[input.stage];
+    if (!stage || stage.state !== 'needs_human') {
+      throw new WorkflowConflictError('Only a stage needing human intervention can be retried');
+    }
+    const previousJob = [...this.jobs.values()]
+      .filter((job) => job.runId === input.runId && job.stage === input.stage && job.state === 'needs_human')
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+    if (!previousJob) throw new WorkflowConflictError('No completed worker action is available to retry');
+    const now = this.clock();
+    stage.state = 'queued';
+    stage.reason = null;
+    run.updatedAt = now;
+    const job: WorkflowJob = {
+      id: this.idGenerator(),
+      runId: input.runId,
+      stage: input.stage,
+      action: previousJob.action,
+      state: 'queued',
+      idempotencyKey: `workflow:${input.runId}:${input.stage}:manual-retry:${this.idGenerator()}`,
+      availableAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      executionDeadlineAt: null,
+      attempt: 0,
+      input: {
+        ...previousJob.input,
+        ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+      },
+      result: null,
+      completionReceipt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.jobs.set(job.id, job);
+    this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
+    return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
+  async prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
+    assertStrictLegacyReplacement(input);
+    const run = this.requireRun(input.runId);
+    const operation = legacyRevisionOperation(input);
+    const existingEffect = this.effectsByKey.get(operation.effectKey);
+    if (existingEffect) {
+      assertLegacyRevisionReplay(existingEffect.payload, operation.payload);
+      if (run.currentRevision !== input.expectedRevision + 1
+        || run.currentStage !== 'research'
+        || run.packageChecksum !== null
+        || run.approvedChecksum !== null
+        || run.reviewStatus !== 'pending'
+        || legacyBriefChecksum(run.brief) !== operation.replacementBriefChecksum) {
+        throw new WorkflowConflictError('Legacy revision preparation replay does not match the prepared run');
+      }
+      return {
+        run: { ...run, nextRetryAt: this.nextRetryAt(run) },
+        previousRevision: input.expectedRevision,
+        previousPackageChecksum: input.expectedPackageChecksum,
+      };
+    }
+    assertLegacyRevisionFence(run, input);
+    const now = this.clock();
+    for (const job of this.jobs.values()) {
+      if (job.runId === run.id && (job.state === 'queued' || job.state === 'running')) {
+        job.state = 'superseded';
+        job.leaseOwner = null;
+        job.leaseExpiresAt = null;
+        job.executionDeadlineAt = null;
+        job.updatedAt = now;
+      }
+    }
+    for (const stage of WORKFLOW_STAGES) {
+      const snapshot = run.stages[stage] ?? {
+        name: stage,
+        state: 'queued',
+        reason: null,
+        attempt: 0,
+        revisionAttempts: 0,
+      };
+      snapshot.state = 'queued';
+      snapshot.reason = null;
+      snapshot.attempt = 0;
+      snapshot.revisionAttempts = 0;
+      run.stages[stage] = snapshot;
+    }
+    run.brief = input.brief;
+    run.currentStage = 'research';
+    run.currentRevision += 1;
+    run.packageChecksum = null;
+    run.approvedChecksum = null;
+    run.reviewStatus = 'pending';
+    run.updatedAt = now;
+    await this.queueJob({
+      runId: run.id,
+      stage: 'research',
+      action: ACTION_BY_STAGE.research,
+      idempotencyKey: transitionJobIdempotencyKey(run.id, 'research', run.currentRevision),
+      input: { brief: input.brief, notebookLmNotebookId: input.notebookLmNotebookId },
+      availableAt: now,
+    });
+    this.effectsByKey.set(operation.effectKey, {
+      runId: run.id,
+      jobId: `legacy-revision:${input.expectedRevision}`,
+      type: 'prepare_legacy_revision',
+      payload: operation.payload,
+    });
+    return {
+      run: { ...run, nextRetryAt: this.nextRetryAt(run) },
+      previousRevision: input.expectedRevision,
+      previousPackageChecksum: input.expectedPackageChecksum,
+    };
   }
 
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
@@ -1978,6 +2336,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
           idempotencyKey: transitionJobIdempotencyKey(run.id, effect.stage, nextRevision),
           input: {
             brief: run.brief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
             dependencies: nextJobDependencies(job.input, completedArtifacts, effect.stage),
           },
         });
@@ -1995,7 +2354,13 @@ class InMemoryWorkflowStore implements WorkflowStore {
           stage: 'deliver',
           action: ACTION_BY_STAGE.deliver,
           idempotencyKey: deliveryJobIdempotencyKey(run.id, nextRevision, effect.packageChecksum),
-          input: { brief: run.brief, deliveryId, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
+          input: {
+            brief: run.brief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            deliveryId,
+            packageChecksum: effect.packageChecksum,
+            packageVersionId: packageVersion.id,
+          },
         });
         await this.recordDelivery({
           id: deliveryId,
@@ -2330,7 +2695,13 @@ class InMemoryWorkflowStore implements WorkflowStore {
           stage: 'deliver',
           action: ACTION_BY_STAGE.deliver,
           idempotencyKey: deliveryJobIdempotencyKey(run.id, run.currentRevision, effect.packageChecksum),
-          input: { brief: run.brief, deliveryId, packageChecksum: effect.packageChecksum, packageVersionId: packageVersion.id },
+          input: {
+            brief: run.brief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            deliveryId,
+            packageChecksum: effect.packageChecksum,
+            packageVersionId: packageVersion.id,
+          },
         });
         await this.recordDelivery({
           id: deliveryId,
@@ -2353,6 +2724,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
           idempotencyKey: transitionJobIdempotencyKey(run.id, effect.stage, run.currentRevision),
           input: {
             brief: run.brief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
             dependencies: packageVersion.artifactInventory
               .flatMap((reference) => {
                 const artifact = this.artifactsById.get(reference.artifactId);
@@ -2444,7 +2816,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
 
   private requireRun(runId: string): WorkflowRun {
     const run = this.runs.get(runId);
-    if (!run) throw new Error(`Run does not exist: ${runId}`);
+    if (!run) throw new WorkflowNotFoundError('Run not found');
     return run;
   }
 
@@ -2552,6 +2924,104 @@ function assertCapabilities(capabilities: string[] | undefined): void {
   if (capabilities && (!capabilities.length || capabilities.some((capability) => !capability.trim()))) {
     throw new TypeError('Worker capabilities must contain nonblank actions');
   }
+}
+
+function assertStrictLegacyReplacement(input: PrepareLegacyRevisionInput): void {
+  if (!Number.isInteger(input.expectedRevision) || input.expectedRevision <= 0) {
+    throw new WorkflowValidationError('Expected revision must be a positive integer');
+  }
+  if (!/^[a-f0-9]{64}$/.test(input.expectedPackageChecksum)) {
+    throw new WorkflowValidationError('Expected package checksum must be a 64-character checksum');
+  }
+  if (!input.notebookLmNotebookId.trim() || !input.comment.trim() || !input.operatorId.trim()) {
+    throw new WorkflowValidationError('Notebook ID, operator identity, and comment are required');
+  }
+  const brief = knowledgeBitsRunBriefSchema.safeParse(input.brief);
+  const plan = brief.success ? nugletGenerationPlanSchema.safeParse(brief.data.generationPlan) : undefined;
+  if (!brief.success || !plan?.success || plan.data.contentKind !== 'nuglet.lesson.v1') {
+    throw new WorkflowValidationError('Legacy revision preparation requires a strict Nuglet replacement brief');
+  }
+  if (brief.data.notebookLmNotebookId !== input.notebookLmNotebookId
+    || plan.data.mediaBaseline.descriptor.notebookId !== input.notebookLmNotebookId) {
+    throw new WorkflowValidationError('Replacement brief notebook binding must match the requested notebook');
+  }
+}
+
+function assertLegacyRevisionFence(
+  run: {
+    currentRevision: number;
+    packageChecksum: string | null;
+    approvedChecksum: string | null;
+    currentStage: string;
+    reviewStatus: string;
+    notebookLmNotebookId?: string | null;
+    brief: unknown;
+  },
+  input: PrepareLegacyRevisionInput,
+): void {
+  if (run.currentRevision !== input.expectedRevision) {
+    throw new WorkflowConflictError('Legacy revision expected revision does not match the current run revision');
+  }
+  if (run.packageChecksum !== input.expectedPackageChecksum) {
+    throw new WorkflowConflictError('Legacy revision expected package checksum does not match the current package');
+  }
+  if (run.currentStage !== 'human_review'
+    || !['pending', 'changes_requested'].includes(run.reviewStatus)
+    || run.approvedChecksum !== null) {
+    throw new WorkflowConflictError('Legacy revision preparation requires an unapproved human review run');
+  }
+  if (isStrictNugletBrief(run.brief)) {
+    throw new WorkflowConflictError('Legacy revision preparation rejects an already strict run');
+  }
+  if (!run.notebookLmNotebookId || run.notebookLmNotebookId !== input.notebookLmNotebookId) {
+    throw new WorkflowConflictError('Legacy revision preparation cannot change the NotebookLM notebook');
+  }
+}
+
+function isStrictNugletBrief(value: unknown): boolean {
+  const brief = knowledgeBitsRunBriefSchema.safeParse(value);
+  return brief.success && nugletGenerationPlanSchema.safeParse(brief.data.generationPlan).success;
+}
+
+function legacyRevisionOperation(input: PrepareLegacyRevisionInput): {
+  effectKey: string;
+  replacementBriefChecksum: string;
+  payload: JsonObject;
+} {
+  const replacementBriefChecksum = legacyBriefChecksum(input.brief);
+  return {
+    effectKey: `legacy-revision:${input.runId}:${input.expectedRevision}:${input.expectedPackageChecksum}:${replacementBriefChecksum}`,
+    replacementBriefChecksum,
+    payload: {
+      operatorId: input.operatorId,
+      comment: input.comment,
+      previousRevision: input.expectedRevision,
+      newRevision: input.expectedRevision + 1,
+      previousPackageChecksum: input.expectedPackageChecksum,
+      replacementBriefChecksum,
+    },
+  };
+}
+
+function assertLegacyRevisionReplay(actual: unknown, expected: JsonObject): void {
+  if (!isDeepStrictEqual(actual, expected)) {
+    throw new WorkflowConflictError('Legacy revision preparation conflicts with an existing operation');
+  }
+}
+
+function legacyBriefChecksum(brief: JsonObject): string {
+  return createHash('sha256').update(canonicalJson(brief)).digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isJsonObject(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  throw new WorkflowValidationError('Legacy revision brief must contain JSON values');
 }
 
 function assertRetryAtInFuture(retryAt: Date | undefined, now: Date): void {
@@ -2756,6 +3226,7 @@ function toWorkflowRun(run: {
   title: string;
   locale: string;
   brief: Prisma.JsonValue;
+  notebookLmNotebookId: string | null;
   currentStage: string;
   currentRevision: number;
   packageChecksum: string | null;
@@ -2772,10 +3243,11 @@ function toWorkflowRun(run: {
   createdAt: Date;
   updatedAt: Date;
 }): WorkflowRun {
-  const { stages: stageRows, jobs, ...base } = run;
+  const { stages: stageRows, jobs, notebookLmNotebookId, ...base } = run;
   const stages = stageRows ? toStageMap(stageRows) : {};
   return {
     ...base,
+    ...(notebookLmNotebookId ? { notebookLmNotebookId } : {}),
     brief: base.brief as JsonObject,
     currentStage: base.currentStage as WorkflowStage,
     reviewStatus: base.reviewStatus as ReviewStatus,

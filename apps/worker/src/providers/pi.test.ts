@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { PiEditorialProvider, type PiSdkClient } from './pi.js';
 import type { ProviderExecutionInput } from './types.js';
+import { canonicalJsonBytes } from '../recipes/file-registry.js';
+import { LocalPiSdkClient, type PiModelsAdapter } from '../runtime.js';
 
 test('Pi receives only review context and execution controls and records editorial provenance', async () => {
   let request: Record<string, unknown> | undefined;
@@ -20,7 +23,9 @@ test('Pi receives only review context and execution controls and records editori
   const result = await provider.execute(input());
 
   assert.equal(result.kind, 'success');
-  assert.deepEqual(Object.keys(request ?? {}).sort(), ['candidate', 'evidence', 'idempotencyKey', 'rubric', 'signal']);
+  assert.deepEqual(Object.keys(request ?? {}).sort(), [
+    'candidate', 'evidence', 'idempotencyKey', 'rubric', 'signal',
+  ]);
   if (result.kind !== 'success') return;
   const report = result.executionReport as { promptVersion: string; provider: string; renderedPrompt: string };
   assert.equal(report.promptVersion, 'editorial-check.v1');
@@ -28,7 +33,136 @@ test('Pi receives only review context and execution controls and records editori
   assert.match(report.renderedPrompt, /Check source faithfulness/);
 });
 
-test('Pi blocks critical and unsupported-claim findings without a rewrite or scheduling interface', async () => {
+test('legacy PI sends the exact pre-1.1.0 JSON request shape', async () => {
+  let userPrompt: string | undefined;
+  const models: PiModelsAdapter = {
+    async complete(input) {
+      userPrompt = input.userPrompt;
+      return JSON.stringify({ summary: 'Ready.', findings: [] });
+    },
+  };
+  const client = new LocalPiSdkClient({ provider: 'fixture', model: 'fixture', models });
+
+  await client.check({
+    candidate,
+    evidence,
+    rubric: 'Check source faithfulness and practical value.',
+    idempotencyKey: 'operation_fixture',
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(userPrompt, JSON.stringify({
+    candidate,
+    evidence,
+    rubric: 'Check source faithfulness and practical value.',
+  }));
+});
+
+test('runs Story and Playbook editorial QA from the resolved rubric with immutable prompt evidence', async () => {
+  let request: Record<string, unknown> | undefined;
+  const editorialRecipe = resolvedRecipe('nuglet.qa.editorial', {
+    id: 'nuglet.qa.editorial',
+    version: '1.0.0',
+    status: 'approved',
+    instructions: ['Reject unsupported claims and mismatched actions.'],
+    validationChecks: ['Story and Playbook must teach the same central idea.'],
+  });
+  const semantic = await semanticCandidate();
+  const provider = new PiEditorialProvider({
+    client: {
+      async check(input) {
+        request = input as unknown as Record<string, unknown>;
+        return JSON.parse(await readFile(new URL('./fixtures/pi-editorial.json', import.meta.url), 'utf8'));
+      },
+    },
+    context: async () => ({
+      candidate: semantic,
+      evidence,
+      rubric: 'Check source faithfulness and practical value.',
+      generationPlan: { schemaVersion: '1.1.0' } as never,
+      resolvedRecipes: { editorialQa: editorialRecipe },
+    }),
+    model: 'pi-fixture-model',
+  });
+
+  const result = await provider.execute(input());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const renderedPrompt = String(request?.renderedPrompt);
+  assert.match(String(request?.rubric), /Reject unsupported claims and mismatched actions/);
+  assert.match(renderedPrompt, /Story and Playbook must teach the same central idea/);
+  assert.match(renderedPrompt, /"schemaVersion":"1\.1\.0"/);
+  assert.deepEqual(result.supportArtifacts?.map(({ kind }) => kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+  ]);
+  assert.deepEqual(result.supportArtifacts?.[0]?.body, editorialRecipe.canonicalBytes);
+  assert.equal(Buffer.from(result.supportArtifacts?.[1]?.body ?? []).toString('utf8'), renderedPrompt);
+  const report = result.executionReport as { promptVersion: string; renderedPrompt: string };
+  assert.equal(report.promptVersion, 'nuglet.qa.editorial@1.0.0');
+  assert.equal(report.renderedPrompt, renderedPrompt);
+});
+
+test('Story and Playbook Pi keeps valid blocking findings as provenance-backed QA success', async () => {
+  const editorialRecipe = resolvedRecipe('nuglet.qa.editorial', {
+    id: 'nuglet.qa.editorial',
+    version: '1.0.0',
+    status: 'approved',
+    instructions: ['Flag claims that need stronger support.'],
+    validationChecks: ['Keep findings specific.'],
+  });
+  const provider = new PiEditorialProvider({
+    client: {
+      async check() {
+        return {
+          summary: 'Review before publishing.',
+          findings: [{
+            code: 'unsupported-claim',
+            severity: 'major',
+            message: 'This claim needs a stronger source.',
+          }],
+        };
+      },
+    },
+    context: async () => ({
+      candidate: await semanticCandidate(),
+      evidence,
+      rubric: 'Check source faithfulness and practical value.',
+      generationPlan: { schemaVersion: '1.1.0' } as never,
+      resolvedRecipes: { editorialQa: editorialRecipe },
+    }),
+  });
+
+  const result = await provider.execute(input());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.deepEqual((result.parsedOutput as { editorial: unknown }).editorial, {
+    summary: 'Review before publishing.',
+    findings: [{
+      code: 'unsupported-claim',
+      severity: 'major',
+      blocking: true,
+      message: 'This claim needs a stronger source.',
+    }],
+  });
+  assert.deepEqual(result.supportArtifacts?.map((artifact) => artifact.kind), [
+    'generation.recipe.snapshot',
+    'generation.prompt.rendered',
+  ]);
+});
+
+test('Pi rejects malformed editorial responses instead of converting them to warnings', async () => {
+  const provider = new PiEditorialProvider({
+    client: { async check() { return { summary: 'Malformed.', findings: [{}] }; } },
+    context: async () => ({ candidate, evidence, rubric: 'Evaluate the candidate.' }),
+  });
+
+  await assert.rejects(() => provider.execute(input()), /Editorial finding requires code and message/);
+});
+
+test('legacy Pi blocks editorial findings before unavailable media can be scheduled', async () => {
   const client: PiSdkClient = {
     async check() {
       return {
@@ -105,4 +239,30 @@ function input(): ProviderExecutionInput {
     },
     signal: new AbortController().signal,
   };
+}
+
+function resolvedRecipe(id: string, value: Record<string, unknown>) {
+  const canonicalBytes = canonicalJsonBytes(value);
+  return {
+    id,
+    version: '1.0.0',
+    checksum: `sha256:${createHash('sha256').update(canonicalBytes).digest('hex')}`,
+    canonicalBytes,
+    value,
+  };
+}
+
+async function semanticCandidate() {
+  const fixture = JSON.parse(await readFile(
+    new URL('./fixtures/notebooklm-story-playbook.json', import.meta.url),
+    'utf8',
+  )) as { answer: { payload: { claims: Array<{ citations: Array<Record<string, unknown>> }> } } };
+  const value = structuredClone(fixture.answer);
+  for (const claim of value.payload.claims) {
+    claim.citations = claim.citations.map((citation) => ({
+      ...citation,
+      snapshotArtifactId: evidence.sources[0]!.snapshotArtifactId,
+    }));
+  }
+  return value as never;
 }

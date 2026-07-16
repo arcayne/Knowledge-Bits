@@ -3,7 +3,8 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**"],
+      "env": ["ENGINE_DATABASE_URL"]
     },
     "typecheck": {
       "dependsOn": ["^typecheck"]

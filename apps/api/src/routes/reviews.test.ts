@@ -12,7 +12,7 @@ import {
   createInMemoryWorkflowStore,
   WorkflowRepository,
 } from '../repositories/workflow-repository.js';
-import { strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
+import { strictLegacyReplacementBrief, strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 
 const checksumA = 'a'.repeat(64);
 const sourceId = '11111111-1111-4111-8111-111111111111';
@@ -246,6 +246,35 @@ test('changes require a comment, bind it to create, and content changes invalida
   assert.equal(changed.approvedChecksum, null);
 });
 
+test('does not select successful media from a prior revision', async () => {
+  const { app, repository, storage } = createTestApp();
+  const { runId, packageChecksum } = await reviewReadyRun(repository, storage, checksumA);
+  const changes = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify({
+      decision: 'request_changes',
+      packageChecksum,
+      comment: 'Change only the approved media direction.',
+    }),
+  });
+  assert.equal(changes.status, 200, await changes.clone().text());
+  assert.equal((await changes.json()).currentRevision, 2);
+
+  const repositoryArtifacts = await repository.listArtifactsForSuccessfulStageJobs(runId, 2);
+  assert.ok(repositoryArtifacts.some((artifact) => artifact.kind === 'hero' && artifact.revision === 1));
+
+  const model = await new ReviewPackageService({ repository, storage }).load(runId);
+  assert.equal(model.currentRevision, 2);
+  assert.equal(model.assets.hero.state, 'missing');
+  assert.equal(model.assets.infographic.state, 'missing');
+  assert.equal(model.assets.audioBrief.state, 'missing');
+  assert.equal(model.assets.audioDiscussion.state, 'missing');
+  assert.ok(!model.package?.artifactInventory.some((artifact) => (
+    ['hero', 'infographic', 'audio_brief', 'audio_discussion'].includes(artifact.kind)
+  )));
+});
+
 test('automatic quality revision carries accepted evidence through package assembly and approval', async () => {
   const { app, repository, storage } = createTestApp();
   const run = await repository.bootstrapRun({
@@ -273,7 +302,7 @@ test('automatic quality revision carries accepted evidence through package assem
       state: 'needs_human',
       completedAt: '2026-07-13T10:05:00.000Z',
       outputChecksum: null,
-      error: 'editorial_quality_failed',
+      error: 'deterministic_quality_failed',
       needsHumanKind: 'quality',
     },
     transition: nextTransition({
@@ -282,7 +311,7 @@ test('automatic quality revision carries accepted evidence through package assem
       revisionAttempts: firstCheckContext.stage.revisionAttempts,
       packageChecksum: firstCheckContext.packageChecksum as `${string}` | null,
       approvedChecksum: firstCheckContext.approvedChecksum as `${string}` | null,
-    }, { type: 'quality_failed', reason: 'editorial_quality_failed' }),
+    }, { type: 'quality_failed', reason: 'deterministic_quality_failed' }),
   });
 
   const secondCreate = await requiredClaim(repository, 'create_content', 'create-worker');
@@ -318,6 +347,56 @@ test('automatic quality revision carries accepted evidence through package assem
   assert.equal((await approved.json()).reviewStatus, 'approved');
 });
 
+test('a legacy editorial check with blocking findings queues asset production but blocks review approval', async () => {
+  const { repository, storage } = createTestApp();
+  const run = await repository.bootstrapRun({
+    title: 'Editorial warning review',
+    locale: 'en',
+    brief: { objective: 'Keep editorial evidence for the human decision.' },
+  });
+  const fixtures = reviewStageFixtures();
+  const contentChecksum = (fixtures.check_content[0]!.body as {
+    deterministic: { contentChecksum: string };
+  }).deterministic.contentChecksum;
+
+  const research = await requiredClaim(repository, 'collect_sources', 'research-worker');
+  await recordClaimArtifacts(repository, storage, research, 'research-worker', fixtures.collect_sources);
+  await completeClaim(repository, research, 'research-worker');
+
+  const create = await requiredClaim(repository, 'create_content', 'create-worker');
+  await recordClaimArtifacts(repository, storage, create, 'create-worker', fixtures.create_content);
+  await completeClaim(repository, create, 'create-worker');
+
+  const check = await requiredClaim(repository, 'check_content', 'check-worker');
+  await recordClaimArtifacts(repository, storage, check, 'check-worker', [{
+    kind: 'parsed_output',
+    mediaType: 'application/json',
+    body: {
+      deterministic: { passed: true, contentChecksum, findings: [] },
+      editorial: {
+        summary: 'Review the cited claim before publishing.',
+        findings: [{
+          code: 'unsupported-claim',
+          severity: 'major',
+          blocking: true,
+          message: 'A claim needs a stronger source.',
+        }],
+      },
+    },
+  }]);
+  await completeClaim(repository, check, 'check-worker');
+
+  const assets = await requiredClaim(repository, 'produce_assets', 'asset-worker');
+  assert.equal(assets.revision, 1);
+  await recordClaimArtifacts(repository, storage, assets, 'asset-worker', fixtures.produce_assets);
+  await completeClaim(repository, assets, 'asset-worker');
+
+  const model = await new ReviewPackageService({ repository, storage }).load(run.id);
+  assert.equal(model.decisionAllowed, false);
+  assert.match(model.issues.join(' '), /editorial/i);
+  assert.deepEqual(model.warnings, []);
+});
+
 test('only the run-level review endpoint is available', async () => {
   const { app, repository, storage } = createTestApp();
   const { runId, packageChecksum } = await reviewReadyRun(repository, storage, checksumA);
@@ -336,6 +415,63 @@ test('only the run-level review endpoint is available', async () => {
     body: JSON.stringify({ decision: 'approve', packageChecksum, reviewerId: 'browser-controlled' }),
   });
   assert.equal(untrustedIdentity.status, 400);
+});
+
+test('prepares a legacy revision only for an authenticated review principal', async () => {
+  const { app, repository } = createTestApp();
+  const legacyPackage = strictPackageVersionInput('0f8fad5b-d9cb-469f-a165-70867728950e', 'legacy');
+  const run = await repository.createRun({
+    id: legacyPackage.runId,
+    title: 'Legacy review run',
+    locale: 'en',
+    brief: { objective: 'Historical package', notebookLmNotebookId: 'notebook-fixture' },
+    notebookLmNotebookId: 'notebook-fixture',
+    currentStage: 'human_review',
+    packageChecksum: legacyPackage.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  await repository.recordPackageVersion(legacyPackage);
+  const body = {
+    expectedRevision: 1,
+    expectedPackageChecksum: legacyPackage.packageChecksum,
+    notebookLmNotebookId: 'notebook-fixture',
+    brief: strictLegacyReplacementBrief(),
+    comment: 'Replace the unreadable legacy package with the validated baseline.',
+  };
+  const apiToken = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(apiToken.status, 403);
+  const missingPrincipal = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-review-test' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(missingPrincipal.status, 401);
+  const prepared = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify(body),
+  });
+  assert.equal(prepared.status, 200, await prepared.clone().text());
+  const preparedBody = await prepared.json();
+  assert.equal(preparedBody.run.id, run.id);
+  assert.equal(preparedBody.run.currentRevision, 2);
+  assert.equal(preparedBody.previousRevision, 1);
+  const replay = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify(body),
+  });
+  assert.equal(replay.status, 200, await replay.clone().text());
+  const stale = await app.request(`/runs/${run.id}/prepare-legacy-revision`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify({ ...body, expectedRevision: 2 }),
+  });
+  assert.equal(stale.status, 409);
 });
 
 async function reviewReadyRun(
@@ -488,7 +624,8 @@ function reviewStageFixtures(): Record<
     produce_assets: [
       { kind: 'hero', mediaType: 'image/webp', body: 'hero', inputChecksum: contentChecksum },
       { kind: 'infographic', mediaType: 'image/webp', body: 'infographic', inputChecksum: contentChecksum },
-      { kind: 'audio', mediaType: 'audio/mpeg', body: 'audio', inputChecksum: contentChecksum },
+      { kind: 'audio_brief', mediaType: 'audio/mp4', body: 'brief audio', inputChecksum: contentChecksum },
+      { kind: 'audio_discussion', mediaType: 'audio/mp4', body: 'discussion audio', inputChecksum: contentChecksum },
     ],
   };
 }
@@ -517,7 +654,8 @@ async function finishRevisionFromCreate(
   await recordClaimArtifacts(repository, storage, assets, 'asset-worker', [
     { kind: 'hero', mediaType: 'image/webp', body: 'revised hero', inputChecksum: contentChecksum },
     { kind: 'infographic', mediaType: 'image/webp', body: 'revised infographic', inputChecksum: contentChecksum },
-    { kind: 'audio', mediaType: 'audio/mpeg', body: 'revised audio', inputChecksum: contentChecksum },
+    { kind: 'audio_brief', mediaType: 'audio/mp4', body: 'revised brief audio', inputChecksum: contentChecksum },
+    { kind: 'audio_discussion', mediaType: 'audio/mp4', body: 'revised discussion audio', inputChecksum: contentChecksum },
   ]);
   await completeClaim(repository, assets, 'asset-worker');
 }

@@ -120,7 +120,7 @@ export class ArtifactService {
 }
 
 export function artifactStorageKey(runId: string, revision: number, artifactId: string): string {
-  return `knowledge-bits/${runId}/${revision}/${artifactId}`;
+  return `knowledge-bits/nuglet/${runId}/${revision}/${artifactId}`;
 }
 
 function toArtifactReference(artifact: WorkflowArtifact, provider: string) {

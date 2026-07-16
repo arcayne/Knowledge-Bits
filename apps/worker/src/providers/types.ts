@@ -26,6 +26,17 @@ export interface ProviderBinaryAsset {
   provenance?: Readonly<Record<string, unknown>>;
 }
 
+export interface ProviderSupportArtifact {
+  kind:
+    | 'generation.recipe.snapshot'
+    | 'generation.prompt.rendered'
+    | 'generation.execution.report';
+  mediaType: 'application/json' | 'text/plain';
+  body: Uint8Array;
+  inputChecksum: string | null;
+  provenance: Readonly<Record<string, unknown>>;
+}
+
 export type ProviderExecution =
   | {
     kind: 'success';
@@ -34,6 +45,7 @@ export type ProviderExecution =
     executionReport: unknown;
     inputChecksum?: string;
     assets?: readonly ProviderBinaryAsset[];
+    supportArtifacts?: readonly ProviderSupportArtifact[];
   }
   | {
     kind: 'waiting';

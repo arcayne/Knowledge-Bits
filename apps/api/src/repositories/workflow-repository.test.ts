@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { JobResult } from '@knowledge-bits/contracts';
+import type { JobResult, ReviewStatus, WorkflowStage } from '@knowledge-bits/contracts';
 import { nextTransition } from '@knowledge-bits/pipeline';
 
 import {
   createInMemoryWorkflowStore,
   WorkflowRepository,
 } from './workflow-repository.js';
-import { strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
+import { strictLegacyReplacementBrief, strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 import {
   FORBIDDEN_NUGLET_ENGINE_ENV,
   assertEngineIsolation,
@@ -22,13 +22,15 @@ const runId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 function createRepository(initialNow = new Date('2026-07-12T12:00:00.000Z')) {
   let identifier = 0;
   let now = new Date(initialNow);
-  const repository = new WorkflowRepository(createInMemoryWorkflowStore({
+  const store = createInMemoryWorkflowStore({
     clock: () => new Date(now),
     idGenerator: () => `test-${++identifier}`,
-  }));
+  });
+  const repository = new WorkflowRepository(store);
 
   return {
     repository,
+    store,
     now,
     setNow(value: Date) {
       now = new Date(value);
@@ -803,6 +805,144 @@ test('recordDelivery returns the existing row for its idempotency key', async ()
   assert.equal(second.id, first.id);
   assert.equal(second.target, first.target);
   assert.equal(second.packageChecksum, first.packageChecksum);
+});
+
+test('prepares one guarded strict revision from an unreadable legacy review without replacing its immutable package', async () => {
+  const { repository, store } = createRepository();
+  const legacyPackage = packageVersionInput('legacy-revision');
+  await repository.createRun({
+    id: runId,
+    title: 'Legacy Personal Finance',
+    locale: 'en',
+    brief: { objective: 'Historical legacy package', notebookLmNotebookId: 'notebook-fixture' },
+    notebookLmNotebookId: 'notebook-fixture',
+    currentStage: 'human_review',
+    packageChecksum: legacyPackage.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  await repository.recordPackageVersion(legacyPackage);
+  const oldJob = await repository.queueJob({
+    runId,
+    stage: 'create',
+    action: 'create_content',
+    idempotencyKey: 'legacy-revision-old-job',
+    input: { brief: { objective: 'old' } },
+  });
+  await repository.claimJob({ workerId: 'legacy-worker', capabilities: ['create_content'], leaseSeconds: 60 });
+
+  const input = {
+    runId,
+    expectedRevision: 1,
+    expectedPackageChecksum: legacyPackage.packageChecksum,
+    notebookLmNotebookId: 'notebook-fixture',
+    brief: strictLegacyReplacementBrief(),
+    comment: 'Replace the unreadable legacy package with the validated baseline.',
+    operatorId: 'editor-1',
+  };
+  const prepared = await repository.prepareLegacyRevision(input);
+  const replay = await repository.prepareLegacyRevision(input);
+
+  assert.equal(prepared.previousRevision, 1);
+  assert.equal(prepared.previousPackageChecksum, legacyPackage.packageChecksum);
+  const effect = [...(store as unknown as {
+    effectsByKey: Map<string, { type: string; payload: Record<string, unknown> }>;
+  }).effectsByKey.values()].find((candidate) => candidate.type === 'prepare_legacy_revision');
+  assert.equal(effect?.payload.newRevision, 2);
+  assert.equal(prepared.run.currentRevision, 2);
+  assert.equal(prepared.run.currentStage, 'research');
+  assert.equal(prepared.run.packageChecksum, null);
+  assert.equal(prepared.run.approvedChecksum, null);
+  assert.equal(prepared.run.reviewStatus, 'pending');
+  assert.equal(prepared.run.notebookLmNotebookId, 'notebook-fixture');
+  for (const stage of Object.values(prepared.run.stages)) {
+    assert.equal(stage?.state, 'queued');
+    assert.equal(stage?.reason, null);
+    assert.equal(stage?.revisionAttempts, 0);
+  }
+  assert.equal((await repository.getPackageVersion(runId, legacyPackage.packageChecksum))?.packageChecksum, legacyPackage.packageChecksum);
+  const superseded = await repository.getJobContext(oldJob.id);
+  assert.equal(superseded?.job.state, 'superseded');
+  assert.equal(superseded?.job.leaseOwner, null);
+  assert.equal(superseded?.job.leaseExpiresAt, null);
+  assert.equal(superseded?.job.executionDeadlineAt, null);
+  const research = await repository.claimJob({ workerId: 'research-worker', capabilities: ['collect_sources'], leaseSeconds: 60 });
+  assert.equal(research?.stage, 'research');
+  assert.equal(research?.revision, 2);
+  assert.deepEqual(research?.input, { brief: input.brief, notebookLmNotebookId: 'notebook-fixture' });
+  assert.equal(await repository.claimJob({ workerId: 'research-worker-2', capabilities: ['collect_sources'], leaseSeconds: 60 }), null);
+  assert.deepEqual(replay, prepared);
+  await assert.rejects(repository.prepareLegacyRevision({ ...input, comment: 'A different explanation.' }), /existing operation/i);
+  await assert.rejects(repository.prepareLegacyRevision({ ...input, expectedRevision: 2 }), /expected (revision|package checksum)/i);
+});
+
+test('legacy revision preparation rejects every guard without changing the run', async () => {
+  const { repository } = createRepository();
+  const legacyPackage = packageVersionInput('legacy-guards');
+  await repository.createRun({
+    id: runId,
+    title: 'Legacy guard run',
+    locale: 'en',
+    brief: { objective: 'Historical legacy package', notebookLmNotebookId: 'notebook-fixture' },
+    notebookLmNotebookId: 'notebook-fixture',
+    currentStage: 'human_review',
+    packageChecksum: legacyPackage.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  await repository.recordPackageVersion(legacyPackage);
+  const input = {
+    runId,
+    expectedRevision: 1,
+    expectedPackageChecksum: legacyPackage.packageChecksum,
+    notebookLmNotebookId: 'notebook-fixture',
+    brief: strictLegacyReplacementBrief(),
+    comment: 'Replace the unreadable legacy package with the validated baseline.',
+    operatorId: 'editor-1',
+  };
+  const before = await repository.getRun(runId);
+  await assert.rejects(repository.prepareLegacyRevision({ ...input, expectedPackageChecksum: 'b'.repeat(64) }), /checksum/i);
+  await assert.rejects(repository.prepareLegacyRevision({ ...input, notebookLmNotebookId: 'another-notebook' }), /notebook/i);
+  await assert.rejects(repository.prepareLegacyRevision({ ...input, brief: { objective: 'not strict' } }), /strict/i);
+  assert.deepEqual(await repository.getRun(runId), before);
+});
+
+test('legacy revision preparation rejects strict, approved, and non-review runs without changing them', async () => {
+  const cases: Array<{
+    name: string;
+    brief?: Record<string, unknown>;
+    approvedChecksum?: string;
+    currentStage?: WorkflowStage;
+    reviewStatus?: ReviewStatus;
+  }> = [
+    { name: 'already strict', brief: strictLegacyReplacementBrief() },
+    { name: 'approved', approvedChecksum: 'a'.repeat(64) },
+    { name: 'delivering', currentStage: 'deliver', reviewStatus: 'approved', approvedChecksum: 'a'.repeat(64) },
+  ];
+  for (const testCase of cases) {
+    const { repository } = createRepository();
+    await repository.createRun({
+      id: runId,
+      title: `Legacy ${testCase.name}`,
+      locale: 'en',
+      brief: testCase.brief ?? { objective: 'Historical legacy package', notebookLmNotebookId: 'notebook-fixture' },
+      notebookLmNotebookId: 'notebook-fixture',
+      currentStage: testCase.currentStage ?? 'human_review',
+      packageChecksum: 'a'.repeat(64),
+      approvedChecksum: testCase.approvedChecksum,
+      reviewStatus: testCase.reviewStatus ?? 'pending',
+      stages: [{ name: testCase.currentStage ?? 'human_review', state: 'needs_human' }],
+    });
+    const before = await repository.getRun(runId);
+    await assert.rejects(repository.prepareLegacyRevision({
+      runId,
+      expectedRevision: 1,
+      expectedPackageChecksum: 'a'.repeat(64),
+      notebookLmNotebookId: 'notebook-fixture',
+      brief: strictLegacyReplacementBrief(),
+      comment: 'Replace the unreadable legacy package with the validated baseline.',
+      operatorId: 'editor-1',
+    }), /strict|unapproved human review/i, testCase.name);
+    assert.deepEqual(await repository.getRun(runId), before, testCase.name);
+  }
 });
 
 for (const name of FORBIDDEN_NUGLET_ENGINE_ENV) {

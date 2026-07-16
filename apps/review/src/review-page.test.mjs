@@ -12,12 +12,15 @@ test('review page has one fixed overall decision bar and the required review sur
   const [source, clientSource] = await Promise.all([readFile(page, 'utf8'), readFile(client, 'utf8')]);
 
   for (const label of [
-    'Learner preview',
-    'Evidence',
-    'QA',
+    'Story',
+    'Playbook',
     'Hero',
     'Infographic',
-    'Audio',
+    'Brief audio',
+    'Discussion audio',
+    'Quiz',
+    'Sources, claims, and QA',
+    'Generation provenance',
     'Approve',
     'Request changes',
   ]) {
@@ -25,6 +28,9 @@ test('review page has one fixed overall decision bar and the required review sur
   }
   assert.match(source, /position:\s*fixed/);
   assert.match(source, /name="comment"/);
+  assert.match(source, /<details[^>]*id="generation-provenance"/);
+  assert.match(source, /lesson-header/i);
+  assert.match(source, /thumbnail/i);
   assert.match(clientSource, /decisionAllowed/);
   assert.match(source, /disabled/);
   assert.match(clientSource, /claimCoverage/);
@@ -33,8 +39,7 @@ test('review page has one fixed overall decision bar and the required review sur
   assert.match(clientSource, /coverageGaps/);
   assert.match(clientSource, /citations/);
   assert.match(clientSource, /findings/);
-  assert.doesNotMatch(source, /provider controls/i);
-  assert.doesNotMatch(source, /execution logs/i);
+  assert.doesNotMatch(source, /data-artifact-decision/i);
 });
 
 test('review proxy derives reviewer identity from authenticated middleware, not browser input', async () => {
@@ -68,5 +73,5 @@ test('documented review API environment matches the server proxy', async () => {
   assert.match(reviewCommand, /REVIEW_AUTH_AUDIENCE=/);
   assert.match(reviewCommand, /REVIEW_PUBLIC_ORIGIN=/);
   assert.doesNotMatch(reviewCommand, /ENGINE_API_BASE_URL/);
-  assert.match(proxySource, /import\.meta\.env\.ENGINE_API_URL/);
+  assert.match(proxySource, /runtimeEnvironment\(import\.meta\.env, 'ENGINE_API_URL'\)/);
 });
