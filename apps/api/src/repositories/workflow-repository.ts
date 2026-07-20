@@ -368,6 +368,7 @@ export interface WorkflowStore {
   transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery>;
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
   retryStage(input: RetryStageInput): Promise<WorkflowRun>;
+  queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun>;
   prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
@@ -487,6 +488,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   retryStage(input: RetryStageInput): Promise<WorkflowRun> {
     return this.store.retryStage(input);
+  }
+
+  queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun> {
+    return this.store.queueLegacyAudioReconciliation(runId);
   }
 
   prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
@@ -757,6 +762,104 @@ export class PrismaWorkflowStore implements WorkflowStore {
       });
       return toWorkflowRun(await transaction.run.findUniqueOrThrow({
         where: { id: input.runId },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      }));
+    });
+  }
+
+  async queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun> {
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, runId);
+      const run = await transaction.run.findUnique({ where: { id: runId }, include: { stages: true } });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      const stage = run.stages.find((candidate) => candidate.name === 'human_review');
+      if (run.currentStage !== 'human_review' || stage?.state !== 'needs_human') {
+        throw new WorkflowConflictError('Legacy audio reconciliation requires a pending human review stage');
+      }
+      assertLegacyAudioReuse(run.brief as JsonObject);
+      const activeJob = await transaction.job.findFirst({
+        where: { runId, state: { in: ['queued', 'running'] } },
+        select: { id: true },
+      });
+      if (activeJob) throw new WorkflowConflictError('The run already has active pipeline work');
+
+      const transition = nextTransition({
+        stage: 'human_review',
+        state: 'needs_human',
+        revisionAttempts: stage.revisionAttempt,
+        packageChecksum: run.packageChecksum as `${string}` | null,
+        approvedChecksum: run.approvedChecksum as `${string}` | null,
+        reason: stage.reason ?? undefined,
+      }, {
+        type: 'media_reconciliation_requested',
+        reason: 'Attach the existing Brief and Discussion audio files; do not generate audio.',
+      });
+      const packageVersion = run.packageChecksum
+        ? await transaction.packageVersion.findFirst({
+          where: { runId, packageChecksum: run.packageChecksum },
+          orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }],
+        })
+        : null;
+      const dependencies = packageVersion
+        ? await transaction.artifact.findMany({
+          where: { runId, id: { in: packageArtifactIds(packageVersion.artifactInventory) } },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        })
+        : [];
+      const now = new Date();
+      await transaction.stage.update({
+        where: { runId_name: { runId, name: 'human_review' } },
+        data: { state: 'done', reason: null },
+      });
+      await transaction.stage.upsert({
+        where: { runId_name: { runId, name: 'produce_assets' } },
+        update: { state: 'queued', reason: transition.reason ?? null, revisionAttempt: transition.revisionAttempts },
+        create: {
+          runId,
+          name: 'produce_assets',
+          state: 'queued',
+          reason: transition.reason ?? null,
+          revisionAttempt: transition.revisionAttempts,
+        },
+      });
+      await transaction.run.update({
+        where: { id: runId },
+        data: {
+          currentStage: 'produce_assets',
+          packageChecksum: transition.packageChecksum,
+          approvedChecksum: null,
+          reviewStatus: 'pending',
+        },
+      });
+      const effectId = randomUUID();
+      await transaction.workflowEffect.create({
+        data: {
+          runId,
+          jobId: `reconciliation:${effectId}`,
+          effectKey: `reconciliation:${runId}:${run.currentRevision}`,
+          type: 'queue_stage',
+          payload: toPrismaJson({ type: 'queue_stage', stage: 'produce_assets' }),
+        },
+      });
+      await transaction.job.create({
+        data: {
+          runId,
+          stage: 'produce_assets',
+          action: ACTION_BY_STAGE.produce_assets,
+          state: 'queued',
+          idempotencyKey: legacyAudioReconciliationJobIdempotencyKey(runId, run.currentRevision),
+          availableAt: now,
+          input: toPrismaJson({
+            brief: run.brief as JsonObject,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            mediaOperation: 'attach_existing',
+            mediaKinds: ['audio_brief', 'audio_discussion'],
+            dependencies: dependencies.map(toWorkflowArtifact).map(toJobArtifactDependency),
+          }),
+        },
+      });
+      return toWorkflowRun(await transaction.run.findUniqueOrThrow({
+        where: { id: runId },
         include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
       }));
     });
@@ -2057,6 +2160,88 @@ class InMemoryWorkflowStore implements WorkflowStore {
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
   }
 
+  async queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun> {
+    const run = this.requireRun(runId);
+    const reviewStage = run.stages.human_review;
+    if (run.currentStage !== 'human_review' || reviewStage?.state !== 'needs_human') {
+      throw new WorkflowConflictError('Legacy audio reconciliation requires a pending human review stage');
+    }
+    assertLegacyAudioReuse(run.brief);
+    if ([...this.jobs.values()].some((job) => (
+      job.runId === runId && (job.state === 'queued' || job.state === 'running')
+    ))) {
+      throw new WorkflowConflictError('The run already has active pipeline work');
+    }
+    const transition = nextTransition({
+      stage: 'human_review',
+      state: 'needs_human',
+      revisionAttempts: reviewStage.revisionAttempts,
+      packageChecksum: run.packageChecksum as `${string}` | null,
+      approvedChecksum: run.approvedChecksum as `${string}` | null,
+      reason: reviewStage.reason ?? undefined,
+    }, {
+      type: 'media_reconciliation_requested',
+      reason: 'Attach the existing Brief and Discussion audio files; do not generate audio.',
+    });
+    const packageVersion = run.packageChecksum
+      ? [...this.packageVersionsByIdentity.values()]
+        .filter((candidate) => candidate.runId === runId && candidate.packageChecksum === run.packageChecksum)
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0]
+      : undefined;
+    const dependencies = packageVersion?.artifactInventory.flatMap((reference) => {
+      const artifact = this.artifactsById.get(reference.artifactId);
+      return artifact ? [toJobArtifactDependency(artifact)] : [];
+    }) ?? [];
+    const now = this.clock();
+    reviewStage.state = 'done';
+    reviewStage.reason = null;
+    run.currentStage = 'produce_assets';
+    run.stages.produce_assets = {
+      name: 'produce_assets',
+      state: 'queued',
+      reason: transition.reason ?? null,
+      attempt: 0,
+      revisionAttempts: transition.revisionAttempts,
+    };
+    run.packageChecksum = transition.packageChecksum;
+    run.approvedChecksum = null;
+    run.reviewStatus = 'pending';
+    run.updatedAt = now;
+    const job: WorkflowJob = {
+      id: this.idGenerator(),
+      runId,
+      stage: 'produce_assets',
+      action: ACTION_BY_STAGE.produce_assets,
+      state: 'queued',
+      idempotencyKey: legacyAudioReconciliationJobIdempotencyKey(runId, run.currentRevision),
+      availableAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      executionDeadlineAt: null,
+      attempt: 0,
+      input: {
+        brief: run.brief,
+        ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+        mediaOperation: 'attach_existing',
+        mediaKinds: ['audio_brief', 'audio_discussion'],
+        dependencies,
+      },
+      result: null,
+      completionReceipt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.jobs.set(job.id, job);
+    this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
+    this.effectsByKey.set(`reconciliation:${runId}:${run.currentRevision}`, {
+      runId,
+      jobId: job.id,
+      type: 'queue_stage',
+      payload: { type: 'queue_stage', stage: 'produce_assets' },
+    });
+    return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
   async prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
     assertStrictLegacyReplacement(input);
     const run = this.requireRun(input.runId);
@@ -2902,6 +3087,24 @@ function packageArtifactIds(value: Prisma.JsonValue): string[] {
   return value.flatMap((reference) => (
     isRecord(reference) && typeof reference.artifactId === 'string' ? [reference.artifactId] : []
   ));
+}
+
+function assertLegacyAudioReuse(brief: JsonObject): void {
+  const generationPlan = isRecord(brief.generationPlan) ? brief.generationPlan : {};
+  const reuse = isRecord(generationPlan.legacyMediaReuse)
+    ? generationPlan.legacyMediaReuse
+    : isRecord(brief.legacyMediaReuse) ? brief.legacyMediaReuse : undefined;
+  const artifacts = reuse && isRecord(reuse.artifacts) ? reuse.artifacts : undefined;
+  if (reuse?.source !== 'nuglet_published'
+    || typeof reuse.sourceRunId !== 'string'
+    || !isRecord(artifacts?.audioBrief)
+    || !isRecord(artifacts?.audioDiscussion)) {
+    throw new WorkflowValidationError('The run does not contain both existing legacy audio receipts');
+  }
+}
+
+function legacyAudioReconciliationJobIdempotencyKey(runId: string, revision: number): string {
+  return `workflow:${runId}:produce_assets:legacy-audio:${revision}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

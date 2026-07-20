@@ -108,13 +108,43 @@ const nugletHeroDirectionSchema = z.object({
     mustAvoid: z.array(z.string().trim().min(1)),
   }).strict();
 
+const legacyReuseArtifactSchema = z.object({
+  path: relativeArtifactPathSchema,
+  checksum: generationRecipeChecksumSchema,
+  byteSize: z.number().int().positive(),
+  mediaType: z.string().trim().min(1),
+  durationSeconds: z.number().positive().optional(),
+}).strict();
+
+const legacyMediaReuseSchema = z.object({
+  source: z.literal('nuglet_published'),
+  sourceRunId: z.string().trim().min(1),
+  sourcePackagePath: relativeArtifactPathSchema,
+  notebookId: z.string().trim().min(1),
+  artifacts: z.object({
+    infographic: legacyReuseArtifactSchema,
+    audioBrief: legacyReuseArtifactSchema,
+    audioDiscussion: legacyReuseArtifactSchema,
+    hero: legacyReuseArtifactSchema,
+  }).strict(),
+}).strict();
+
 export const nugletGenerationPlanSchema = z.object({
   contentKind: z.literal('nuglet.lesson.v1'),
   schemaVersion: z.literal('1.1.0'),
   recipes: nugletGenerationRecipesSchema,
   heroDirection: nugletHeroDirectionSchema,
   mediaBaseline: nugletMediaBaselineSchema,
+  mediaMode: z.enum(['generate', 'reuse_legacy']).optional(),
+  legacyMediaReuse: legacyMediaReuseSchema.optional(),
 }).strict().superRefine((plan, context) => {
+  if (plan.mediaMode === 'reuse_legacy' && !plan.legacyMediaReuse) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Legacy media reuse requires a reuse receipt',
+      path: ['legacyMediaReuse'],
+    });
+  }
   const expected = [
     ['infographic', plan.recipes.infographic],
     ['audioBrief', plan.recipes.audioBrief],

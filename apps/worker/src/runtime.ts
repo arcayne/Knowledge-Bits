@@ -24,6 +24,7 @@ import {
   type MediaClient,
   type MediaKind,
   type MediaRecipes,
+  type MediaOperation,
 } from './providers/media.js';
 import { generationSupportArtifacts } from './recipes/support-artifacts.js';
 import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess, type ResearchSourceVerifier } from './providers/notebooklm.js';
@@ -53,6 +54,9 @@ type MediaContextResolver = (input: ProviderExecutionInput) => Promise<{
   contentChecksum: string;
   generationPlan?: NugletGenerationPlan;
   resolvedRecipes?: Partial<ResolvedNugletRecipes>;
+  legacyMediaReuse?: unknown;
+  mediaKinds?: readonly MediaKind[];
+  mediaOperation?: MediaOperation;
 }>;
 
 export interface TrustedRecipeBindingVerifier {
@@ -201,20 +205,28 @@ export class LeaseScopedJobContextResolver {
   }
 
   async media(input: ProviderExecutionInput) {
+    const brief = jobBrief(input);
     const generation = await validatedGenerationPlan(
-      jobBrief(input),
+      brief,
       input.job.input.notebookLmNotebookId,
       this.recipeBindingVerifier,
     );
     const content = await this.content(input);
     const qa = knowledgeBitsQaSchema.parse(await this.readJsonDependency(input, 'check_content', 'parsed_output'));
     const contentChecksum = calculateContentChecksum(content);
+    const mediaKinds = mediaKindsFromJob(input.job.input);
+    const mediaOperation = mediaOperationFromJob(input.job.input);
+    const generationPlan = isRecord(brief.generationPlan) ? brief.generationPlan : undefined;
+    const legacyMediaReuse = generationPlan?.legacyMediaReuse ?? brief.legacyMediaReuse;
     return {
       passedCheck: qa.deterministic.passed
         && qa.deterministic.contentChecksum === contentChecksum,
       content,
       contentChecksum,
       ...(generation ? { generationPlan: generation.plan, resolvedRecipes: generation.recipes } : {}),
+      ...(legacyMediaReuse === undefined ? {} : { legacyMediaReuse }),
+      ...(mediaKinds ? { mediaKinds } : {}),
+      ...(mediaOperation ? { mediaOperation } : {}),
     };
   }
 
@@ -399,6 +411,8 @@ export class LocalMediaCommandClient implements MediaClient {
     mediaBaseline: NugletMediaBaseline;
     resolvedRecipes: MediaRecipes;
     executionInput: ProviderExecutionInput;
+    legacyMediaReuse?: unknown;
+    mediaOperation?: MediaOperation;
     signal: AbortSignal;
   }): Promise<readonly GeneratedMedia[]> {
     const result = await this.options.process.run({
@@ -412,6 +426,8 @@ export class LocalMediaCommandClient implements MediaClient {
         heroDirection: input.heroDirection,
         mediaBaseline: input.mediaBaseline,
         recipeSnapshots: serializeMediaRecipes(input.resolvedRecipes),
+        ...(input.legacyMediaReuse === undefined ? {} : { legacyMediaReuse: input.legacyMediaReuse }),
+        ...(input.mediaOperation ? { mediaOperation: input.mediaOperation } : {}),
       }),
       timeoutMs: this.options.timeoutMs ?? 600_000,
       signal: input.signal,
@@ -632,8 +648,10 @@ function parseMediaAsset(
   input: {
     resolvedRecipes: MediaRecipes;
     executionInput: ProviderExecutionInput;
+    mediaOperation?: MediaOperation;
   },
 ): GeneratedMedia {
+  const isExisting = input.mediaOperation === 'attach_existing';
   if (!isRecord(value)
     || (value.kind !== 'hero'
       && value.kind !== 'infographic'
@@ -644,16 +662,20 @@ function parseMediaAsset(
     || typeof value.generationInputChecksum !== 'string'
     || !isRecord(value.metadata)
     || !isRecord(value.support)
-    || !Array.isArray(value.support.executions)
-    || value.support.executions.length === 0) {
+    || (isExisting
+      ? !isRecord(value.support.reuse)
+      : !Array.isArray(value.support.executions) || value.support.executions.length === 0)) {
     throw new ProviderNeedsHumanError('media_generation_invalid_response');
   }
   const bytes = Buffer.from(value.bytesBase64, 'base64');
   if (bytes.byteLength === 0) throw new ProviderNeedsHumanError('media_generation_invalid_response');
   const recipe = recipeForKind(input.resolvedRecipes, value.kind);
-  const supportArtifacts = value.support.executions.flatMap((execution) => (
-    parseMediaExecutionEvidence(execution, recipe, input.executionInput)
-  ));
+  const executions: readonly unknown[] = isExisting ? [] : value.support.executions as unknown[];
+  const supportArtifacts = isExisting
+    ? []
+    : executions.flatMap((execution: unknown) => (
+      parseMediaExecutionEvidence(execution, recipe, input.executionInput)
+    ));
   return {
     kind: value.kind,
     mediaType: value.mediaType,
@@ -726,6 +748,26 @@ function serializeMediaRecipes(recipes: MediaRecipes): Record<string, unknown> {
     checksum: recipe.checksum,
     canonicalBase64: Buffer.from(recipe.canonicalBytes).toString('base64'),
   }]));
+}
+
+function mediaKindsFromJob(input: Record<string, unknown>): readonly MediaKind[] | undefined {
+  if (input.mediaKinds === undefined) return undefined;
+  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion'];
+  if (!Array.isArray(input.mediaKinds)
+    || input.mediaKinds.length === 0
+    || input.mediaKinds.some((kind) => typeof kind !== 'string' || !validKinds.includes(kind as MediaKind))) {
+    throw new ProviderNeedsHumanError('media_kinds_invalid');
+  }
+  const kinds = [...new Set(input.mediaKinds as MediaKind[])];
+  return kinds;
+}
+
+function mediaOperationFromJob(input: Record<string, unknown>): MediaOperation | undefined {
+  if (input.mediaOperation === undefined) return undefined;
+  if (input.mediaOperation !== 'attach_existing' && input.mediaOperation !== 'generate') {
+    throw new ProviderNeedsHumanError('media_operation_invalid');
+  }
+  return input.mediaOperation;
 }
 
 function parseJsonObject(value: string, reason: string): Record<string, unknown> {

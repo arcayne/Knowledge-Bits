@@ -35,6 +35,7 @@ export type WorkflowEvent =
   | { type: 'quality_failed'; reason: string }
   | { type: 'review_approved'; packageChecksum: Checksum; reviewerId: string }
   | { type: 'changes_requested'; reason: string; reviewerId: string }
+  | { type: 'media_reconciliation_requested'; reason: string }
   | { type: 'package_changed'; packageChecksum: Checksum }
   | { type: 'delivery_succeeded' }
   | { type: 'delivery_failed'; reason: string }
@@ -99,6 +100,15 @@ export function nextTransition(
         state: 'queued',
         reason: event.reason,
       }, [{ type: 'queue_stage', stage: 'create' }]);
+
+    case 'media_reconciliation_requested':
+      requireSnapshot(snapshot, 'human_review', 'needs_human');
+      return transition(snapshot, {
+        stage: 'produce_assets',
+        state: 'queued',
+        reason: event.reason,
+        approvedChecksum: null,
+      }, [{ type: 'queue_stage', stage: 'produce_assets' }]);
 
     case 'package_changed':
       return packageChanged(snapshot, event.packageChecksum);

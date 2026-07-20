@@ -78,6 +78,28 @@ export function registerReviewRoutes(
     }
   });
 
+  app.post('/runs/:id/reconcile-legacy-audio', async (context) => {
+    const principal = requireReviewPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    try {
+      const run = await dependencies.repository.queueLegacyAudioReconciliation(context.req.param('id'));
+      const stage = run.stages[run.currentStage];
+      return context.json({
+        runId: run.id,
+        currentStage: run.currentStage,
+        state: stage?.state ?? null,
+        currentRevision: run.currentRevision,
+        reviewStatus: run.reviewStatus,
+        packageChecksum: run.packageChecksum,
+      }, 202);
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
+      throw error;
+    }
+  });
+
   app.post('/runs/:id/review', async (context) => {
     const principal = requireReviewPrincipal(context, dependencies.auth);
     if (principal instanceof Response) return principal;
