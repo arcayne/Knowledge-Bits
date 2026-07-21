@@ -134,6 +134,59 @@ export const workflowRunResponseSchema = z.object({
   updatedAt: z.string().datetime(),
 }).strict();
 
+export const pipelineRunSummarySchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(1),
+  locale: z.string().min(1),
+  classification: z.enum(['active', 'deliver', 'completed', 'duplicate']),
+  duplicateOf: z.string().uuid().nullable(),
+  currentStage: workflowStageSchema,
+  currentState: stageStateSchema,
+  reason: z.string().nullable(),
+  currentRevision: z.number().int().positive(),
+  currentAttempt: z.number().int().nonnegative(),
+  nextRetryAt: z.string().datetime().nullable(),
+  reviewStatus: reviewStatusSchema,
+  delivery: z.object({
+    state: z.enum(['queued', 'running', 'waiting', 'failed', 'verifying', 'succeeded', 'needs_human', 'superseded']),
+    attempts: z.number().int().nonnegative(),
+    target: z.string().min(1),
+    nextAttemptAt: z.string().datetime().nullable(),
+    updatedAt: z.string().datetime(),
+  }).strict().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+}).strict();
+
+export const pipelineReadModelSchema = z.object({
+  daily: z.object({
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    timezone: z.literal('UTC'),
+    target: z.number().int().positive(),
+    started: z.number().int().nonnegative(),
+    readyForReview: z.number().int().nonnegative(),
+    approvedInFlight: z.number().int().nonnegative(),
+    delivered: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative(),
+  }).strict(),
+  counts: z.object({
+    research: z.number().int().nonnegative(),
+    create: z.number().int().nonnegative(),
+    check: z.number().int().nonnegative(),
+    produce_assets: z.number().int().nonnegative(),
+    human_review: z.number().int().nonnegative(),
+    deliver: z.number().int().nonnegative(),
+    delivering: z.number().int().nonnegative(),
+    needsHuman: z.number().int().nonnegative(),
+    active: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    duplicates: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+    retrying: z.number().int().nonnegative(),
+  }).strict(),
+  runs: z.array(pipelineRunSummarySchema),
+}).strict();
+
 export const reviewDecisionSchema = z.enum(['approve', 'request_changes']);
 
 export const reviewRunRequestSchema = z.object({
@@ -171,6 +224,8 @@ export type CreateRunRequest = z.infer<typeof createRunRequestSchema>;
 export type ClaimJobRequest = z.infer<typeof claimJobRequestSchema>;
 export type ReportJobResultRequest = z.infer<typeof reportJobResultRequestSchema>;
 export type WorkflowRunResponse = z.infer<typeof workflowRunResponseSchema>;
+export type PipelineRunSummary = z.infer<typeof pipelineRunSummarySchema>;
+export type PipelineReadModel = z.infer<typeof pipelineReadModelSchema>;
 export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
 export type ReviewRunRequest = z.infer<typeof reviewRunRequestSchema>;
 export type ReviewRunResponse = z.infer<typeof reviewRunResponseSchema>;

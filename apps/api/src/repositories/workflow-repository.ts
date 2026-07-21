@@ -344,6 +344,7 @@ export interface WorkflowStore {
   createRun(input: CreateRunInput): Promise<WorkflowRun>;
   bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun>;
   getRun(id: string): Promise<WorkflowRun | null>;
+  listRuns(): Promise<WorkflowRun[]>;
   listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]>;
   listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]>;
   getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null>;
@@ -392,6 +393,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   getRun(id: string): Promise<WorkflowRun | null> {
     return this.store.getRun(id);
+  }
+
+  listRuns(): Promise<WorkflowRun[]> {
+    return this.store.listRuns();
   }
 
   listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
@@ -612,6 +617,17 @@ export class PrismaWorkflowStore implements WorkflowStore {
       },
     });
     return run ? toWorkflowRun(run) : null;
+  }
+
+  async listRuns(): Promise<WorkflowRun[]> {
+    const runs = await this.prisma.run.findMany({
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+      include: {
+        stages: true,
+        jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 },
+      },
+    });
+    return runs.map(toWorkflowRun);
   }
 
   async listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
@@ -2010,6 +2026,12 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const run = this.runs.get(id);
     if (!run) return null;
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
+  async listRuns(): Promise<WorkflowRun[]> {
+    return [...this.runs.values()]
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime() || left.id.localeCompare(right.id))
+      .map((run) => ({ ...run, nextRetryAt: this.nextRetryAt(run) }));
   }
 
   private assertNotebookLmNotebookIdAvailable(notebookId: string | undefined, runId: string): void {
