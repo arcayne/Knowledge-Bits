@@ -1,0 +1,679 @@
+{
+  "schemaVersion": "knowledge-bits.notebooklm-migration-registry.v1",
+  "inventoryDate": "2026-07-21",
+  "purpose": "Canonical mapping between the live NotebookLM account, Nuglet catalogue, and Knowledge Bits migration runs.",
+  "summary": {
+    "notebookCount": 36,
+    "canonicalNugletCount": 32,
+    "representedInKnowledgeBitsCount": 6,
+    "pendingCanonicalMigrationCount": 26,
+    "duplicateCount": 1,
+    "manualReviewCount": 2,
+    "discardCount": 1,
+    "completeNotebookMediaCount": 25,
+    "partialNotebookMediaCount": 6,
+    "missingNotebookMediaCount": 1
+  },
+  "catalogueWithoutNotebook": [
+    "How to remember what you learn",
+    "How your brain builds habits",
+    "What it means to think with AI"
+  ],
+  "notebooks": [
+    {
+      "notebookId": "e7022858-f74c-416e-a50d-55824fbc4605",
+      "notebookTitle": "Nuglet: Protect Your Attention",
+      "nugletTitle": "Protect Your Attention",
+      "nugletSlug": "protect-your-attention",
+      "classification": "canonical",
+      "catalogueStatus": "published",
+      "migrationStatus": "represented",
+      "knowledgeBitsRunId": "2b9daf19-f107-4fed-b22b-82e9e97fa283",
+      "sourceCount": 6,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 0,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "partial",
+      "notes": "Knowledge Bits already reuses the approved legacy infographic outside NotebookLM."
+    },
+    {
+      "notebookId": "5d4fc41c-ea19-4fac-9b5f-cbac51284a59",
+      "notebookTitle": "Nuglet: AI Fluency 101",
+      "nugletTitle": "Welcome AI as Your Creative Draft Partner",
+      "nugletSlug": "welcome-ai-as-your-creative-draft-partner",
+      "classification": "canonical",
+      "catalogueStatus": "legacy_published_absent",
+      "migrationStatus": "represented",
+      "knowledgeBitsRunId": "a955c1db-43cf-4ac6-890d-0aefba6abf4f",
+      "sourceCount": 15,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 4,
+        "quiz": 1,
+        "other": 1
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "81a41478-de59-4ece-a9ea-8201ac028c0c",
+      "notebookTitle": "",
+      "nugletTitle": null,
+      "nugletSlug": null,
+      "classification": "discard",
+      "catalogueStatus": "not_applicable",
+      "migrationStatus": "discard",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 0,
+      "completedArtifacts": {
+        "audio": 0,
+        "infographic": 0,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "missing",
+      "notes": "Untitled empty notebook."
+    },
+    {
+      "notebookId": "801c8a2c-3d5b-4d6d-b3a9-b4a860d85c84",
+      "notebookTitle": "Nuglet: The map is not the territory",
+      "nugletTitle": "The map is not the territory",
+      "nugletSlug": "the-map-is-not-the-territory",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 19,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "5a3d37a0-aed8-4936-89ac-28f86f7c734f",
+      "notebookTitle": "The hard book was teaching me how to think slowly",
+      "nugletTitle": "The hard book was teaching me how to think slowly",
+      "nugletSlug": "the-hard-book-was-teaching-me-how-to-think-slowly",
+      "classification": "canonical",
+      "catalogueStatus": "published",
+      "migrationStatus": "represented",
+      "knowledgeBitsRunId": "1b76349d-6363-410a-a649-5e54876e42cd",
+      "sourceCount": 56,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 6,
+        "quiz": 1,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "ac4323c2-4498-447e-bbe9-fdbe8627d837",
+      "notebookTitle": "The book that fixed my overthinking wasn't about overthinking at all",
+      "nugletTitle": "Not every thought is your task",
+      "nugletSlug": "not-every-thought-is-your-task",
+      "classification": "canonical",
+      "catalogueStatus": "published",
+      "migrationStatus": "represented",
+      "knowledgeBitsRunId": "cb76f2d3-c38c-4144-aa58-810a3cb3f0c4",
+      "sourceCount": 72,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 6,
+        "quiz": 1,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "f89cc6a0-5dd3-488b-8299-2e26d6580e71",
+      "notebookTitle": "The fastest way to actually understand anything",
+      "nugletTitle": "The fastest way to actually understand anything",
+      "nugletSlug": "the-fastest-way-to-actually-understand-anything",
+      "classification": "canonical",
+      "catalogueStatus": "published",
+      "migrationStatus": "represented",
+      "knowledgeBitsRunId": "86a206d4-0149-4ae7-a41f-e38c2f6dd1fe",
+      "sourceCount": 275,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 2,
+        "quiz": 1,
+        "other": 4
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "dda7d3fc-43d0-48b7-8e80-d34c791357f2",
+      "notebookTitle": "Nuglet: Personal Finance 101",
+      "nugletTitle": "Personal Finance 101",
+      "nugletSlug": "personal-finance-101",
+      "classification": "canonical",
+      "catalogueStatus": "legacy_published_absent",
+      "migrationStatus": "represented",
+      "knowledgeBitsRunId": "9c7f6e8e-4c9e-4c60-a7cd-36716a849120",
+      "sourceCount": 39,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 3,
+        "quiz": 1,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "e34bec08-5394-4c08-952e-140a3d6bee94",
+      "notebookTitle": "The Gap Between Saving and Knowing",
+      "nugletTitle": null,
+      "nugletSlug": null,
+      "classification": "manual_review",
+      "catalogueStatus": "not_listed",
+      "migrationStatus": "manual_review",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 1,
+      "completedArtifacts": {
+        "audio": 0,
+        "infographic": 0,
+        "quiz": 0,
+        "other": 1
+      },
+      "mediaReadiness": "missing",
+      "notes": "Likely supporting research for Personal Finance rather than a standalone Nuglet."
+    },
+    {
+      "notebookId": "6959bdd8-7e13-4ea9-b271-b913dc8f0a95",
+      "notebookTitle": "Nuglet: Why your brain can't feel exponential growth",
+      "nugletTitle": "Why your brain can't feel exponential growth",
+      "nugletSlug": "why-your-brain-cant-feel-exponential-growth",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 13,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "abce72b8-2749-4d77-af94-f7e4b91bb3d0",
+      "notebookTitle": "Nuglet: The number your gut almost always ignores",
+      "nugletTitle": "The number your gut almost always ignores",
+      "nugletSlug": "the-number-your-gut-almost-always-ignores",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 15,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "3ce9d873-23cf-4d90-9435-1da6dd65f1c0",
+      "notebookTitle": "Nuglet: How AI actually reads a sentence",
+      "nugletTitle": "How AI actually reads a sentence",
+      "nugletSlug": "how-ai-actually-reads-a-sentence",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 15,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "e09ac36e-3efd-4f3f-bcd8-b5419362001d",
+      "notebookTitle": "Nuglet: And then what? The question behind every good decision",
+      "nugletTitle": "And then what? The question behind every good decision",
+      "nugletSlug": "and-then-what-the-question-behind-every-good-decision",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 16,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "87105f65-b9d7-4048-ad2d-2812554f2c20",
+      "notebookTitle": "Nuglet: The AI button is not always an upgrade",
+      "nugletTitle": "The AI button is not always an upgrade",
+      "nugletSlug": "the-ai-button-is-not-always-an-upgrade",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 11,
+      "completedArtifacts": {
+        "audio": 1,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "partial"
+    },
+    {
+      "notebookId": "42a6a518-b285-4ce7-b17d-69ade087bcd0",
+      "notebookTitle": "Nuglet: Stop switching AI tools for two weeks",
+      "nugletTitle": "Stop switching AI tools for two weeks",
+      "nugletSlug": "stop-switching-ai-tools-for-two-weeks",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 11,
+      "completedArtifacts": {
+        "audio": 1,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "partial"
+    },
+    {
+      "notebookId": "ea23c367-e8b4-415e-a141-f47cb70cc5cf",
+      "notebookTitle": "Nuglet: The AI work tax nobody counts",
+      "nugletTitle": "The AI work tax nobody counts",
+      "nugletSlug": "the-ai-work-tax-nobody-counts",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 10,
+      "completedArtifacts": {
+        "audio": 1,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "partial"
+    },
+    {
+      "notebookId": "617c7012-5f9c-4603-91ad-d096cced4cc8",
+      "notebookTitle": "Nuglet: Replace one scroll session with this",
+      "nugletTitle": "Replace one scroll session with this",
+      "nugletSlug": "replace-one-scroll-session-with-this",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 12,
+      "completedArtifacts": {
+        "audio": 1,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "partial"
+    },
+    {
+      "notebookId": "a4eaaba8-02d0-4a6e-912f-e2236b85ada8",
+      "notebookTitle": "Nuglet: When the simplest explanation wins (and when it fools you)",
+      "nugletTitle": "When the simplest explanation wins (and when it fools you)",
+      "nugletSlug": "when-the-simplest-explanation-wins-and-when-it-fools-you",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 15,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "d062c045-2bff-41af-a614-499911c3603d",
+      "notebookTitle": "Nuglet: The success stories are quietly lying to you",
+      "nugletTitle": "The success stories are quietly lying to you",
+      "nugletSlug": "the-success-stories-are-quietly-lying-to-you",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 13,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "4c88a3a2-f32e-4859-be6e-24e87ec2f277",
+      "notebookTitle": "Nuglet: Why you forget most of what you learn - and the fix",
+      "nugletTitle": "Why you forget most of what you learn - and the fix",
+      "nugletSlug": "why-you-forget-most-of-what-you-learn-and-the-fix",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 19,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "5df157c7-497c-430d-9bbb-a7896e3c53d3",
+      "notebookTitle": "Nuglet: Why ChatGPT keeps misunderstanding you",
+      "nugletTitle": "Why ChatGPT keeps misunderstanding you",
+      "nugletSlug": "why-chatgpt-keeps-misunderstanding-you",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 19,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "94333e1c-27f9-4421-adb5-07575aa45986",
+      "notebookTitle": "Nuglet: Why you keep finding evidence that you're right",
+      "nugletTitle": "Why you keep finding evidence that you're right",
+      "nugletSlug": "why-you-keep-finding-evidence-that-youre-right",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 18,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "0bb1925e-8ef7-43d0-a9f8-5dec33016eef",
+      "notebookTitle": "Nuglet: AI is prediction, not magic",
+      "nugletTitle": "AI is prediction, not magic",
+      "nugletSlug": "ai-is-prediction-not-magic",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 16,
+      "completedArtifacts": {
+        "audio": 0,
+        "infographic": 0,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "missing"
+    },
+    {
+      "notebookId": "d36305ab-e7a2-4803-95fa-65c2365a65c1",
+      "notebookTitle": "Nuglet: Attention Span Recovery After Short-Form Video",
+      "nugletTitle": "Attention Span Recovery After Short-Form Video",
+      "nugletSlug": "attention-span-recovery-after-short-form-video",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 9,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "d1faa791-62f0-4895-9245-e7ec345d2242",
+      "notebookTitle": "Nuglet: Things I Wish I Knew at 25 - Career Edition",
+      "nugletTitle": "Things I Wish I Knew at 25 - Career Edition",
+      "nugletSlug": "things-i-wish-i-knew-at-25-career-edition",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 7,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "c17e8cfe-fd5e-4b63-8c0b-c8bef649037e",
+      "notebookTitle": "Nuglet: Phone Addiction That Actually Works",
+      "nugletTitle": "Phone Addiction That Actually Works",
+      "nugletSlug": "phone-addiction-that-actually-works",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 11,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "e7e0bbfc-ac28-4fcd-99f3-f2fe6833e6f4",
+      "notebookTitle": "Nuglet: AI Tool FOMO vs. Actual Usefulness",
+      "nugletTitle": "AI Tool FOMO vs. Actual Usefulness",
+      "nugletSlug": "ai-tool-fomo-vs-actual-usefulness",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 14,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "d788bc58-b827-4c80-a62f-99d94b869bff",
+      "notebookTitle": "Nuglet: AI Prompting Frustration",
+      "nugletTitle": "AI Prompting Frustration",
+      "nugletSlug": "ai-prompting-frustration",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 14,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "cba52115-d9aa-4cea-ae91-05a69dc63c9e",
+      "notebookTitle": "Nuglet: Decide before the moment decides for you",
+      "nugletTitle": "Decide before the moment decides for you",
+      "nugletSlug": "decide-before-the-moment-decides-for-you",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 17,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "11f52f41-5dc3-4400-9302-007f9164c32c",
+      "notebookTitle": "Nuglet: The map is not the territory",
+      "nugletTitle": "The map is not the territory",
+      "nugletSlug": "the-map-is-not-the-territory",
+      "classification": "duplicate",
+      "catalogueStatus": "draft",
+      "migrationStatus": "duplicate",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 13,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete",
+      "notes": "Older rerun. Do not create a second Knowledge Bits migration.",
+      "canonicalNotebookId": "801c8a2c-3d5b-4d6d-b3a9-b4a860d85c84"
+    },
+    {
+      "notebookId": "a2aacfeb-7001-474a-936d-f30047525ae9",
+      "notebookTitle": "Nuglet: Why your brain trusts confident answers",
+      "nugletTitle": "Why your brain trusts confident answers",
+      "nugletSlug": "why-your-brain-trusts-confident-answers",
+      "classification": "canonical",
+      "catalogueStatus": "draft",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 9,
+      "completedArtifacts": {
+        "audio": 1,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "partial"
+    },
+    {
+      "notebookId": "83d50c9f-55bb-4402-998d-6cbd7f32da9a",
+      "notebookTitle": "You do not need to catch up to all of AI",
+      "nugletTitle": "You do not need to catch up to all of AI",
+      "nugletSlug": "you-do-not-need-to-catch-up-to-all-of-ai",
+      "classification": "canonical",
+      "catalogueStatus": "notebook_only",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 43,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 4,
+        "quiz": 1,
+        "other": 1
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "6db7711c-ff70-4d7c-a522-31be9f23859a",
+      "notebookTitle": "Attention Is All You Need",
+      "nugletTitle": null,
+      "nugletSlug": null,
+      "classification": "manual_review",
+      "catalogueStatus": "not_listed",
+      "migrationStatus": "manual_review",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 48,
+      "completedArtifacts": {
+        "audio": 1,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "partial",
+      "notes": "Substantial research notebook, but no confirmed Nuglet identity."
+    },
+    {
+      "notebookId": "0029fec0-de53-4dfe-b006-acec30df2058",
+      "notebookTitle": "Nuglet: Why your brain trusts confident answers",
+      "nugletTitle": "Confidence is not accuracy",
+      "nugletSlug": "confidence-is-not-accuracy",
+      "classification": "canonical",
+      "catalogueStatus": "published",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 9,
+      "completedArtifacts": {
+        "audio": 6,
+        "infographic": 3,
+        "quiz": 3,
+        "other": 4
+      },
+      "mediaReadiness": "complete",
+      "notes": "Keep distinct from the newer Why your brain trusts confident answers notebook."
+    },
+    {
+      "notebookId": "1efec427-0a57-4cc5-b7c5-5bc8a31fa262",
+      "notebookTitle": "Nuglet: Why do people procrastinate even when they care?",
+      "nugletTitle": "Why do people procrastinate even when they care?",
+      "nugletSlug": "why-do-people-procrastinate-even-when-they-care",
+      "classification": "canonical",
+      "catalogueStatus": "published",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 20,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 2,
+        "quiz": 1,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    },
+    {
+      "notebookId": "d0697fcb-069c-4988-b098-dd8b40bb527f",
+      "notebookTitle": "Nuglet: Why do smart people make bad decisions?",
+      "nugletTitle": "Why do smart people make bad decisions?",
+      "nugletSlug": "why-do-smart-people-make-bad-decisions",
+      "classification": "canonical",
+      "catalogueStatus": "published",
+      "migrationStatus": "pending",
+      "knowledgeBitsRunId": null,
+      "sourceCount": 9,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 3,
+        "other": 1
+      },
+      "mediaReadiness": "complete"
+    }
+  ]
+}
