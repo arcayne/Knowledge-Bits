@@ -86,7 +86,7 @@ ENGINE_DATABASE_URL="postgresql://knowledge_bits_runtime_login:...@.../postgres"
 ENGINE_API_TOKEN="local-api-token" \
 ENGINE_REVIEW_TOKEN="local-review-token" \
 ENGINE_WORKER_CREDENTIALS='[{"token":"local-worker-token","workerId":"local-worker","capabilities":["collect_sources","create_content","check_content","produce_assets","deliver_package"]}]' \
-DELIVERY_ADAPTER_URL="https://delivery.example.test/import" \
+DELIVERY_ADAPTER_URL="https://api.nuglet.app/internal/knowledge-bits" \
 DELIVERY_ADAPTER_TOKEN="local-delivery-token" \
 pnpm --filter @knowledge-bits/api exec tsx src/main.ts
 ```
@@ -207,15 +207,17 @@ worker or API deployment.
 
 ## Delivery
 
-`DELIVERY_ADAPTER_URL` points to the service that imports an approved Knowledge Bits package.
-`DELIVERY_ADAPTER_TOKEN` authenticates only that request. Delivery receives the persisted immutable
-package version, approved checksum, and stable idempotency key. Once an import response is persisted,
-a reclaimed delivery verifies that response instead of issuing another import. Retries from before a
-persisted response reuse the same idempotency key.
+`DELIVERY_ADAPTER_URL` is the destination's base endpoint. For Nuglet, use
+`https://api.nuglet.app/internal/knowledge-bits`; the adapter calls `/import` and `/verify` beneath it.
+`DELIVERY_ADAPTER_TOKEN` must match Nuglet backend's `KNOWLEDGE_BITS_IMPORT_TOKEN` and authenticates
+only those server-to-server requests. Delivery receives the persisted immutable package version,
+approved checksum, and stable idempotency key. Once an import response is persisted, a reclaimed
+delivery verifies that response instead of issuing another import. Retries from before a persisted
+response reuse the same idempotency key.
 
-The Nuglet delivery adapter remains inactive until the companion Nuglet integration plan passes. This
-repository does not contain an active Nuglet adapter, and completing the fixture proof does not permit
-one to be enabled.
+Nuglet delivery remains dry-run only. Every approved Knowledge Bits package must already have an exact
+package-to-lesson mapping in Nuglet. Import validation records an immutable receipt and returns the
+existing canonical lesson preview without changing its slug, SEO metadata, or published content.
 
 ## Vercel boundary
 

@@ -11,18 +11,48 @@ import { strictPackageVersionInput } from '../../testing/knowledge-bits-fixture.
 
 test('HTTP delivery sends the immutable package identity', async () => {
   let requestBody: unknown;
+  let requestUrl: string | URL | Request = '';
   const adapter = new HttpDeliveryAdapter({
     baseUrl: 'https://destination.example.test',
     token: 'destination-token',
-    fetch: async (_url, init) => {
+    fetch: async (url, init) => {
+      requestUrl = url;
       requestBody = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({ error: 'temporarily unavailable' }), { status: 503 });
     },
   });
 
   await assert.rejects(adapter.deliver(input()), DeliveryTransientError);
+  assert.equal(String(requestUrl), 'https://destination.example.test/import');
   assert.equal((requestBody as DeliveryAdapterInput).packageVersionId, input().packageVersionId);
   assert.equal((requestBody as DeliveryAdapterInput).packageChecksum, input().packageChecksum);
+});
+
+test('HTTP delivery accepts Nuglet import metadata while returning the portable delivery response', async () => {
+  const adapter = new HttpDeliveryAdapter({
+    baseUrl: 'https://destination.example.test/',
+    fetch: async () => Response.json({
+      externalId: 'receipt-1',
+      previewUrl: 'https://nuglet.app/lessons/example',
+      status: 'imported',
+      targetLessonId: 'lesson-1',
+      mapping: {
+        mappingId: 'mapping-1',
+        packageId: input().knowledgeBits.packageId,
+        targetLessonId: 'lesson-1',
+        targetLessonTitle: 'Example',
+        canonicalPath: '/lessons/example',
+        status: 'bound',
+      },
+      dryRun: true,
+    }),
+  });
+
+  assert.deepEqual(await adapter.deliver(input()), {
+    externalId: 'receipt-1',
+    previewUrl: 'https://nuglet.app/lessons/example',
+    status: 'imported',
+  });
 });
 
 test('delivery adapter remains disabled when no destination is configured', () => {

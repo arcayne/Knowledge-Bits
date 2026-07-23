@@ -15,7 +15,7 @@ const deliveryResponseSchema = z.object({
   externalId: z.string().min(1),
   previewUrl: z.string().url(),
   status: z.enum(['imported', 'already_imported']),
-}).strict();
+});
 
 const verificationResponseSchema = z.object({
   matches: z.boolean(),
@@ -36,7 +36,7 @@ export class HttpDeliveryAdapter implements DeliveryAdapter {
 
   async deliver(input: DeliveryAdapterInput, signal?: AbortSignal): Promise<DeliveryAdapterResponse> {
     try {
-      return deliveryResponseSchema.parse(await this.request('/deliver', input, signal));
+      return deliveryResponseSchema.parse(await this.request('/import', input, signal));
     } catch (error) {
       if (error instanceof z.ZodError) throw new DeliveryPermanentSchemaError('delivery_adapter_invalid_response_schema');
       throw error;
