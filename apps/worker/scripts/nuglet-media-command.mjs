@@ -842,11 +842,15 @@ async function generateCurrentMedia(input) {
 
 async function main() {
   const input = await readInput();
-  if (input.legacyMediaReuse) {
+  if (shouldReuseLegacyMedia(input)) {
     process.stdout.write(`${JSON.stringify({ assets: await reuseLegacyMedia(input) })}\n`);
     return;
   }
   process.stdout.write(`${JSON.stringify({ assets: await generateCurrentMedia(input) })}\n`);
+}
+
+function shouldReuseLegacyMedia(input) {
+  return Boolean(input.legacyMediaReuse) && input.mediaOperation !== "generate";
 }
 
 export {
@@ -856,6 +860,7 @@ export {
   normalizeLegacyHero,
   notebookLmPrompt,
   prepareCurrentMediaLanes,
+  shouldReuseLegacyMedia,
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
