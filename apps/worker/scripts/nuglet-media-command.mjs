@@ -521,6 +521,25 @@ function soleUnmarkedInfographic(artifacts, wantedKinds) {
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
+export function reusableNotebookLmArtifact({
+  artifacts,
+  kind,
+  marker,
+  stateArtifactId,
+  wantedKinds,
+  regeneratedKinds = [],
+}) {
+  if (regeneratedKinds.includes(kind)) return undefined;
+  const existing = matchingNotebookLmArtifact(artifacts, kind, marker);
+  const stateArtifact = stateArtifactId
+    ? artifacts.find((artifact) => artifact.id === stateArtifactId && artifact.status !== "failed")
+    : undefined;
+  const unmarkedInfographic = kind === "infographic"
+    ? soleUnmarkedInfographic(artifacts, wantedKinds)
+    : undefined;
+  return existing ?? stateArtifact ?? unmarkedInfographic;
+}
+
 async function createNotebookLmArtifact(notebookId, kind, prompt, sourceId) {
   const args = kind === "public_preview"
     ? [
@@ -572,22 +591,21 @@ async function ensureNotebookLmArtifacts(input, kinds) {
   const state = await readNotebookLmState(input, notebookId);
   let artifacts = await notebookLmStatus(notebookId);
   const tracked = new Map();
-  const forcedKinds = new Set(Array.isArray(input.regeneratedKinds) ? input.regeneratedKinds : []);
   for (const kind of wanted) {
     const prompt = notebookLmPrompt(input, kind);
     const marker = notebookLmMarker(input, kind);
-    const existing = matchingNotebookLmArtifact(artifacts, kind, marker);
     const stateArtifactId = typeof state[kind] === "string" ? state[kind] : undefined;
-    const stateArtifact = stateArtifactId
-      ? artifacts.find((artifact) => artifact.id === stateArtifactId && artifact.status !== "failed")
-      : undefined;
     // NotebookLM currently omits infographic focus text from studio status. A
     // sole infographic is safe to adopt for a new media notebook; the sidecar
     // ID then remains authoritative across later retries.
-    const unmarkedInfographic = kind === "infographic" && !forcedKinds.has(kind)
-      ? soleUnmarkedInfographic(artifacts, wanted)
-      : undefined;
-    const selected = existing ?? stateArtifact ?? unmarkedInfographic;
+    const selected = reusableNotebookLmArtifact({
+      artifacts,
+      kind,
+      marker,
+      stateArtifactId,
+      wantedKinds: wanted,
+      regeneratedKinds: Array.isArray(input.regeneratedKinds) ? input.regeneratedKinds : [],
+    });
     if (kind === "public_preview") {
       await ensurePublicPreviewSource(input, notebookId, state);
     }

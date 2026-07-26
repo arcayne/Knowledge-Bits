@@ -13,6 +13,7 @@ import {
   normalizeLegacyHero,
   notebookLmPrompt,
   prepareCurrentMediaLanes,
+  reusableNotebookLmArtifact,
   shouldReuseLegacyMedia,
 } from "./nuglet-media-command.mjs";
 
@@ -210,6 +211,36 @@ test("public preview regeneration bypasses retained legacy media", () => {
     kinds: ["hero", "infographic"],
     legacyMediaReuse,
   }), true);
+});
+
+test("forced NotebookLM regeneration bypasses matching and sidecar artifacts", () => {
+  const artifacts = [
+    {
+      id: "matching-video",
+      type: "video",
+      status: "completed",
+      custom_instructions: "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview]",
+    },
+    {
+      id: "sidecar-video",
+      type: "video",
+      status: "completed",
+      custom_instructions: "older prompt",
+    },
+  ];
+  const input = {
+    artifacts,
+    kind: "public_preview",
+    marker: "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview]",
+    stateArtifactId: "sidecar-video",
+    wantedKinds: ["public_preview"],
+  };
+
+  assert.equal(reusableNotebookLmArtifact(input)?.id, "matching-video");
+  assert.equal(reusableNotebookLmArtifact({
+    ...input,
+    regeneratedKinds: ["public_preview"],
+  }), undefined);
 });
 
 function recipe(id) {
