@@ -71,18 +71,27 @@ test("renderer creates a branded vertical review artifact without provider gener
     const rendered = await renderPublicPreviewVideo(
       await readFile(sourcePath),
       "Protect Your Attention",
-      { providerTailSeconds: 1, endCardDurationSeconds: 1 },
+      {
+        providerTailSeconds: 1,
+        endCardDurationSeconds: 1,
+        endCardArtworkBytes: await readFile(
+          new URL("../assets/nuglet-style/personal-finance-101-hero.png", import.meta.url),
+        ),
+      },
     );
     await writeFile(finalPath, rendered.bytes);
 
     assert.equal(rendered.endCardVersion, PUBLIC_PREVIEW_END_CARD_VERSION);
     assert.equal(rendered.providerTailTrimSeconds, 1);
     assert.equal(rendered.narrativeDurationSeconds, 2);
+    assert.equal(rendered.endCardTransitionSeconds, 0.45);
+    assert.equal(rendered.endCardVoiceOverlapSeconds, 0.65);
     assert.ok(Math.abs(rendered.metadata.durationSeconds - 3) < 0.1);
     assert.equal(rendered.metadata.width, 720);
     assert.equal(rendered.metadata.height, 1280);
     assert.equal(rendered.metadata.hasAudio, true);
     assert.match(rendered.endCardBackgroundChecksum, /^sha256:[a-f0-9]{64}$/);
+    assert.match(rendered.endCardArtworkChecksum, /^sha256:[a-f0-9]{64}$/);
     assert.match(rendered.logoChecksum, /^sha256:[a-f0-9]{64}$/);
   } finally {
     await rm(directory, { recursive: true, force: true });

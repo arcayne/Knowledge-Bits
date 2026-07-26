@@ -168,11 +168,36 @@ function legacyArtifactForKind(reuse, kind) {
   return reuse.artifacts?.audioDiscussion;
 }
 
-function localLegacyArtifactPath(relativePath) {
-  const root = required(process.env.NUGLET_LEGACY_REUSE_ROOT, "NUGLET_LEGACY_REUSE_ROOT");
+function localLegacyArtifactPath(relativePath, env = process.env) {
+  const root = required(env.NUGLET_LEGACY_REUSE_ROOT, "NUGLET_LEGACY_REUSE_ROOT");
   const path = resolve(root, relativePath);
   if (!path.startsWith(`${resolve(root)}/`)) throw new Error("legacy artifact path escapes NUGLET_LEGACY_REUSE_ROOT");
   return path;
+}
+
+export async function publicPreviewEndCardArtwork(input, heroAsset, env = process.env) {
+  if (typeof heroAsset?.bytesBase64 === "string" && heroAsset.bytesBase64) {
+    const bytes = Buffer.from(heroAsset.bytesBase64, "base64");
+    return { bytes, source: "generated_hero", checksum: checksum(bytes) };
+  }
+  const reuse = record(input.legacyMediaReuse);
+  const artifact = record(reuse.artifacts?.hero);
+  const sourcePath = typeof artifact.path === "string" ? artifact.path : "";
+  const expectedChecksum = typeof artifact.checksum === "string" ? artifact.checksum : "";
+  const expectedByteSize = artifact.byteSize;
+  const mediaType = typeof artifact.mediaType === "string" ? artifact.mediaType : "";
+  if (!sourcePath) return undefined;
+  if (!/^sha256:[a-f0-9]{64}$/.test(expectedChecksum)
+    || !Number.isInteger(expectedByteSize)
+    || expectedByteSize <= 0
+    || !["image/png", "image/webp"].includes(mediaType)) {
+    throw new Error("legacy public preview end-card artwork receipt is invalid");
+  }
+  const bytes = await readFile(localLegacyArtifactPath(sourcePath, env));
+  if (checksum(bytes) !== expectedChecksum || bytes.byteLength !== expectedByteSize) {
+    throw new Error("legacy public preview end-card artwork does not match the immutable receipt");
+  }
+  return { bytes, source: "legacy_nuglet_hero", checksum: expectedChecksum };
 }
 
 async function imageDimensions(bytes, mediaType) {
@@ -756,6 +781,9 @@ async function generateCurrentMedia(input) {
   const directory = await mkdtemp(join(tmpdir(), "knowledge-bits-media-"));
   try {
     const [heroAsset, notebookLm] = await prepareCurrentMediaLanes(input, kinds);
+    const endCardArtwork = kinds.includes("public_preview")
+      ? await publicPreviewEndCardArtwork(input, heroAsset)
+      : undefined;
     const assetsByKind = new Map();
     if (heroAsset) assetsByKind.set("hero", heroAsset);
     for (const kind of kinds) {
@@ -769,7 +797,9 @@ async function generateCurrentMedia(input) {
       let bytes = await downloadNotebookLmArtifact(notebookLm.notebookId, kind, tracked.artifactId, directory);
       if (kind === "public_preview") {
         const brief = compilePublicPreview(input.content);
-        const rendered = await renderPublicPreviewVideo(bytes, brief.title);
+        const rendered = await renderPublicPreviewVideo(bytes, brief.title, {
+          endCardArtworkBytes: endCardArtwork?.bytes,
+        });
         bytes = rendered.bytes;
         const metadata = rendered.metadata;
         const transcription = await transcribeVideo(bytes);
@@ -800,8 +830,12 @@ async function generateCurrentMedia(input) {
             providerTailTrimSeconds: rendered.providerTailTrimSeconds,
             narrativeDurationSeconds: rendered.narrativeDurationSeconds,
             endCardDurationSeconds: rendered.endCardDurationSeconds,
+            endCardTransitionSeconds: rendered.endCardTransitionSeconds,
+            endCardVoiceOverlapSeconds: rendered.endCardVoiceOverlapSeconds,
             endCardVersion: rendered.endCardVersion,
             endCardBackgroundChecksum: rendered.endCardBackgroundChecksum,
+            endCardArtworkChecksum: rendered.endCardArtworkChecksum,
+            endCardArtworkSource: endCardArtwork?.source ?? "focus_aperture_default",
             logoChecksum: rendered.logoChecksum,
             validation: {
               technicalPassed,

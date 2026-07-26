@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,6 +14,7 @@ import {
   normalizeLegacyHero,
   notebookLmPrompt,
   prepareCurrentMediaLanes,
+  publicPreviewEndCardArtwork,
   reusableNotebookLmArtifact,
   shouldReuseLegacyMedia,
 } from "./nuglet-media-command.mjs";
@@ -234,6 +236,36 @@ test("public preview regeneration bypasses retained legacy media", () => {
     kinds: ["hero", "infographic"],
     legacyMediaReuse,
   }), true);
+});
+
+test("public preview end card uses the immutable Nuglet hero receipt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "knowledge-bits-end-card-artwork-test-"));
+  const relativePath = "migration/hero.png";
+  const sourcePath = join(root, relativePath);
+  const bytes = await readFile(
+    new URL("../assets/nuglet-style/personal-finance-101-hero.png", import.meta.url),
+  );
+  try {
+    await mkdir(join(root, "migration"), { recursive: true });
+    await writeFile(sourcePath, bytes);
+    const artwork = await publicPreviewEndCardArtwork({
+      legacyMediaReuse: {
+        artifacts: {
+          hero: {
+            path: relativePath,
+            mediaType: "image/png",
+            byteSize: bytes.byteLength,
+            checksum: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+          },
+        },
+      },
+    }, undefined, { NUGLET_LEGACY_REUSE_ROOT: root });
+
+    assert.equal(artwork?.source, "legacy_nuglet_hero");
+    assert.deepEqual(artwork?.bytes, bytes);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("forced NotebookLM regeneration creates once, then reuses its current-prompt sidecar", () => {
