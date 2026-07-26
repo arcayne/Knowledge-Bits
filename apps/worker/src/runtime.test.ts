@@ -654,6 +654,61 @@ test('executes media generation through one bounded local command adapter', asyn
   assert.equal(commandInput?.timeoutMs, 600_000);
 });
 
+test('accepts a review-only public preview without recipe support evidence', async () => {
+  const client = new LocalMediaCommandClient({
+    command: 'media-provider',
+    process: {
+      async run() {
+        return {
+          stdout: JSON.stringify({
+            assets: [{
+              kind: 'public_preview',
+              mediaType: 'video/mp4',
+              bytesBase64: Buffer.from('review-video').toString('base64'),
+              generationInputChecksum: inputChecksum,
+              metadata: {
+                byteSize: 12,
+                durationSeconds: 58,
+                width: 720,
+                height: 1280,
+                transcript: 'A review transcript.',
+                status: 'needs_review',
+                validation: { technicalPassed: true, protectedContentPassed: true },
+                review: { decision: 'pending', reviewerId: null, reviewedAt: null },
+              },
+              support: { executions: [] },
+            }],
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      },
+    },
+  });
+
+  const result = await client.generate({
+    content: candidate,
+    generationInputChecksum: inputChecksum,
+    kinds: ['public_preview'],
+    idempotencyKey: 'stable-public-preview-key',
+    notebookLmNotebookId: 'notebook-fixture',
+    heroDirection: generationPlan.heroDirection,
+    resolvedRecipes: resolvedRecipesFor(generationPlan),
+    executionInput: input('produce_assets', [], {
+      generationPlan,
+      mediaRegeneration: {
+        sourcePackageChecksum: 'f'.repeat(64),
+        regeneratedKinds: ['public_preview'],
+      },
+    }),
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(result[0]?.kind, 'public_preview');
+  assert.equal(Buffer.from(result[0]!.bytes).toString(), 'review-video');
+  assert.deepEqual(result[0]?.supportArtifacts, []);
+});
+
 test('force-kills a local provider process that ignores graceful timeout termination', { timeout: 3_000 }, async () => {
   const startedAt = Date.now();
   const result = await runProcess({

@@ -706,7 +706,8 @@ function parseMediaAsset(
     || (value.kind !== 'hero'
       && value.kind !== 'infographic'
       && value.kind !== 'audio_brief'
-      && value.kind !== 'audio_discussion')
+      && value.kind !== 'audio_discussion'
+      && value.kind !== 'public_preview')
     || typeof value.mediaType !== 'string'
     || typeof value.bytesBase64 !== 'string'
     || typeof value.generationInputChecksum !== 'string'
@@ -714,18 +715,21 @@ function parseMediaAsset(
     || !isRecord(value.support)
     || (isExisting
       ? !isRecord(value.support.reuse)
-      : !Array.isArray(value.support.executions) || value.support.executions.length === 0)) {
+      : !Array.isArray(value.support.executions)
+        || (value.kind !== 'public_preview' && value.support.executions.length === 0))) {
     throw new ProviderNeedsHumanError('media_generation_invalid_response');
   }
   const bytes = Buffer.from(value.bytesBase64, 'base64');
   if (bytes.byteLength === 0) throw new ProviderNeedsHumanError('media_generation_invalid_response');
-  const recipe = recipeForKind(input.resolvedRecipes, value.kind);
   const executions: readonly unknown[] = isExisting ? [] : value.support.executions as unknown[];
-  const supportArtifacts = isExisting
+  const supportArtifacts = isExisting || value.kind === 'public_preview'
     ? []
-    : executions.flatMap((execution: unknown) => (
-      parseMediaExecutionEvidence(execution, recipe, input.executionInput)
-    ));
+    : (() => {
+        const recipe = recipeForKind(input.resolvedRecipes, value.kind);
+        return executions.flatMap((execution: unknown) => (
+          parseMediaExecutionEvidence(execution, recipe, input.executionInput)
+        ));
+      })();
   return {
     kind: value.kind,
     mediaType: value.mediaType,
