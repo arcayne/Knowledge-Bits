@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import {
   PUBLIC_PREVIEW_END_CARD_VERSION,
+  PUBLIC_PREVIEW_MAX_SECONDS,
   publicPreviewEndCardPlan,
   renderPublicPreviewVideo,
   wrapEndCardTitle,
@@ -35,6 +36,19 @@ test("title wrapping remains bounded for longer Nuglet names", () => {
     wrapEndCardTitle("Why Your Best Explanation Can Still Be Wrong"),
     ["Why Your Best", "Explanation Can", "Still Be Wrong"],
   );
+});
+
+test("long provider videos are trimmed to the review duration ceiling", () => {
+  const plan = publicPreviewEndCardPlan({
+    durationSeconds: 70.124,
+    width: 720,
+    height: 1280,
+    hasAudio: true,
+  }, "The hard book was teaching me how to think slowly");
+
+  assert.equal(plan.finalDurationSeconds, PUBLIC_PREVIEW_MAX_SECONDS);
+  assert.equal(plan.contentDurationSeconds, 62);
+  assert.ok(Math.abs(plan.providerTailSeconds - 8.124) < 0.001);
 });
 
 test("renderer creates a branded vertical review artifact without provider generation", async () => {

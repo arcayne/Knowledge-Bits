@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 
 export const PUBLIC_PREVIEW_END_CARD_VERSION = "nuglet.short-end-card@1.0.0";
 export const PUBLIC_PREVIEW_END_CARD_SECONDS = 3;
+export const PUBLIC_PREVIEW_MAX_SECONDS = 65;
 export const PUBLIC_PREVIEW_PROVIDER_TAIL_SECONDS = 8;
 
 const END_CARD_BACKGROUND = new URL(
@@ -75,9 +76,15 @@ export function publicPreviewEndCardPlan(metadata, title, options = {}) {
     ? Math.max(0, Number(options.providerTailSeconds))
     : PUBLIC_PREVIEW_PROVIDER_TAIL_SECONDS;
   const endCardDurationSeconds = Number.isFinite(options.endCardDurationSeconds)
-    ? Math.max(0.25, Number(options.endCardDurationSeconds))
+    ? Math.min(PUBLIC_PREVIEW_MAX_SECONDS - 1, Math.max(0.25, Number(options.endCardDurationSeconds)))
     : PUBLIC_PREVIEW_END_CARD_SECONDS;
-  const contentDurationSeconds = Math.max(1, providerDurationSeconds - providerTailSeconds);
+  const contentDurationSeconds = Math.max(
+    1,
+    Math.min(
+      providerDurationSeconds - providerTailSeconds,
+      PUBLIC_PREVIEW_MAX_SECONDS - endCardDurationSeconds,
+    ),
+  );
   const titleLines = wrapEndCardTitle(title);
   const titleFontSize = titleLines.length === 1 ? 96 : titleLines.length === 2 ? 90 : 66;
   return {
