@@ -50,6 +50,7 @@ test('pipeline list requires review auth and returns current run summaries', asy
       needsHuman: 1,
       active: 1,
       completed: 0,
+      rejected: 0,
       duplicates: 0,
       blocked: 1,
       retrying: 0,
@@ -120,6 +121,7 @@ test('pipeline dashboard keeps superseded runs visible without counting them as 
     needsHuman: 0,
     active: 0,
     completed: 0,
+    rejected: 0,
     duplicates: 1,
     blocked: 0,
     retrying: 0,
@@ -142,6 +144,31 @@ test('pipeline dashboard keeps superseded runs visible without counting them as 
     { id: currentRunId, classification: 'deliver', duplicateOf: null },
     { id: oldRunId, classification: 'duplicate', duplicateOf: currentRunId },
   ]);
+});
+
+test('pipeline dashboard separates rejected runs from active work and blockers', async () => {
+  const repository = new WorkflowRepository(createInMemoryWorkflowStore());
+  const runId = randomUUID();
+  await repository.createRun({
+    id: runId,
+    title: 'Rejected wrong topic',
+    locale: 'en',
+    brief: {},
+    currentStage: 'human_review',
+    reviewStatus: 'rejected',
+    stages: [{ name: 'human_review', state: 'done', reason: 'Generated the wrong topic.' }],
+  });
+  const app = createApp({ repository, env: { ENGINE_REVIEW_TOKEN: 'review-token' } });
+
+  const response = await app.request('/pipeline', { headers: { Authorization: 'Bearer review-token' } });
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.counts.rejected, 1);
+  assert.equal(payload.counts.active, 0);
+  assert.equal(payload.counts.needsHuman, 0);
+  assert.equal(payload.counts.blocked, 0);
+  assert.equal(payload.runs[0].classification, 'rejected');
 });
 
 test('pipeline summaries expose delivery attempts and retry timing', async () => {

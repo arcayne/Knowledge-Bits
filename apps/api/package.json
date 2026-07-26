@@ -9,7 +9,8 @@
     "test": "pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/pipeline build && pnpm prisma:generate && tsx --test src/**/*.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "tsx scripts/migrate-local.ts",
-    "prisma:migrate:production": "tsx scripts/migrate-production.ts"
+    "prisma:migrate:production": "tsx scripts/migrate-production.ts",
+    "artifacts:backfill:r2": "tsx scripts/backfill-filesystem-artifacts-to-r2.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1085.0",

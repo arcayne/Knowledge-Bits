@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const page = new URL('./pages/runs/[runId].astro', import.meta.url);
 const proxy = new URL('./pages/api/review.ts', import.meta.url);
+const previewProxy = new URL('./pages/api/preview.ts', import.meta.url);
 const client = new URL('./review-client.mjs', import.meta.url);
 const middleware = new URL('./middleware.ts', import.meta.url);
 const readme = new URL('../../../README.md', import.meta.url);
@@ -18,6 +19,7 @@ test('review page has one fixed overall decision bar and the required review sur
     'Infographic',
     'Brief audio',
     'Discussion audio',
+    'Public preview Short',
     'Quiz',
     'Sources, claims, and QA',
     'Generation provenance',
@@ -39,7 +41,18 @@ test('review page has one fixed overall decision bar and the required review sur
   assert.match(clientSource, /coverageGaps/);
   assert.match(clientSource, /citations/);
   assert.match(clientSource, /findings/);
+  assert.match(clientSource, /api\/preview/);
+  assert.match(clientSource, /renderProgressive/);
   assert.doesNotMatch(source, /data-artifact-decision/i);
+});
+
+test('progressive preview proxy uses review auth and validates run ids', async () => {
+  const source = await readFile(previewProxy, 'utf8');
+
+  assert.match(source, /forwardReviewRequest/);
+  assert.match(source, /ENGINE_REVIEW_TOKEN/);
+  assert.match(source, /\/runs\/\$\{encodeURIComponent\(runId\)\}\/preview/);
+  assert.match(source, /isUuid/);
 });
 
 test('review proxy derives reviewer identity from authenticated middleware, not browser input', async () => {

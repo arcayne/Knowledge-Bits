@@ -58,6 +58,8 @@ test('browser renders the complete approved payload and submits its displayed ch
   assert.equal(await page.locator('audio').count(), 2);
   assert.equal(await page.locator('.quiz-question').count(), 3);
   assert.equal(await page.locator('.crop-frame img').count(), 3);
+  assert.equal(await page.locator('[data-full-size="hero"]').count(), 1);
+  assert.equal(await page.locator('[data-full-size="infographic"]').count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Approve' }).count(), 1);
   assert.equal(await page.locator('#generation-provenance').evaluate((element) => element.hasAttribute('open')), false);
   assert.equal(await page.locator('#generation-executions a').count(), 21);

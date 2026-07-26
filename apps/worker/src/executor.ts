@@ -112,6 +112,32 @@ export class WorkerExecutor {
       if (!reportingAllowed || signal?.aborted || controller.signal.aborted) return;
 
       if (execution.kind !== 'success') {
+        if (execution.kind === 'needs_human' && execution.candidate) {
+          const candidate = { kind: 'success' as const, ...execution.candidate };
+          const safeProviderReport = redactExecutionReport(candidate.executionReport);
+          const reportBytes = canonicalJsonBytes({
+            action,
+            jobId: job.jobId,
+            packageId: job.packageId,
+            provider: provider.name,
+            providerReport: safeProviderReport,
+            idempotencyKey: operationIdempotencyKey(job, action),
+            reviewCandidate: true,
+          });
+          try {
+            await this.uploadExecutionArtifacts(job, provider.name, candidate, reportBytes, controller.signal);
+          } catch (error) {
+            if (error instanceof GenerationProvenanceError) {
+              await this.reportTypedResult(job, {
+                kind: 'needs_human',
+                needsHumanKind: 'configuration',
+                reason: error.code,
+              }, controller.signal);
+              return;
+            }
+            throw error;
+          }
+        }
         await this.reportTypedResult(job, execution, controller.signal);
         return;
       }

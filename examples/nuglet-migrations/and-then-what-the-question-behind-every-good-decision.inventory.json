@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "and-then-what-the-question-behind-every-good-decision",
+  "title": "And then what? The question behind every good decision",
+  "sourceRunId": "2026-06-29-and-then-what-the-question-behind-every-good-decision",
+  "sourcePackagePath": "migrations/and-then-what-the-question-behind-every-good-decision",
+  "notebookId": "e09ac36e-3efd-4f3f-bcd8-b5419362001d",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/and-then-what-the-question-behind-every-good-decision-hero.webp"
+      },
+      "targetPath": "migrations/and-then-what-the-question-behind-every-good-decision/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:b1cbc967fde25f34816939b833607d806cdb888201d97f240e8a46db42da7603",
+      "expectedByteSize": 192556
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-and-then-what-the-question-behind-every-good-decision/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/and-then-what-the-question-behind-every-good-decision/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:bf4cdc45f03f35f0152412e4a3124a5da3d96a07454bd72e7fa274ffd43f4fa0",
+      "expectedByteSize": 4236819
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-and-then-what-the-question-behind-every-good-decision/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/and-then-what-the-question-behind-every-good-decision/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:be7d61d805d8afffed6b1e9a0a53122608e70dfcd35d386636b8fea978d41b88",
+      "expectedByteSize": 3414519,
+      "durationSeconds": 106.068753
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-and-then-what-the-question-behind-every-good-decision/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/and-then-what-the-question-behind-every-good-decision/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:7df2487779800dfab30d91a2abef1b9b40e41303cb078e0c08eab6fc18ea96f7",
+      "expectedByteSize": 13225237,
+      "durationSeconds": 410.900317
+    }
+  }
+}

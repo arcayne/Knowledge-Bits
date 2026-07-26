@@ -7,7 +7,10 @@ import {
   createInMemoryWorkflowStore,
   WorkflowRepository,
 } from '../repositories/workflow-repository.js';
-import { DeliveryTransientError } from '../services/delivery.js';
+import {
+  DeliveryPermanentSchemaError,
+  DeliveryTransientError,
+} from '../services/delivery.js';
 import type { DeliveryAdapter } from '../services/delivery-adapters/types.js';
 import { strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 
@@ -55,6 +58,43 @@ test('review-token retry permits failed delivery with unchanged approval and rej
     headers: { Authorization: 'Bearer review-token' },
   });
   assert.equal(conflict.status, 409);
+});
+
+test('review-token retry recovers a human-blocked delivery after configuration is fixed', async () => {
+  const fixture = await routeFixture();
+  fixture.adapter.failure = new DeliveryPermanentSchemaError('destination_configuration_missing');
+  const firstClaim = await claimDelivery(fixture.app);
+  const blocked = await fixture.app.request(`/deliveries/${firstClaim.deliveryId}/run`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer delivery-worker-token' },
+    body: JSON.stringify({ jobId: firstClaim.jobId }),
+  });
+  assert.equal(blocked.status, 202, await blocked.clone().text());
+  assert.equal(
+    (await fixture.repository.getDelivery(firstClaim.deliveryId))?.state,
+    'needs_human',
+  );
+
+  fixture.adapter.failure = undefined;
+  const retried = await fixture.app.request(`/deliveries/${firstClaim.deliveryId}/retry`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer review-token' },
+  });
+  assert.equal(retried.status, 200, await retried.clone().text());
+  assert.equal(
+    (await fixture.repository.getDelivery(firstClaim.deliveryId))?.state,
+    'waiting',
+  );
+
+  const secondClaim = await claimDelivery(fixture.app);
+  assert.equal(secondClaim.deliveryId, firstClaim.deliveryId);
+  const recovered = await fixture.app.request(`/deliveries/${secondClaim.deliveryId}/run`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer delivery-worker-token' },
+    body: JSON.stringify({ jobId: secondClaim.jobId }),
+  });
+  assert.equal(recovered.status, 200, await recovered.clone().text());
+  assert.equal((await recovered.json() as { state: string }).state, 'succeeded');
 });
 
 test('retry rejects a delivery after the approved checksum changes', async () => {

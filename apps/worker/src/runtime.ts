@@ -14,7 +14,7 @@ import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
 import { parseProductRecipeRoots } from './config.js';
 import type { ContentCandidate, EvidenceManifest } from './checks/deterministic.js';
-import { DeterministicSourceVerifier } from './checks/source-verifier.js';
+import { NotebookLmSourceRecorder } from './checks/notebooklm-source-recorder.js';
 import type { WorkerEngineClient } from './engine-client.js';
 import { FixtureProvider } from './providers/fixture.js';
 import {
@@ -97,6 +97,8 @@ export function composeWorkerProviders(options: {
         process: runtime.notebookProcess,
         context: trustedContextResolver(runtime.notebookContext, runtime.recipeBindingVerifier),
         sourceVerifier: runtime.sourceVerifier,
+        separateReadQueries: true,
+        phaseReporter: (event) => console.info(JSON.stringify({ event: 'notebooklm_phase', ...event })),
         timeoutMs: configuredPositiveInteger(env, 'NOTEBOOKLM_TIMEOUT_MS', 180_000),
       })
       : new UnavailableProvider('notebooklm', ['collect_sources', 'create_content']),
@@ -119,13 +121,12 @@ export function composeWorkerProviders(options: {
 function configuredRuntime(
   env: NodeJS.ProcessEnv,
   engineClient: WorkerEngineClient | undefined,
-  request: typeof fetch,
+  _request: typeof fetch,
 ): ProviderRuntime {
   const recipeRoots = parseProductRecipeRoots(env.PRODUCT_RECIPE_ROOTS);
   if (!engineClient) return {};
   const recipeBindingVerifier = new FileRecipeRegistry(recipeRoots);
   const contexts = new LeaseScopedJobContextResolver(engineClient, recipeBindingVerifier);
-  const trustedHosts = commaSeparated(env.NOTEBOOKLM_TRUSTED_SOURCE_HOSTS);
   const piProvider = configuredValue(env, 'PI_PROVIDER');
   const piModel = configuredValue(env, 'PI_MODEL');
   const mediaCommand = configuredValue(env, 'MEDIA_GENERATION_COMMAND');
@@ -141,11 +142,9 @@ function configuredRuntime(
   return {
     recipeBindingVerifier,
     ...(mediaConfigurationIssue ? { configurationIssues: { media: mediaConfigurationIssue } } : {}),
-    ...(trustedHosts.length ? {
-      notebookProcess: new SpawnNotebookLmProcess(),
-      notebookContext: (input: ProviderExecutionInput) => contexts.notebook(input),
-      sourceVerifier: new DeterministicSourceVerifier({ trustedHosts, fetch: request }),
-    } : {}),
+    notebookProcess: new SpawnNotebookLmProcess(),
+    notebookContext: (input: ProviderExecutionInput) => contexts.notebook(input),
+    sourceVerifier: new NotebookLmSourceRecorder(),
     ...(piProvider && piModel ? {
       piClient: new LocalPiSdkClient({ provider: piProvider, model: piModel }),
       piContext: (input: ProviderExecutionInput) => contexts.pi(input),
@@ -223,6 +222,7 @@ export class LeaseScopedJobContextResolver {
         && qa.deterministic.contentChecksum === contentChecksum,
       content,
       contentChecksum,
+      notebookLmNotebookId: notebookIdFromJob(input),
       ...(generation ? { generationPlan: generation.plan, resolvedRecipes: generation.recipes } : {}),
       ...(legacyMediaReuse === undefined ? {} : { legacyMediaReuse }),
       ...(mediaKinds ? { mediaKinds } : {}),
@@ -356,9 +356,18 @@ export class LocalPiSdkClient implements PiSdkClient {
       if (timeout.aborted) {
         throw new ProviderWaitingError('pi_editorial_timeout', new Date(Date.now() + 60_000).toISOString());
       }
+      if (googleCredentialsRequireReauthentication(error)) {
+        throw new ProviderNeedsHumanError('google_credentials_reauthentication_required');
+      }
       throw new ProviderWaitingError('pi_editorial_unavailable', new Date(Date.now() + 60_000).toISOString());
     }
   }
+}
+
+function googleCredentialsRequireReauthentication(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('invalid_rapt')
+    || (message.includes('invalid_grant') && message.toLowerCase().includes('reauth'));
 }
 
 class PiSdkModelsAdapter implements PiModelsAdapter {
@@ -407,27 +416,32 @@ export class LocalMediaCommandClient implements MediaClient {
     generationInputChecksum: string;
     kinds: readonly MediaKind[];
     idempotencyKey: string;
+    notebookLmNotebookId: string;
     heroDirection: NugletGenerationPlan['heroDirection'];
-    mediaBaseline: NugletMediaBaseline;
+    mediaBaseline?: NugletMediaBaseline;
     resolvedRecipes: MediaRecipes;
     executionInput: ProviderExecutionInput;
     legacyMediaReuse?: unknown;
     mediaOperation?: MediaOperation;
     signal: AbortSignal;
   }): Promise<readonly GeneratedMedia[]> {
+    const regeneratedKinds = regeneratedMediaKindsFromJob(input.executionInput.job.input);
     const result = await this.options.process.run({
       command: this.options.command,
       args: this.options.args ?? [],
       stdin: JSON.stringify({
+        runId: input.executionInput.job.packageId,
         content: input.content,
         generationInputChecksum: input.generationInputChecksum,
         kinds: input.kinds,
         idempotencyKey: input.idempotencyKey,
+        notebookLmNotebookId: input.notebookLmNotebookId,
         heroDirection: input.heroDirection,
-        mediaBaseline: input.mediaBaseline,
+        ...(input.mediaBaseline ? { mediaBaseline: input.mediaBaseline } : {}),
         recipeSnapshots: serializeMediaRecipes(input.resolvedRecipes),
         ...(input.legacyMediaReuse === undefined ? {} : { legacyMediaReuse: input.legacyMediaReuse }),
         ...(input.mediaOperation ? { mediaOperation: input.mediaOperation } : {}),
+        ...(regeneratedKinds.length ? { regeneratedKinds } : {}),
       }),
       timeoutMs: this.options.timeoutMs ?? 600_000,
       signal: input.signal,
@@ -436,12 +450,48 @@ export class LocalMediaCommandClient implements MediaClient {
       throw new ProviderWaitingError('media_generation_timeout', new Date(Date.now() + 60_000).toISOString());
     }
     if (result.exitCode !== 0) {
-      throw new ProviderNeedsHumanError(`media_generation_command_failed:${result.exitCode ?? 'signal'}`);
+      const waitingReason = mediaWaitingReason(result.stderr);
+      if (waitingReason) {
+        throw new ProviderWaitingError(waitingReason, new Date(Date.now() + 60_000).toISOString());
+      }
+      const detail = mediaCommandFailureDetail(result.stderr);
+      throw new ProviderNeedsHumanError(
+        `media_generation_command_failed:${result.exitCode ?? 'signal'}${detail ? `:${detail}` : ''}`,
+      );
     }
     const response = parseJsonObject(result.stdout, 'media_generation_invalid_response');
     if (!Array.isArray(response.assets)) throw new ProviderNeedsHumanError('media_generation_invalid_response');
     return response.assets.map((asset) => parseMediaAsset(asset, input));
   }
+}
+
+function regeneratedMediaKindsFromJob(input: Record<string, unknown>): readonly MediaKind[] {
+  const brief = isRecord(input.brief) ? input.brief : undefined;
+  const regeneration = isRecord(brief?.mediaRegeneration) ? brief.mediaRegeneration : undefined;
+  if (!Array.isArray(regeneration?.regeneratedKinds)) return [];
+  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview'];
+  return [...new Set(regeneration.regeneratedKinds.filter(
+    (kind): kind is MediaKind => typeof kind === 'string' && validKinds.includes(kind as MediaKind),
+  ))];
+}
+
+function mediaWaitingReason(stderr: string): string | undefined {
+  const match = stderr.match(/(?:^|\n)MEDIA_WAITING:([^\n]+)/);
+  return match?.[1] ? normalizeProviderReason(match[1], 'media_generation_waiting') : undefined;
+}
+
+function mediaCommandFailureDetail(stderr: string): string | undefined {
+  const line = stderr.trim().split(/\r?\n/).filter(Boolean).at(-1);
+  return line ? normalizeProviderReason(line, 'media_command_error') : undefined;
+}
+
+function normalizeProviderReason(value: string, fallback: string): string {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120);
+  return normalized || fallback;
 }
 
 class UnavailableProvider implements WorkerProvider {
@@ -725,7 +775,8 @@ function parseMediaExecutionEvidence(
     ...artifact,
     provenance: {
       ...artifact.provenance,
-      provider: value.provider,
+      provider: 'media',
+      upstreamProvider: value.provider,
       ...(value.artifactId === undefined ? {} : { artifactId: value.artifactId }),
       ...(value.notebookId === undefined ? {} : { notebookId: value.notebookId }),
       referenceChecksums: value.referenceChecksums as string[],
@@ -752,7 +803,7 @@ function serializeMediaRecipes(recipes: MediaRecipes): Record<string, unknown> {
 
 function mediaKindsFromJob(input: Record<string, unknown>): readonly MediaKind[] | undefined {
   if (input.mediaKinds === undefined) return undefined;
-  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion'];
+  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview'];
   if (!Array.isArray(input.mediaKinds)
     || input.mediaKinds.length === 0
     || input.mediaKinds.some((kind) => typeof kind !== 'string' || !validKinds.includes(kind as MediaKind))) {

@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "ai-tool-fomo-vs-actual-usefulness",
+  "title": "AI Tool FOMO vs. Actual Usefulness",
+  "sourceRunId": "2026-07-09-ai-tool-fomo-vs-actual-usefulness-5f4755eb",
+  "sourcePackagePath": "migrations/ai-tool-fomo-vs-actual-usefulness",
+  "notebookId": "e7e0bbfc-ac28-4fcd-99f3-f2fe6833e6f4",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/knowledge-bits-migration-sources/ai-tool-fomo-vs-actual-usefulness/hero.png"
+      },
+      "targetPath": "migrations/ai-tool-fomo-vs-actual-usefulness/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:80ef5f9c6e6703119bafef34582cfb973080f0c86e7bfd46ff888230d74cffea",
+      "expectedByteSize": 1339157
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-ai-tool-fomo-vs-actual-usefulness-5f4755eb/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/ai-tool-fomo-vs-actual-usefulness/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:ca222e90fe70e793f4271a0aaf1dcdf25921892f4f9e1b50225afd8ff26a3e35",
+      "expectedByteSize": 4546668
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-ai-tool-fomo-vs-actual-usefulness-5f4755eb/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/ai-tool-fomo-vs-actual-usefulness/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:87f8b4cdf09927107524f99b6d852bfc7ba1ca208d7bd5de971147c68de7c16a",
+      "expectedByteSize": 2434803,
+      "durationSeconds": 75.627392
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-ai-tool-fomo-vs-actual-usefulness-5f4755eb/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/ai-tool-fomo-vs-actual-usefulness/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:91dcb4d22489be29737b1c125a5533d60ad4ea82b43eb0552e415618cc1c83f5",
+      "expectedByteSize": 10667196,
+      "durationSeconds": 331.418413
+    }
+  }
+}

@@ -34,6 +34,112 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
       : null
   );
 
+  const renderRunSummary = (run) => {
+    const container = required('#run-summary');
+    container.replaceChildren();
+    for (const [label, value] of [
+      ['Stage', run.currentStage.replaceAll('_', ' ')],
+      ['State', run.currentState.replaceAll('_', ' ')],
+      ['Revision', String(run.currentRevision)],
+      ['Review', run.reviewStatus.replaceAll('_', ' ')],
+    ]) {
+      const chip = document.createElement('span');
+      chip.className = 'run-chip';
+      chip.dataset.tone = run.currentState === 'queued' || run.currentState === 'running' ? 'active' : 'neutral';
+      chip.textContent = `${label}: ${value}`;
+      container.append(chip);
+    }
+    container.hidden = false;
+  };
+
+  const renderPendingDocument = (section, message) => {
+    const container = required(section);
+    container.replaceChildren();
+    const note = document.createElement('p');
+    note.className = 'pending-note';
+    note.textContent = message;
+    container.append(note);
+  };
+
+  const renderProgressiveMedia = (media = []) => {
+    const byKind = new Map(media.filter((item) => item.state !== 'missing').map((item) => [item.kind, item]));
+    const hero = byKind.get('hero');
+    const heroSource = renderAsset('hero', hero, 'Verified legacy hero');
+    for (const id of ['hero-lesson-header', 'hero-card', 'hero-thumbnail']) {
+      const container = required(`#${id}`);
+      container.replaceChildren();
+      if (!heroSource) continue;
+      const image = document.createElement('img');
+      image.src = heroSource;
+      image.alt = 'Verified legacy hero crop preview';
+      container.append(image);
+    }
+    required('#hero-alt').textContent = hero ? 'Verified production hero, pending package attachment.' : '';
+    renderAsset('infographic', byKind.get('infographic'), 'Verified legacy infographic');
+    required('#infographic-alt').textContent = byKind.has('infographic') ? 'Verified production infographic, pending package attachment.' : '';
+
+    renderProgressiveAudio('audio-brief', byKind.get('audio_brief'));
+    renderProgressiveAudio('audio-discussion', byKind.get('audio_discussion'));
+  };
+
+  const renderProgressiveAudio = (id, asset) => {
+    const container = required(`#${id}`);
+    container.replaceChildren();
+    const source = assetSource(asset);
+    if (!source || !asset.mediaType?.startsWith('audio/')) {
+      container.dataset.state = 'pending';
+      container.textContent = asset?.state === 'planned'
+        ? `Verified legacy ${id === 'audio-brief' ? 'Brief' : 'Discussion'} audio is ready and will attach at Produce assets.`
+        : `${id === 'audio-brief' ? 'Brief' : 'Discussion'} audio is pending attachment.`;
+      return;
+    }
+    const control = document.createElement('audio');
+    control.src = source;
+    control.controls = true;
+    control.preload = 'metadata';
+    container.append(control);
+  };
+
+  const renderProgressiveEvidence = (documentModel) => {
+    const evidence = documentModel?.state === 'available' ? documentModel.data : null;
+    const accepted = Array.isArray(evidence?.acceptedSources) ? evidence.acceptedSources : [];
+    const rejected = Array.isArray(evidence?.rejectedSources) ? evidence.rejectedSources : [];
+    const gaps = Array.isArray(evidence?.coverageGaps) ? evidence.coverageGaps : [];
+    fillList('#accepted-sources', accepted.map((source) => `${source.title} - ${source.url}`), 'Research has not produced accepted sources yet.');
+    fillList('#rejected-sources', rejected.map((source) => `${source.title}: ${source.readability?.reason || source.credibility?.reason || 'rejected'}`), 'No rejected sources.');
+    fillList('#coverage-gaps', gaps.map((gap) => `${gap.topic}: ${gap.reason}`), 'No recorded coverage gaps.');
+    fillList('#claims', [], 'Claims will appear after Story and Playbook generation.');
+    fillList('#claim-coverage', [], 'Claim coverage will appear after content generation.');
+  };
+
+  const renderProgressive = (payload) => {
+    renderRunSummary(payload.run);
+    const candidate = payload.documents.content.state === 'available'
+      ? payload.documents.content.data?.payload
+      : null;
+    if (candidate?.read?.story && candidate?.read?.playbook) {
+      renderStory(candidate);
+      renderPlaybook(candidate);
+    } else {
+      renderPendingDocument('#story-blocks', payload.documents.content.state === 'unavailable'
+        ? `Story generation exists but cannot be read: ${payload.documents.content.issue}`
+        : 'Story has not been generated yet. It is scheduled in the Create stage.');
+      renderPendingDocument('#playbook-steps', payload.documents.content.state === 'unavailable'
+        ? `Playbook generation exists but cannot be read: ${payload.documents.content.issue}`
+        : 'Playbook has not been generated yet. It is scheduled as a separate Create request.');
+    }
+    renderProgressiveMedia(payload.media);
+    renderProgressiveEvidence(payload.documents.evidence);
+    required('#qa').textContent = payload.documents.qa.state === 'available'
+      ? 'QA evidence is available and will be shown with the completed package.'
+      : 'QA is pending until Story and Playbook are generated.';
+    fillList('#qa-findings', [], 'No QA findings yet.');
+    required('#checksum').textContent = 'Package pending';
+    decisionStatus.textContent = `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}.`;
+    setDecisionAllowed(false);
+    required('#review').hidden = false;
+  };
+
   const renderStory = (payload) => {
     const story = payload.read.story;
     required('#story-title').textContent = story.title;
@@ -98,13 +204,24 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     container.replaceChildren();
     const source = assetSource(asset);
     if (!source || !asset.mediaType?.startsWith('image/')) {
-      container.textContent = `Missing ${kind} preview.`;
+      container.dataset.state = 'pending';
+      container.textContent = asset?.state === 'planned'
+        ? `Verified legacy ${kind} is ready in the migration bundle and will attach at Produce assets.`
+        : `Missing ${kind} preview.`;
       return null;
     }
     const image = document.createElement('img');
     image.src = source;
     image.alt = altText;
-    container.append(image);
+    const link = document.createElement('a');
+    link.href = source;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.className = 'full-size-link';
+    link.dataset.fullSize = kind;
+    link.title = `Open full-size ${kind}`;
+    link.append(image);
+    container.append(link);
     return source;
   };
 
@@ -139,18 +256,36 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     required(`#${id}-transcript`).textContent = audio?.transcript?.text ?? 'Transcript unavailable.';
   };
 
+  const renderVideo = (id, asset) => {
+    const container = document.querySelector(`#${id}`);
+    if (!container) return;
+    container.replaceChildren();
+    const source = assetSource(asset);
+    if (!source || !asset?.mediaType?.startsWith('video/')) {
+      container.dataset.state = 'pending';
+      container.textContent = 'No public preview Short is queued for this package.';
+      return;
+    }
+    const control = document.createElement('video');
+    control.src = source;
+    control.controls = true;
+    control.preload = 'metadata';
+    control.playsInline = true;
+    container.append(control);
+  };
+
   const load = async () => {
     try {
       if (!runId) throw new Error('A run id is required.');
-      const response = await fetch(`/api/review?runId=${encodeURIComponent(runId)}`);
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'Could not load the review.');
+      const reviewResponse = await fetch(`/api/review?runId=${encodeURIComponent(runId)}`);
+      const payload = await reviewResponse.json();
+      if (!reviewResponse.ok) throw new Error(payload.error || 'Could not load the review.');
       model = payload;
-      required('#title').textContent = payload.title;
-      required('#status').textContent = `${payload.currentStage.replace('_', ' ')}: ${payload.reviewStatus}`;
       const checksumMatches = payload.package && payload.package.packageChecksum === payload.currentPackageChecksum;
       required('#checksum').textContent = checksumMatches ? payload.package.packageChecksum : 'Package checksum mismatch';
       if (payload.package) {
+        required('#title').textContent = payload.title;
+        required('#status').textContent = `${payload.currentStage.replaceAll('_', ' ')}: ${payload.reviewStatus.replaceAll('_', ' ')}`;
         const learner = payload.package.content.target.payload;
         if (payload.package.content.target.schemaVersion === '1.1.0' && learner.materialization === 'materialized') {
           renderStory(learner);
@@ -162,6 +297,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           fillList('#infographic-text-equivalent', learner.visual.textEquivalent, 'No text equivalent.');
           renderAudio('audio-brief', payload.assets.audioBrief, learner.listen.brief);
           renderAudio('audio-discussion', payload.assets.audioDiscussion, learner.listen.discussion);
+          renderVideo('public-preview', payload.assets.publicPreview);
           renderQuiz(learner);
         } else {
           renderLegacyContent(learner);
@@ -169,16 +305,37 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           renderAsset('infographic', payload.assets.infographic, 'Infographic preview');
           renderAudio('audio-brief', payload.assets.audioBrief, null);
           renderAudio('audio-discussion', payload.assets.audioDiscussion, null);
+          renderVideo('public-preview', payload.assets.publicPreview);
         }
         renderEvidence(payload.package);
         renderQa(payload.package);
         renderGenerationExecutions(payload.generationExecutions);
         fillList('#claim-coverage', learner.claimCoverage.map((entry) => `${entry.path}: ${entry.claimIds.join(', ')}`), 'No claim coverage.');
+      } else {
+        const previewResponse = await fetch(`/api/preview?runId=${encodeURIComponent(runId)}`);
+        const preview = await previewResponse.json();
+        if (!previewResponse.ok) throw new Error(preview.error || 'Could not load the progressive preview.');
+        required('#title').textContent = preview.run.title;
+        required('#status').textContent = `${preview.run.currentStage.replaceAll('_', ' ')}: ${preview.run.currentState.replaceAll('_', ' ')}`;
+        renderProgressive(preview);
       }
       renderEditorialWarnings(payload.warnings);
-      const allowed = Boolean(payload.decisionAllowed && checksumMatches);
+      const approved = payload.reviewStatus === 'approved';
+      const rejected = payload.reviewStatus === 'rejected';
+      const terminal = approved || rejected;
+      const allowed = Boolean(payload.decisionAllowed && checksumMatches && !terminal);
       setDecisionAllowed(allowed);
-      decisionStatus.textContent = allowed ? 'One overall package decision' : (payload.issues[0] || 'This package is not open for review.');
+      required('[data-decision="approve"]').hidden = terminal;
+      required('[data-decision="request_changes"]').hidden = terminal;
+      changeForm.hidden = terminal;
+      if (terminal) changeForm.dataset.open = 'false';
+      if (payload.package) {
+        decisionStatus.textContent = terminal
+          ? (approved ? 'Approved, awaiting delivery.' : 'Rejected and removed from the active pipeline.')
+          : allowed
+            ? 'One overall package decision'
+            : (payload.issues[0] || 'This package is not open for review.');
+      }
       required('#review').hidden = false;
     } catch (loadError) {
       required('#status').textContent = 'Review data unavailable';

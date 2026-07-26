@@ -14,7 +14,7 @@ const LEGAL_STATES_BY_STAGE = {
   create: ['queued', 'running', 'waiting', 'needs_human'],
   check: ['queued', 'running', 'waiting', 'needs_human'],
   produce_assets: ['queued', 'running', 'waiting', 'needs_human'],
-  human_review: ['needs_human'],
+  human_review: ['needs_human', 'done'],
   deliver: ['queued', 'running', 'waiting', 'needs_human', 'done'],
 } as const satisfies Record<WorkflowStage, readonly StageState[]>;
 
@@ -34,6 +34,7 @@ export type WorkflowEvent =
   | { type: 'stage_completed'; packageChecksum: Checksum }
   | { type: 'quality_failed'; reason: string }
   | { type: 'review_approved'; packageChecksum: Checksum; reviewerId: string }
+  | { type: 'review_rejected'; reason: string; reviewerId: string }
   | { type: 'changes_requested'; reason: string; reviewerId: string }
   | { type: 'media_reconciliation_requested'; reason: string }
   | { type: 'package_changed'; packageChecksum: Checksum }
@@ -92,6 +93,10 @@ export function nextTransition(
 
     case 'review_approved':
       return approveReview(snapshot, event);
+
+    case 'review_rejected':
+      requireSnapshot(snapshot, 'human_review', 'needs_human');
+      return transition(snapshot, { state: 'done', reason: event.reason });
 
     case 'changes_requested':
       requireSnapshot(snapshot, 'human_review', 'needs_human');

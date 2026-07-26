@@ -16,14 +16,15 @@ test('review client renders the complete Story Playbook package in review order'
     "renderAsset('infographic'",
     "renderAudio('audio-brief'",
     "renderAudio('audio-discussion'",
+    "renderVideo('public-preview'",
     'renderQuiz',
     'renderEvidence',
     'renderQa',
     'renderGenerationExecutions',
   ];
-  let previous = -1;
+  let previous = source.indexOf('const load = async');
   for (const signal of orderedSignals) {
-    const current = source.indexOf(signal);
+    const current = source.indexOf(signal, previous + 1);
     assert.ok(current > previous, `${signal} should render after the previous review surface`);
     previous = current;
   }
@@ -104,6 +105,100 @@ test('review client shows warning details while enabling both overall decisions'
   assert.equal(warnings.children[1]?.children[0]?.textContent, payload.warnings[0]);
   assert.equal(page.approve.disabled, false);
   assert.equal(page.requestChanges.disabled, false);
+});
+
+test('review client replaces decision controls with delivery status after approval', async () => {
+  const page = reviewPageDocument();
+  const payload = {
+    title: 'Protect Your Attention',
+    currentStage: 'deliver',
+    reviewStatus: 'approved',
+    currentPackageChecksum: 'a'.repeat(64),
+    decisionAllowed: true,
+    issues: [],
+    warnings: [],
+    package: {
+      packageChecksum: 'a'.repeat(64),
+      content: {
+        target: {
+          schemaVersion: '1.0.0',
+          payload: {
+            title: 'Protect Your Attention',
+            takeaway: 'Protect focus before interruptions arrive.',
+            action: 'Choose one focus block.',
+            depths: { quick: 'Choose.', core: 'Protect.', deep: 'Return.' },
+            claimCoverage: [],
+          },
+        },
+      },
+      evidence: { acceptedSources: [], rejectedSources: [], coverageGaps: [], claims: [] },
+      qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Approved.', findings: [] } },
+    },
+    assets: {
+      hero: { state: 'missing' },
+      infographic: { state: 'missing' },
+      audioBrief: { state: 'missing' },
+      audioDiscussion: { state: 'missing' },
+    },
+    generationExecutions: {},
+  };
+
+  await mountReviewPage({
+    document: page,
+    fetch: async () => ({ ok: true, json: async () => payload }),
+  });
+
+  assert.equal(page.querySelector('#decision-status').textContent, 'Approved, awaiting delivery.');
+  assert.equal(page.approve.hidden, true);
+  assert.equal(page.requestChanges.hidden, true);
+  assert.equal(page.querySelector('#change-form').hidden, true);
+});
+
+test('review client replaces decision controls with terminal status after rejection', async () => {
+  const page = reviewPageDocument();
+  const payload = {
+    title: 'Wrong topic',
+    currentStage: 'human_review',
+    reviewStatus: 'rejected',
+    currentPackageChecksum: 'a'.repeat(64),
+    decisionAllowed: false,
+    issues: [],
+    warnings: [],
+    package: {
+      packageChecksum: 'a'.repeat(64),
+      content: {
+        target: {
+          schemaVersion: '1.0.0',
+          payload: {
+            title: 'Wrong topic',
+            takeaway: 'This package was rejected.',
+            action: 'Do not deliver it.',
+            depths: { quick: 'Stop.', core: 'Reject.', deep: 'Preserve the audit.' },
+            claimCoverage: [],
+          },
+        },
+      },
+      evidence: { acceptedSources: [], rejectedSources: [], coverageGaps: [], claims: [] },
+      qa: { deterministic: { passed: true, findings: [] }, editorial: { summary: 'Wrong topic.', findings: [] } },
+    },
+    assets: {
+      hero: { state: 'missing' },
+      infographic: { state: 'missing' },
+      audioBrief: { state: 'missing' },
+      audioDiscussion: { state: 'missing' },
+    },
+    generationExecutions: {},
+  };
+
+  await mountReviewPage({
+    document: page,
+    fetch: async () => ({ ok: true, json: async () => payload }),
+  });
+
+  assert.equal(page.querySelector('#decision-status').textContent, 'Rejected and removed from the active pipeline.');
+  assert.equal(page.approve.hidden, true);
+  assert.equal(page.requestChanges.hidden, true);
+  assert.equal(page.querySelector('#change-form').hidden, true);
 });
 
 class ReviewElement {

@@ -38,20 +38,21 @@ export function materializeStoryPlaybookTarget(input: {
   semanticTarget: unknown;
   generationPlan: NugletGenerationPlan;
   mediaArtifacts: NugletReviewMediaArtifacts;
+  retainedMediaArtifactIds?: ReadonlySet<string>;
 }): StoryPlaybookTarget {
   const semanticTarget = parseSemanticTarget(input.semanticTarget);
   const generationPlan = nugletGenerationPlanSchema.parse(input.generationPlan);
   const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
-  const hero = requiredMedia(input.mediaArtifacts, 'hero', generationInputChecksum, 'image/');
-  const infographic = requiredMedia(input.mediaArtifacts, 'infographic', generationInputChecksum, 'image/');
-  const audioBrief = requiredMedia(input.mediaArtifacts, 'audio_brief', generationInputChecksum, 'audio/');
-  const audioDiscussion = requiredMedia(input.mediaArtifacts, 'audio_discussion', generationInputChecksum, 'audio/');
+  const hero = requiredMedia(input.mediaArtifacts, 'hero', generationInputChecksum, 'image/', input.retainedMediaArtifactIds);
+  const infographic = requiredMedia(input.mediaArtifacts, 'infographic', generationInputChecksum, 'image/', input.retainedMediaArtifactIds);
+  const audioBrief = requiredMedia(input.mediaArtifacts, 'audio_brief', generationInputChecksum, 'audio/', input.retainedMediaArtifactIds);
+  const audioDiscussion = requiredMedia(input.mediaArtifacts, 'audio_discussion', generationInputChecksum, 'audio/', input.retainedMediaArtifactIds);
 
   if (audioBrief.id === audioDiscussion.id || audioBrief.checksum === audioDiscussion.checksum) {
     throw new TypeError('Brief and Discussion audio must be distinct immutable assets');
   }
 
-  const heroMetadata = heroMetadataFor(hero, generationPlan, semanticTarget.payload.hero.mediaBrief);
+  const heroMetadata = heroMetadataFor(hero, generationPlan);
   const infographicMetadata = imageMetadataFor(infographic, 'infographic');
   const briefMetadata = audioMetadataFor(audioBrief, 'audio_brief');
   const discussionMetadata = audioMetadataFor(audioDiscussion, 'audio_discussion');
@@ -116,6 +117,7 @@ function requiredMedia(
   kind: NugletReviewMediaKind,
   generationInputChecksum: string,
   mediaTypePrefix: string,
+  retainedMediaArtifactIds?: ReadonlySet<string>,
 ): WorkflowArtifact {
   const artifact = artifacts[kind];
   if (!artifact) throw new TypeError(`Required ${kind} media asset is missing`);
@@ -123,7 +125,9 @@ function requiredMedia(
   if (!artifact.mediaType.startsWith(mediaTypePrefix)) {
     throw new TypeError(`Required ${kind} media asset has an invalid media type`);
   }
-  if (artifact.inputChecksum !== generationInputChecksum) {
+  const isVerifiedLegacyReuse = artifact.provenance.mediaSource === 'legacy_nuglet';
+  const isRetainedFromSourcePackage = retainedMediaArtifactIds?.has(artifact.id) ?? false;
+  if (!isVerifiedLegacyReuse && !isRetainedFromSourcePackage && artifact.inputChecksum !== generationInputChecksum) {
     throw new TypeError(`Required ${kind} generation input checksum does not match the semantic draft`);
   }
   const measuredByteSize = positiveInteger(artifact.provenance.byteSize);
@@ -136,19 +140,17 @@ function requiredMedia(
 function heroMetadataFor(
   artifact: WorkflowArtifact,
   generationPlan: NugletGenerationPlan,
-  mediaBrief: { concept: string; metaphor: string; compositionFamily: string },
 ) {
   const dimensions = imageMetadataFor(artifact, 'hero');
-  if (dimensions.width < 1024 || dimensions.height < 768 || dimensions.width * 3 !== dimensions.height * 4) {
+  const isLegacyReuse = artifact.provenance.mediaSource === 'legacy_nuglet';
+  if (!isLegacyReuse
+    && (dimensions.width < 1024 || dimensions.height < 768 || dimensions.width * 3 !== dimensions.height * 4)) {
     throw new TypeError('Hero dimensions must be 4:3 at a minimum of 1024 x 768');
   }
-  if (mediaBrief.concept !== generationPlan.heroDirection.concept
-    || mediaBrief.metaphor !== generationPlan.heroDirection.metaphor
-    || mediaBrief.compositionFamily !== generationPlan.heroDirection.compositionFamily) {
-    throw new TypeError('Hero semantic brief does not match the approved hero direction');
-  }
-  if (artifact.provenance.styleProfileChecksum !== generationPlan.recipes.hero.checksum) {
-    throw new TypeError('Hero profile checksum does not match the approved hero profile');
+  if (!isLegacyReuse) {
+    if (artifact.provenance.styleProfileChecksum !== generationPlan.recipes.hero.checksum) {
+      throw new TypeError('Hero profile checksum does not match the approved hero profile');
+    }
   }
   const focalPoint = normalizedPoint(artifact.provenance.focalPoint, 'Hero focal point');
   const cropSafeArea = normalizedCrop(artifact.provenance.cropSafeArea);
@@ -169,7 +171,9 @@ function audioMetadataFor(artifact: WorkflowArtifact, label: string): { duration
     : '';
   const transcriptSource = artifact.provenance.transcriptSource;
   if (!durationSeconds || !transcript) throw new TypeError(`${label} measured duration and final transcript are required`);
-  if (transcriptSource !== 'notebooklm' && transcriptSource !== 'vertex_gemini') {
+  if (transcriptSource !== 'notebooklm'
+    && transcriptSource !== 'vertex_gemini'
+    && transcriptSource !== 'legacy_nuglet') {
     throw new TypeError(`${label} transcript must be derived from final audio bytes`);
   }
   if (artifact.provenance.transcriptAudioChecksum !== `sha256:${artifact.checksum}`) {

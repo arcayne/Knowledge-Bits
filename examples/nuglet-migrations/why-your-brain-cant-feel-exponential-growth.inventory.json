@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "why-your-brain-cant-feel-exponential-growth",
+  "title": "Why your brain can't feel exponential growth",
+  "sourceRunId": "2026-06-29-why-your-brain-cant-feel-exponential-growth",
+  "sourcePackagePath": "migrations/why-your-brain-cant-feel-exponential-growth",
+  "notebookId": "6959bdd8-7e13-4ea9-b271-b913dc8f0a95",
+  "regenerate": ["story", "playbook"],
+  "artifacts": {
+    "hero": {
+      "source": { "kind": "filesystem", "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-your-brain-cant-feel-exponential-growth/inhouse/hero-source.png" },
+      "targetPath": "migrations/why-your-brain-cant-feel-exponential-growth/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:0eacb9365d9fe63fb9092a7feed4b5578dd79962c940755889aa09ee993b0df7",
+      "expectedByteSize": 2767128
+    },
+    "infographic": {
+      "source": { "kind": "filesystem", "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-your-brain-cant-feel-exponential-growth/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png" },
+      "targetPath": "migrations/why-your-brain-cant-feel-exponential-growth/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:4fbdfc00ae05acbc93fbefd2a8a34e673795645f08c49d233333801614a930c0",
+      "expectedByteSize": 4463429
+    },
+    "audioBrief": {
+      "source": { "kind": "filesystem", "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-your-brain-cant-feel-exponential-growth/audio/notebooklm-short-brief.m4a" },
+      "targetPath": "migrations/why-your-brain-cant-feel-exponential-growth/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:16dcd2df1fe0b2b7ea60d800f68ce37ba3196c74ef59485b3d28cf8fa48946be",
+      "expectedByteSize": 2985602,
+      "durationSeconds": 92.740499
+    },
+    "audioDiscussion": {
+      "source": { "kind": "filesystem", "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-your-brain-cant-feel-exponential-growth/audio/notebooklm-medium-debate.m4a" },
+      "targetPath": "migrations/why-your-brain-cant-feel-exponential-growth/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:7f627407169e0edcbecd523d1e3db9291e7c5580fb321d72d87cf4f4062170ff",
+      "expectedByteSize": 11120017,
+      "durationSeconds": 345.489705
+    }
+  }
+}

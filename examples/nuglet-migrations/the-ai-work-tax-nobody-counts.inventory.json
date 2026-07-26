@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "the-ai-work-tax-nobody-counts",
+  "title": "The AI work tax nobody counts",
+  "sourceRunId": "2026-07-11-the-ai-work-tax-nobody-counts",
+  "sourcePackagePath": "migrations/the-ai-work-tax-nobody-counts",
+  "notebookId": "ea23c367-e8b4-415e-a141-f47cb70cc5cf",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-the-ai-work-tax-nobody-counts/inhouse/hero-source.png"
+      },
+      "targetPath": "migrations/the-ai-work-tax-nobody-counts/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:dfe52fe570a28af63f9e54bc93e581e93a63812207e6377c1edda4df3431de0f",
+      "expectedByteSize": 2682378
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-the-ai-work-tax-nobody-counts/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/the-ai-work-tax-nobody-counts/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:c4a6bfa21db14b0c1bf398aede0758925436004ff42cc9aa4413f53dea20a605",
+      "expectedByteSize": 4425329
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-the-ai-work-tax-nobody-counts/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/the-ai-work-tax-nobody-counts/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:675b9471ac54fe39712e4e58b5bd46bba0f5537de3d85234e413d1c9afdbf458",
+      "expectedByteSize": 3285281,
+      "durationSeconds": 102.051701
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-the-ai-work-tax-nobody-counts/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/the-ai-work-tax-nobody-counts/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:7588abb6dabde03e090da23fa5246f8990eed78e88784a3f1eeb36f98f5e473e",
+      "expectedByteSize": 41398682,
+      "durationSeconds": 1286.292608
+    }
+  }
+}

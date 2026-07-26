@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "example-nuglet",
+  "title": "Example Nuglet",
+  "sourceRunId": "published-example-nuglet",
+  "sourcePackagePath": "migrations/example-nuglet",
+  "notebookId": "replace-with-notebook-id",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/absolute/path/to/lesson-heroes/example-nuglet-hero.webp"
+      },
+      "targetPath": "migrations/example-nuglet/hero.webp",
+      "mediaType": "image/webp"
+    },
+    "infographic": {
+      "source": {
+        "kind": "https",
+        "url": "https://media.example.test/example-nuglet/infographic.webp"
+      },
+      "targetPath": "migrations/example-nuglet/infographic.webp",
+      "mediaType": "image/webp"
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "audio/example-nuglet/short-brief.m4a"
+      },
+      "targetPath": "migrations/example-nuglet/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "durationSeconds": 90
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "audio/example-nuglet/medium-debate.m4a"
+      },
+      "targetPath": "migrations/example-nuglet/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "durationSeconds": 300
+    }
+  }
+}

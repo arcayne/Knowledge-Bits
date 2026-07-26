@@ -8,6 +8,7 @@ import type {
   KnowledgeBitsContent,
   KnowledgeBitsEvidence,
   KnowledgeBitsQa,
+  NugletGenerationPlan,
   ReviewDecision,
   ReviewStatus,
   StageState,
@@ -44,6 +45,12 @@ const AUDIT_ARTIFACT_KINDS = new Set([
   'generation.recipe.snapshot',
   'generation.prompt.rendered',
   'generation.execution.report',
+]);
+const REVIEW_MEDIA_ARTIFACT_KINDS = new Set([
+  'hero',
+  'infographic',
+  'audio_brief',
+  'audio_discussion',
 ]);
 
 export interface WorkflowRun {
@@ -182,8 +189,24 @@ export interface ClaimJobInput {
   workerId: string;
   capabilities?: string[];
   leaseSeconds: number;
+  preferredRunId?: string;
   executionSeconds?: number;
   now?: Date;
+}
+
+const DEFAULT_JOB_EXECUTION_SECONDS = 300;
+const CREATE_CONTENT_JOB_EXECUTION_SECONDS = 420;
+const PRODUCE_ASSETS_JOB_EXECUTION_SECONDS = 1_200;
+
+function stageCompletionRank(stage: WorkflowStage): number {
+  switch (stage) {
+    case 'deliver': return 5;
+    case 'produce_assets': return 4;
+    case 'check': return 3;
+    case 'create': return 2;
+    case 'research': return 1;
+    case 'human_review': return 0;
+  }
 }
 
 export interface RenewJobLeaseInput {
@@ -324,6 +347,11 @@ export interface RetryStageInput {
   stage: Exclude<WorkflowStage, 'human_review' | 'deliver'>;
 }
 
+type RegenerableMediaKind = 'hero' | 'infographic' | 'audio_brief' | 'audio_discussion' | 'public_preview';
+type MediaRecipeOverrides = {
+  infographic?: NugletGenerationPlan['recipes']['infographic'];
+};
+
 export interface PrepareLegacyRevisionInput {
   runId: string;
   expectedRevision: number;
@@ -346,6 +374,7 @@ export interface WorkflowStore {
   getRun(id: string): Promise<WorkflowRun | null>;
   listRuns(): Promise<WorkflowRun[]>;
   listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]>;
+  listArtifactsByIds(runId: string, artifactIds: readonly string[]): Promise<WorkflowArtifact[]>;
   listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]>;
   getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null>;
   getReview(runId: string, packageChecksum: string): Promise<WorkflowReview | null>;
@@ -370,6 +399,11 @@ export interface WorkflowStore {
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
   retryStage(input: RetryStageInput): Promise<WorkflowRun>;
   queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun>;
+  queueMediaRegeneration(
+    runId: string,
+    kinds: readonly RegenerableMediaKind[],
+    recipeOverrides?: MediaRecipeOverrides,
+  ): Promise<WorkflowRun>;
   prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
@@ -401,6 +435,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   listArtifacts(runId: string, revision: number): Promise<WorkflowArtifact[]> {
     return this.store.listArtifacts(runId, revision);
+  }
+
+  listArtifactsByIds(runId: string, artifactIds: readonly string[]): Promise<WorkflowArtifact[]> {
+    return this.store.listArtifactsByIds(runId, artifactIds);
   }
 
   listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]> {
@@ -497,6 +535,14 @@ export class WorkflowRepository implements WorkflowStore {
 
   queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun> {
     return this.store.queueLegacyAudioReconciliation(runId);
+  }
+
+  queueMediaRegeneration(
+    runId: string,
+    kinds: readonly RegenerableMediaKind[],
+    recipeOverrides?: MediaRecipeOverrides,
+  ): Promise<WorkflowRun> {
+    return this.store.queueMediaRegeneration(runId, kinds, recipeOverrides);
   }
 
   prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
@@ -638,6 +684,16 @@ export class PrismaWorkflowStore implements WorkflowStore {
     return artifacts.map(toWorkflowArtifact);
   }
 
+  async listArtifactsByIds(runId: string, artifactIds: readonly string[]): Promise<WorkflowArtifact[]> {
+    const uniqueIds = [...new Set(artifactIds)];
+    if (!uniqueIds.length) return [];
+    const artifacts = await this.prisma.artifact.findMany({
+      where: { runId, id: { in: uniqueIds } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return artifacts.map(toWorkflowArtifact);
+  }
+
   async listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]> {
     const jobs = await this.prisma.job.findMany({
       where: {
@@ -653,11 +709,27 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (!selectedJobIds.has(job.stage)) selectedJobIds.set(job.stage, job.id);
     }
     if (!selectedJobIds.size) return [];
+    const successfulJobIds = jobs.map((job) => job.id);
+    const reviewMedia = latestReviewMediaArtifacts((await this.prisma.artifact.findMany({
+      where: {
+        runId,
+        revision: { lte: revision },
+        jobId: { in: successfulJobIds },
+        kind: { in: [...REVIEW_MEDIA_ARTIFACT_KINDS] },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    })).map(toWorkflowArtifact));
+    const selectedMediaJobIds = reviewMedia.flatMap((artifact) => artifact.jobId ? [artifact.jobId] : []);
+    const selectedArtifactJobIds = [...new Set([...selectedJobIds.values(), ...selectedMediaJobIds])];
     const artifacts = await this.prisma.artifact.findMany({
-      where: { runId, revision: { lte: revision }, jobId: { in: [...selectedJobIds.values()] } },
+      where: {
+        runId,
+        revision: { lte: revision },
+        jobId: { in: selectedArtifactJobIds },
+      },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    return artifacts.map(toWorkflowArtifact);
+    return latestReviewMediaArtifacts(artifacts.map(toWorkflowArtifact));
   }
 
   async getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
@@ -756,6 +828,18 @@ export class PrismaWorkflowStore implements WorkflowStore {
         orderBy: { updatedAt: 'desc' },
       });
       if (!previousJob) throw new WorkflowConflictError('No completed worker action is available to retry');
+      const previousInput = previousJob.input as unknown as JsonObject;
+      const retryDependencies = isLegacyMediaReconciliationInput(previousInput)
+        ? await transaction.artifact.findMany({
+          where: {
+            runId: input.runId,
+            revision: run.currentRevision,
+            kind: 'parsed_output',
+            action: { in: [ACTION_BY_STAGE.create, ACTION_BY_STAGE.check] },
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        })
+        : [];
       const now = new Date();
       await transaction.job.create({
         data: {
@@ -767,7 +851,10 @@ export class PrismaWorkflowStore implements WorkflowStore {
           idempotencyKey: `workflow:${input.runId}:${input.stage}:manual-retry:${randomUUID()}`,
           availableAt: now,
           input: toPrismaJson({
-            ...(previousJob.input as unknown as JsonObject),
+            ...previousInput,
+            ...(retryDependencies.length > 0
+              ? { dependencies: retryDependencies.map(toWorkflowArtifact).map(toJobArtifactDependency) }
+              : {}),
             ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
           }),
         },
@@ -810,18 +897,30 @@ export class PrismaWorkflowStore implements WorkflowStore {
         type: 'media_reconciliation_requested',
         reason: 'Attach the existing Brief and Discussion audio files; do not generate audio.',
       });
-      const packageVersion = run.packageChecksum
+      let packageVersion = run.packageChecksum
         ? await transaction.packageVersion.findFirst({
           where: { runId, packageChecksum: run.packageChecksum },
           orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }],
         })
         : null;
+      packageVersion ??= await transaction.packageVersion.findFirst({
+        where: { runId },
+        orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }],
+      });
       const dependencies = packageVersion
         ? await transaction.artifact.findMany({
           where: { runId, id: { in: packageArtifactIds(packageVersion.artifactInventory) } },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         })
-        : [];
+        : await transaction.artifact.findMany({
+          where: {
+            runId,
+            revision: run.currentRevision,
+            kind: 'parsed_output',
+            action: { in: [ACTION_BY_STAGE.create, ACTION_BY_STAGE.check] },
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        });
       const now = new Date();
       await transaction.stage.update({
         where: { runId_name: { runId, name: 'human_review' } },
@@ -870,6 +969,113 @@ export class PrismaWorkflowStore implements WorkflowStore {
             ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
             mediaOperation: 'attach_existing',
             mediaKinds: ['audio_brief', 'audio_discussion'],
+            dependencies: dependencies.map(toWorkflowArtifact).map(toJobArtifactDependency),
+          }),
+        },
+      });
+      return toWorkflowRun(await transaction.run.findUniqueOrThrow({
+        where: { id: runId },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      }));
+    });
+  }
+
+  async queueMediaRegeneration(
+    runId: string,
+    kinds: readonly RegenerableMediaKind[],
+    recipeOverrides?: MediaRecipeOverrides,
+  ): Promise<WorkflowRun> {
+    assertRegenerableMediaKinds(kinds);
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, runId);
+      const run = await transaction.run.findUnique({ where: { id: runId }, include: { stages: true } });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      const reviewStage = run.stages.find((candidate) => candidate.name === 'human_review');
+      const pendingReview = run.currentStage === 'human_review' && reviewStage?.state === 'needs_human';
+      const approvedBeforeDelivery = run.currentStage === 'deliver' && run.reviewStatus === 'approved';
+      if (!pendingReview && !approvedBeforeDelivery) {
+        throw new WorkflowConflictError('Media regeneration requires pending review or approval awaiting delivery');
+      }
+      const activeJob = await transaction.job.findFirst({
+        where: { runId, state: { in: ['queued', 'running'] } },
+        select: { id: true, stage: true, state: true },
+      });
+      if (activeJob?.state === 'running' || (activeJob && activeJob.stage !== 'deliver')) {
+        throw new WorkflowConflictError('The run already has active pipeline work');
+      }
+      const currentPackageVersion = run.packageChecksum
+        ? await transaction.packageVersion.findFirst({
+          where: { runId, packageChecksum: run.packageChecksum },
+          orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }],
+        })
+        : null;
+      const packageVersion = currentPackageVersion ?? await transaction.packageVersion.findFirst({
+        where: { runId },
+        orderBy: [{ revision: 'desc' }, { createdAt: 'desc' }],
+      });
+      const dependencies = packageVersion
+        ? await transaction.artifact.findMany({
+          where: { runId, id: { in: packageArtifactIds(packageVersion.artifactInventory) } },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        })
+        : await transaction.artifact.findMany({
+          where: {
+            runId,
+            revision: run.currentRevision,
+            kind: 'parsed_output',
+            action: { in: [ACTION_BY_STAGE.create, ACTION_BY_STAGE.check] },
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        });
+      if (!dependencies.length) throw new WorkflowConflictError('Media regeneration requires current content artifacts');
+      const regenerationBrief = briefWithMediaRegenerationSource(
+        briefWithMediaRecipeOverrides(run.brief as JsonObject, recipeOverrides),
+        packageVersion?.packageChecksum,
+        kinds,
+      );
+      const now = new Date();
+      if (approvedBeforeDelivery) {
+        await transaction.job.updateMany({
+          where: { runId, stage: 'deliver', state: 'queued' },
+          data: { state: 'superseded', leaseOwner: null, leaseExpiresAt: null, executionDeadlineAt: null },
+        });
+        await transaction.delivery.updateMany({
+          where: { runId, state: { in: ['queued', 'waiting', 'failed'] } },
+          data: { state: 'superseded', nextAttemptAt: null },
+        });
+      }
+      await transaction.stage.update({
+        where: { runId_name: { runId, name: 'human_review' } },
+        data: { state: 'done', reason: null },
+      });
+      await transaction.stage.upsert({
+        where: { runId_name: { runId, name: 'produce_assets' } },
+        update: { state: 'queued', reason: `Regenerate ${kinds.join(', ')}`, revisionAttempt: 0 },
+        create: { runId, name: 'produce_assets', state: 'queued', reason: `Regenerate ${kinds.join(', ')}`, revisionAttempt: 0 },
+      });
+      await transaction.run.update({
+        where: { id: runId },
+        data: {
+          brief: toPrismaJson(regenerationBrief),
+          currentStage: 'produce_assets',
+          packageChecksum: null,
+          approvedChecksum: null,
+          reviewStatus: 'pending',
+        },
+      });
+      await transaction.job.create({
+        data: {
+          runId,
+          stage: 'produce_assets',
+          action: ACTION_BY_STAGE.produce_assets,
+          state: 'queued',
+          idempotencyKey: `workflow:${runId}:produce_assets:media-regeneration:${run.currentRevision}:${randomUUID()}`,
+          availableAt: now,
+          input: toPrismaJson({
+            brief: regenerationBrief,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            mediaOperation: 'generate',
+            mediaKinds: [...kinds],
             dependencies: dependencies.map(toWorkflowArtifact).map(toJobArtifactDependency),
           }),
         },
@@ -977,9 +1183,18 @@ export class PrismaWorkflowStore implements WorkflowStore {
     assertCapabilities(input.capabilities);
     const claimedAt = input.now ?? new Date();
     const leaseExpiresAt = new Date(claimedAt.getTime() + input.leaseSeconds * 1_000);
-    const executionDeadlineAt = new Date(claimedAt.getTime() + (input.executionSeconds ?? 300) * 1_000);
+    const executionDeadlineAt = new Date(claimedAt.getTime() + (input.executionSeconds ?? DEFAULT_JOB_EXECUTION_SECONDS) * 1_000);
+    const createContentExecutionDeadlineAt = new Date(
+      claimedAt.getTime() + (input.executionSeconds ?? CREATE_CONTENT_JOB_EXECUTION_SECONDS) * 1_000,
+    );
+    const produceAssetsExecutionDeadlineAt = new Date(
+      claimedAt.getTime() + (input.executionSeconds ?? PRODUCE_ASSETS_JOB_EXECUTION_SECONDS) * 1_000,
+    );
     const capabilityFilter = input.capabilities?.length
       ? Prisma.sql`AND "action" IN (${Prisma.join(input.capabilities)})`
+      : Prisma.empty;
+    const preferredRunFilter = input.preferredRunId
+      ? Prisma.sql`AND "Run"."id" = ${input.preferredRunId}`
       : Prisma.empty;
     return this.prisma.$transaction(async (transaction) => {
       await transaction.$executeRaw(Prisma.sql`
@@ -1014,7 +1229,11 @@ export class PrismaWorkflowStore implements WorkflowStore {
       SET "state" = 'running',
           "leaseOwner" = ${input.workerId},
           "leaseExpiresAt" = ${leaseExpiresAt},
-          "executionDeadlineAt" = ${executionDeadlineAt},
+          "executionDeadlineAt" = CASE
+            WHEN "action" = 'create_content' THEN ${createContentExecutionDeadlineAt}
+            WHEN "action" = 'produce_assets' THEN ${produceAssetsExecutionDeadlineAt}
+            ELSE ${executionDeadlineAt}
+          END,
           "attempt" = "attempt" + 1,
           "updatedAt" = ${claimedAt}
       WHERE "id" = (
@@ -1032,7 +1251,17 @@ export class PrismaWorkflowStore implements WorkflowStore {
             )
           )
           ${capabilityFilter}
-        ORDER BY "Job"."availableAt" ASC, "Job"."createdAt" ASC
+          ${preferredRunFilter}
+        ORDER BY CASE "Job"."stage"
+            WHEN 'deliver' THEN 5
+            WHEN 'produce_assets' THEN 4
+            WHEN 'check' THEN 3
+            WHEN 'create' THEN 2
+            WHEN 'research' THEN 1
+            ELSE 0
+          END DESC,
+          "Job"."availableAt" ASC,
+          "Job"."createdAt" ASC
         FOR UPDATE OF "Job", "Run" SKIP LOCKED
         LIMIT 1
       ) AND "state" = 'queued'
@@ -1251,6 +1480,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               input: {
                 brief: job.run.brief as JsonObject,
                 ...(job.run.notebookLmNotebookId ? { notebookLmNotebookId: job.run.notebookLmNotebookId } : {}),
+                ...legacyMediaJobInput(job.run.brief as JsonObject, effect.stage),
                 dependencies: nextJobDependencies(job.input as JsonObject, completedArtifacts, effect.stage),
               },
             });
@@ -1593,7 +1823,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (!locked[0]) throw new WorkflowNotFoundError('Delivery not found');
       const delivery = await transaction.delivery.findUniqueOrThrow({ where: { id: deliveryId } });
       const run = await transaction.run.findUniqueOrThrow({ where: { id: delivery.runId } });
-      if (!['failed', 'waiting', 'running', 'verifying', 'succeeded'].includes(delivery.state)) {
+      if (!['failed', 'waiting', 'running', 'verifying', 'succeeded', 'needs_human'].includes(delivery.state)) {
         throw new WorkflowConflictError('Delivery state is not recoverable');
       }
       if (run.packageChecksum !== delivery.packageChecksum || run.approvedChecksum !== delivery.packageChecksum) {
@@ -1653,7 +1883,12 @@ export class PrismaWorkflowStore implements WorkflowStore {
       });
       const updated = await transaction.delivery.update({
         where: { id: delivery.id },
-        data: { nextAttemptAt: ['failed', 'waiting'].includes(delivery.state) ? now : delivery.nextAttemptAt },
+        data: {
+          state: delivery.state === 'needs_human' ? 'waiting' : delivery.state,
+          nextAttemptAt: ['failed', 'waiting', 'needs_human'].includes(delivery.state)
+            ? now
+            : delivery.nextAttemptAt,
+        },
       });
       return { delivery: toWorkflowDelivery(updated), nextAttempt };
     });
@@ -1729,7 +1964,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
             currentRevision: nextRevision,
             packageChecksum: transition.packageChecksum,
             approvedChecksum: transition.approvedChecksum,
-            reviewStatus: input.decision === 'approve' ? 'approved' : 'changes_requested',
+            reviewStatus: reviewStatusForDecision(input.decision),
           },
         });
         for (const [index, effect] of transition.effects.entries()) {
@@ -2048,6 +2283,14 @@ class InMemoryWorkflowStore implements WorkflowStore {
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
   }
 
+  async listArtifactsByIds(runId: string, artifactIds: readonly string[]): Promise<WorkflowArtifact[]> {
+    const requestedIds = new Set(artifactIds);
+    if (!requestedIds.size) return [];
+    return [...this.artifactsById.values()]
+      .filter((artifact) => artifact.runId === runId && requestedIds.has(artifact.id))
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+  }
+
   async listArtifactsForSuccessfulStageJobs(runId: string, revision: number): Promise<WorkflowArtifact[]> {
     const selectedJobIds = new Map<WorkflowStage, string>();
     const jobs = [...this.jobs.values()]
@@ -2060,12 +2303,23 @@ class InMemoryWorkflowStore implements WorkflowStore {
     for (const job of jobs) {
       if (!selectedJobIds.has(job.stage)) selectedJobIds.set(job.stage, job.id);
     }
-    return [...this.artifactsById.values()]
+    const successfulJobIds = new Set(jobs.map((job) => job.id));
+    const selectedMediaJobIds = new Set(latestReviewMediaArtifacts([...this.artifactsById.values()]
       .filter((artifact) => artifact.runId === runId
         && artifact.revision <= revision
         && artifact.jobId !== null
-        && selectedJobIds.get(artifact.stage as WorkflowStage) === artifact.jobId)
+        && REVIEW_MEDIA_ARTIFACT_KINDS.has(artifact.kind)
+        && successfulJobIds.has(artifact.jobId))
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)))
+      .flatMap((artifact) => artifact.jobId ? [artifact.jobId] : []));
+    const artifacts = [...this.artifactsById.values()]
+      .filter((artifact) => artifact.runId === runId
+        && artifact.revision <= revision
+        && artifact.jobId !== null
+        && (selectedJobIds.get(artifact.stage as WorkflowStage) === artifact.jobId
+          || selectedMediaJobIds.has(artifact.jobId)))
       .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+    return latestReviewMediaArtifacts(artifacts);
   }
 
   async getArtifact(runId: string, artifactId: string): Promise<WorkflowArtifact | null> {
@@ -2152,6 +2406,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
       .filter((job) => job.runId === input.runId && job.stage === input.stage && job.state === 'needs_human')
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
     if (!previousJob) throw new WorkflowConflictError('No completed worker action is available to retry');
+    const retryDependencies = isLegacyMediaReconciliationInput(previousJob.input)
+      ? currentReconciliationDependencies(this.artifactsById.values(), input.runId, run.currentRevision)
+      : [];
     const now = this.clock();
     stage.state = 'queued';
     stage.reason = null;
@@ -2170,6 +2427,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       attempt: 0,
       input: {
         ...previousJob.input,
+        ...(retryDependencies.length > 0 ? { dependencies: retryDependencies } : {}),
         ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
       },
       result: null,
@@ -2205,15 +2463,20 @@ class InMemoryWorkflowStore implements WorkflowStore {
       type: 'media_reconciliation_requested',
       reason: 'Attach the existing Brief and Discussion audio files; do not generate audio.',
     });
-    const packageVersion = run.packageChecksum
+    let packageVersion = run.packageChecksum
       ? [...this.packageVersionsByIdentity.values()]
         .filter((candidate) => candidate.runId === runId && candidate.packageChecksum === run.packageChecksum)
         .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0]
       : undefined;
+    packageVersion ??= [...this.packageVersionsByIdentity.values()]
+      .filter((candidate) => candidate.runId === runId)
+      .sort((left, right) => (
+        right.revision - left.revision || right.createdAt.getTime() - left.createdAt.getTime()
+      ))[0];
     const dependencies = packageVersion?.artifactInventory.flatMap((reference) => {
       const artifact = this.artifactsById.get(reference.artifactId);
       return artifact ? [toJobArtifactDependency(artifact)] : [];
-    }) ?? [];
+    }) ?? currentReconciliationDependencies(this.artifactsById.values(), runId, run.currentRevision);
     const now = this.clock();
     reviewStage.state = 'done';
     reviewStage.reason = null;
@@ -2261,6 +2524,111 @@ class InMemoryWorkflowStore implements WorkflowStore {
       type: 'queue_stage',
       payload: { type: 'queue_stage', stage: 'produce_assets' },
     });
+    return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
+  async queueMediaRegeneration(
+    runId: string,
+    kinds: readonly RegenerableMediaKind[],
+    recipeOverrides?: MediaRecipeOverrides,
+  ): Promise<WorkflowRun> {
+    assertRegenerableMediaKinds(kinds);
+    const run = this.requireRun(runId);
+    const reviewStage = run.stages.human_review;
+    const pendingReview = run.currentStage === 'human_review' && reviewStage?.state === 'needs_human';
+    const approvedBeforeDelivery = run.currentStage === 'deliver' && run.reviewStatus === 'approved';
+    if (!pendingReview && !approvedBeforeDelivery) {
+      throw new WorkflowConflictError('Media regeneration requires pending review or approval awaiting delivery');
+    }
+    const activeJobs = [...this.jobs.values()].filter((job) => (
+      job.runId === runId && (job.state === 'queued' || job.state === 'running')
+    ));
+    if (activeJobs.some((job) => job.state === 'running' || job.stage !== 'deliver')) {
+      throw new WorkflowConflictError('The run already has active pipeline work');
+    }
+    const currentPackageVersion = run.packageChecksum
+      ? [...this.packageVersionsByIdentity.values()]
+        .filter((candidate) => candidate.runId === runId && candidate.packageChecksum === run.packageChecksum)
+        .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0]
+      : undefined;
+    const packageVersion = currentPackageVersion ?? [...this.packageVersionsByIdentity.values()]
+      .filter((candidate) => candidate.runId === runId)
+      .sort((left, right) => (
+        right.revision - left.revision || right.createdAt.getTime() - left.createdAt.getTime()
+      ))[0];
+    const dependencies = packageVersion?.artifactInventory.flatMap((reference) => {
+      const artifact = this.artifactsById.get(reference.artifactId);
+      return artifact ? [toJobArtifactDependency(artifact)] : [];
+    }) ?? currentReconciliationDependencies(this.artifactsById.values(), runId, run.currentRevision);
+    if (!dependencies.length) throw new WorkflowConflictError('Media regeneration requires current content artifacts');
+    const regenerationBrief = briefWithMediaRegenerationSource(
+      briefWithMediaRecipeOverrides(run.brief, recipeOverrides),
+      packageVersion?.packageChecksum,
+      kinds,
+    );
+    const now = this.clock();
+    if (approvedBeforeDelivery) {
+      for (const job of activeJobs) {
+        job.state = 'superseded';
+        job.leaseOwner = null;
+        job.leaseExpiresAt = null;
+        job.executionDeadlineAt = null;
+        job.updatedAt = now;
+      }
+      for (const delivery of this.deliveriesByIdempotencyKey.values()) {
+        if (delivery.runId === runId && ['queued', 'waiting', 'failed'].includes(delivery.state)) {
+          delivery.state = 'superseded';
+          delivery.nextAttemptAt = null;
+          delivery.updatedAt = now;
+        }
+      }
+    }
+    run.stages.human_review = {
+      name: 'human_review',
+      state: 'done',
+      reason: null,
+      attempt: reviewStage?.attempt ?? 0,
+      revisionAttempts: reviewStage?.revisionAttempts ?? 0,
+    };
+    run.currentStage = 'produce_assets';
+    run.brief = regenerationBrief;
+    run.stages.produce_assets = {
+      name: 'produce_assets',
+      state: 'queued',
+      reason: `Regenerate ${kinds.join(', ')}`,
+      attempt: 0,
+      revisionAttempts: 0,
+    };
+    run.packageChecksum = null;
+    run.approvedChecksum = null;
+    run.reviewStatus = 'pending';
+    run.updatedAt = now;
+    const job: WorkflowJob = {
+      id: this.idGenerator(),
+      runId,
+      stage: 'produce_assets',
+      action: ACTION_BY_STAGE.produce_assets,
+      state: 'queued',
+      idempotencyKey: `workflow:${runId}:produce_assets:media-regeneration:${run.currentRevision}:${this.idGenerator()}`,
+      availableAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      executionDeadlineAt: null,
+      attempt: 0,
+      input: {
+        brief: regenerationBrief,
+        ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+        mediaOperation: 'generate',
+        mediaKinds: [...kinds],
+        dependencies,
+      },
+      result: null,
+      completionReceipt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.jobs.set(job.id, job);
+    this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
   }
 
@@ -2347,12 +2715,14 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const job = [...this.jobs.values()]
       .filter((candidate) => candidate.state === 'queued'
         && candidate.availableAt <= claimedAt
+        && (!input.preferredRunId || candidate.runId === input.preferredRunId)
         && this.requireRun(candidate.runId).currentStage === candidate.stage
         && (candidate.stage !== 'deliver'
           || (this.requireRun(candidate.runId).approvedChecksum !== null
             && candidate.input.packageChecksum === this.requireRun(candidate.runId).approvedChecksum))
         && (!input.capabilities?.length || input.capabilities.includes(candidate.action)))
-      .sort((left, right) => left.availableAt.getTime() - right.availableAt.getTime()
+      .sort((left, right) => stageCompletionRank(right.stage) - stageCompletionRank(left.stage)
+        || left.availableAt.getTime() - right.availableAt.getTime()
         || left.createdAt.getTime() - right.createdAt.getTime())[0];
 
     if (!job) return null;
@@ -2360,7 +2730,13 @@ class InMemoryWorkflowStore implements WorkflowStore {
     job.state = 'running';
     job.leaseOwner = input.workerId;
     job.leaseExpiresAt = new Date(claimedAt.getTime() + input.leaseSeconds * 1_000);
-    job.executionDeadlineAt = new Date(claimedAt.getTime() + (input.executionSeconds ?? 300) * 1_000);
+    const executionSeconds = input.executionSeconds
+      ?? (job.action === 'create_content'
+        ? CREATE_CONTENT_JOB_EXECUTION_SECONDS
+        : job.action === 'produce_assets'
+          ? PRODUCE_ASSETS_JOB_EXECUTION_SECONDS
+          : DEFAULT_JOB_EXECUTION_SECONDS);
+    job.executionDeadlineAt = new Date(claimedAt.getTime() + executionSeconds * 1_000);
     job.attempt += 1;
     job.updatedAt = claimedAt;
     const run = this.requireRun(job.runId);
@@ -2544,6 +2920,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
           input: {
             brief: run.brief,
             ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            ...legacyMediaJobInput(run.brief, effect.stage),
             dependencies: nextJobDependencies(job.input, completedArtifacts, effect.stage),
           },
         });
@@ -2776,7 +3153,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
     const delivery = await this.getDelivery(deliveryId);
     if (!delivery) throw new WorkflowNotFoundError('Delivery not found');
     const run = this.requireRun(delivery.runId);
-    if (!['failed', 'waiting', 'running', 'verifying', 'succeeded'].includes(delivery.state)) {
+    if (!['failed', 'waiting', 'running', 'verifying', 'succeeded', 'needs_human'].includes(delivery.state)) {
       throw new WorkflowConflictError('Delivery state is not recoverable');
     }
     if (run.packageChecksum !== delivery.packageChecksum || run.approvedChecksum !== delivery.packageChecksum) {
@@ -2827,7 +3204,10 @@ class InMemoryWorkflowStore implements WorkflowStore {
     if (!stage) throw new WorkflowConflictError('Delivery stage does not exist');
     stage.state = 'queued';
     stage.reason = null;
-    if (delivery.state === 'failed' || delivery.state === 'waiting') delivery.nextAttemptAt = now;
+    if (delivery.state === 'failed' || delivery.state === 'waiting' || delivery.state === 'needs_human') {
+      delivery.state = 'waiting';
+      delivery.nextAttemptAt = now;
+    }
     delivery.updatedAt = now;
     return { delivery, nextAttempt };
   }
@@ -2885,7 +3265,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
     run.currentRevision += Number(input.decision === 'request_changes');
     run.packageChecksum = transition.packageChecksum;
     run.approvedChecksum = transition.approvedChecksum;
-    run.reviewStatus = input.decision === 'approve' ? 'approved' : 'changes_requested';
+    run.reviewStatus = reviewStatusForDecision(input.decision);
     run.updatedAt = this.clock();
 
     for (const [index, effect] of transition.effects.entries()) {
@@ -2932,6 +3312,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
           input: {
             brief: run.brief,
             ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            ...legacyMediaJobInput(run.brief, effect.stage),
             dependencies: packageVersion.artifactInventory
               .flatMap((reference) => {
                 const artifact = this.artifactsById.get(reference.artifactId);
@@ -3074,6 +3455,19 @@ function nextJobDependencies(
   return [...new Map(filtered.map((dependency) => [dependency.artifactId, dependency])).values()];
 }
 
+function legacyMediaJobInput(
+  brief: JsonObject,
+  stage: Exclude<WorkflowStage, 'human_review' | 'deliver'>,
+): JsonObject {
+  if (stage !== 'produce_assets') return {};
+  const generationPlan = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
+  if (!generationPlan.success || generationPlan.data.mediaMode !== 'reuse_legacy') return {};
+  return {
+    mediaOperation: 'attach_existing',
+    mediaKinds: ['hero', 'infographic', 'audio_brief', 'audio_discussion'],
+  };
+}
+
 function dependenciesFromJobInput(input: JsonObject): JobArtifactDependency[] {
   if (!Array.isArray(input.dependencies)) return [];
   return input.dependencies.filter(isJobArtifactDependency);
@@ -3111,6 +3505,26 @@ function packageArtifactIds(value: Prisma.JsonValue): string[] {
   ));
 }
 
+function isLegacyMediaReconciliationInput(input: JsonObject): boolean {
+  return input.mediaOperation === 'attach_existing'
+    && Array.isArray(input.mediaKinds)
+    && input.mediaKinds.some((kind) => kind === 'audio_brief' || kind === 'audio_discussion');
+}
+
+function currentReconciliationDependencies(
+  artifacts: Iterable<WorkflowArtifact>,
+  runId: string,
+  revision: number,
+): JobArtifactDependency[] {
+  return [...artifacts]
+    .filter((artifact) => artifact.runId === runId
+      && artifact.revision === revision
+      && artifact.kind === 'parsed_output'
+      && (artifact.action === ACTION_BY_STAGE.create || artifact.action === ACTION_BY_STAGE.check))
+    .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id))
+    .map(toJobArtifactDependency);
+}
+
 function assertLegacyAudioReuse(brief: JsonObject): void {
   const generationPlan = isRecord(brief.generationPlan) ? brief.generationPlan : {};
   const reuse = isRecord(generationPlan.legacyMediaReuse)
@@ -3127,6 +3541,53 @@ function assertLegacyAudioReuse(brief: JsonObject): void {
 
 function legacyAudioReconciliationJobIdempotencyKey(runId: string, revision: number): string {
   return `workflow:${runId}:produce_assets:legacy-audio:${revision}`;
+}
+
+function assertRegenerableMediaKinds(kinds: readonly RegenerableMediaKind[]): void {
+  const allowed = new Set<RegenerableMediaKind>(['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview']);
+  if (!kinds.length || new Set(kinds).size !== kinds.length || kinds.some((kind) => !allowed.has(kind))) {
+    throw new WorkflowValidationError('Media regeneration requires distinct supported media kinds');
+  }
+}
+
+function briefWithMediaRecipeOverrides(
+  brief: JsonObject,
+  recipeOverrides?: MediaRecipeOverrides,
+): JsonObject {
+  if (!recipeOverrides?.infographic) return brief;
+  const parsedPlan = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
+  if (!parsedPlan.success) {
+    throw new WorkflowValidationError('Media recipe override requires a valid Nuglet generation plan');
+  }
+  const nextPlan = nugletGenerationPlanSchema.safeParse({
+    ...parsedPlan.data,
+    recipes: {
+      ...parsedPlan.data.recipes,
+      infographic: recipeOverrides.infographic,
+    },
+  });
+  if (!nextPlan.success) {
+    throw new WorkflowValidationError('The requested media recipe override is incompatible with this run');
+  }
+  return {
+    ...brief,
+    generationPlan: nextPlan.data,
+  };
+}
+
+function briefWithMediaRegenerationSource(
+  brief: JsonObject,
+  sourcePackageChecksum: string | undefined,
+  regeneratedKinds: readonly RegenerableMediaKind[],
+): JsonObject {
+  if (!sourcePackageChecksum) return brief;
+  return {
+    ...brief,
+    mediaRegeneration: {
+      sourcePackageChecksum,
+      regeneratedKinds: [...regeneratedKinds],
+    },
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -3166,8 +3627,10 @@ function assertStrictLegacyReplacement(input: PrepareLegacyRevisionInput): void 
   if (!brief.success || !plan?.success || plan.data.contentKind !== 'nuglet.lesson.v1') {
     throw new WorkflowValidationError('Legacy revision preparation requires a strict Nuglet replacement brief');
   }
+  const evidenceNotebookId = plan.data.mediaBaseline?.descriptor.notebookId
+    ?? plan.data.legacyMediaReuse?.notebookId;
   if (brief.data.notebookLmNotebookId !== input.notebookLmNotebookId
-    || plan.data.mediaBaseline.descriptor.notebookId !== input.notebookLmNotebookId) {
+    || evidenceNotebookId !== input.notebookLmNotebookId) {
     throw new WorkflowValidationError('Replacement brief notebook binding must match the requested notebook');
   }
 }
@@ -3271,8 +3734,8 @@ function reviewIdentityWhere(input: RecordReviewInput) {
 }
 
 function toRecordReviewInput(run: Pick<WorkflowRun, 'id' | 'currentRevision'>, input: ReviewRunInput): RecordReviewInput {
-  if (input.decision === 'request_changes' && !input.comment?.trim()) {
-    throw new WorkflowValidationError('Changes requested require a comment');
+  if ((input.decision === 'request_changes' || input.decision === 'reject') && !input.comment?.trim()) {
+    throw new WorkflowValidationError('Changes and rejections require a comment');
   }
   if (input.decision === 'approve' && input.comment !== undefined) {
     throw new WorkflowValidationError('Approval does not accept a comment');
@@ -3288,9 +3751,19 @@ function toRecordReviewInput(run: Pick<WorkflowRun, 'id' | 'currentRevision'>, i
 }
 
 function reviewEvent(input: ReviewRunInput) {
-  return input.decision === 'approve'
-    ? { type: 'review_approved' as const, packageChecksum: input.packageChecksum as `${string}`, reviewerId: input.reviewerId }
-    : { type: 'changes_requested' as const, reason: input.comment!.trim(), reviewerId: input.reviewerId };
+  if (input.decision === 'approve') {
+    return { type: 'review_approved' as const, packageChecksum: input.packageChecksum as `${string}`, reviewerId: input.reviewerId };
+  }
+  if (input.decision === 'reject') {
+    return { type: 'review_rejected' as const, reason: input.comment!.trim(), reviewerId: input.reviewerId };
+  }
+  return { type: 'changes_requested' as const, reason: input.comment!.trim(), reviewerId: input.reviewerId };
+}
+
+function reviewStatusForDecision(decision: ReviewRunInput['decision']): ReviewStatus {
+  if (decision === 'approve') return 'approved';
+  if (decision === 'reject') return 'rejected';
+  return 'changes_requested';
 }
 
 function reviewStatusForTransition(current: ReviewStatus, transition: TransitionResult): ReviewStatus {
@@ -3711,6 +4184,16 @@ function resolveExistingPackageVersion(
     throw new WorkflowConflictError('Package version conflicts with the existing immutable package');
   }
   return version;
+}
+
+function latestReviewMediaArtifacts(artifacts: readonly WorkflowArtifact[]): WorkflowArtifact[] {
+  const latestByKind = new Map<string, WorkflowArtifact>();
+  for (const artifact of artifacts) {
+    if (REVIEW_MEDIA_ARTIFACT_KINDS.has(artifact.kind)) latestByKind.set(artifact.kind, artifact);
+  }
+  return artifacts.filter((artifact) => (
+    !REVIEW_MEDIA_ARTIFACT_KINDS.has(artifact.kind) || latestByKind.get(artifact.kind)?.id === artifact.id
+  ));
 }
 
 async function lockRun(transaction: Prisma.TransactionClient, runId: string): Promise<void> {

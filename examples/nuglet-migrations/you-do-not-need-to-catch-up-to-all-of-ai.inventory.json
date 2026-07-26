@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "you-do-not-need-to-catch-up-to-all-of-ai",
+  "title": "You do not need to catch up to all of AI",
+  "sourceRunId": "2026-06-28-you-do-not-need-to-catch-up-to-all-of-ai",
+  "sourcePackagePath": "migrations/you-do-not-need-to-catch-up-to-all-of-ai",
+  "notebookId": "83d50c9f-55bb-4402-998d-6cbd7f32da9a",
+  "regenerate": ["story", "playbook"],
+  "artifacts": {
+    "hero": {
+      "source": { "kind": "filesystem", "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/you-do-not-need-to-catch-up-to-all-of-ai-hero.png" },
+      "targetPath": "migrations/you-do-not-need-to-catch-up-to-all-of-ai/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:fbaf40acb28df81b4c9bf34fca2f0e1cf7155a67fa51bff5d7e222bbaf9efc14",
+      "expectedByteSize": 2479384
+    },
+    "infographic": {
+      "source": { "kind": "filesystem", "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-28-you-do-not-need-to-catch-up-to-all-of-ai/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png" },
+      "targetPath": "migrations/you-do-not-need-to-catch-up-to-all-of-ai/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:840f1cfab1b12b0244801f7f41eeb92586b5d983c12ef32c560f4c93ea1a810a",
+      "expectedByteSize": 4524705
+    },
+    "audioBrief": {
+      "source": { "kind": "filesystem", "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-28-you-do-not-need-to-catch-up-to-all-of-ai/audio/notebooklm-short-brief.m4a" },
+      "targetPath": "migrations/you-do-not-need-to-catch-up-to-all-of-ai/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:28d6d20b2291f26f3949f7b95506cb1251f888894cb0316bebdd663413d895c9",
+      "expectedByteSize": 3106623,
+      "durationSeconds": 96.502132
+    },
+    "audioDiscussion": {
+      "source": { "kind": "filesystem", "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-28-you-do-not-need-to-catch-up-to-all-of-ai/audio/notebooklm-medium-debate.m4a" },
+      "targetPath": "migrations/you-do-not-need-to-catch-up-to-all-of-ai/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:f05b27e962e51256455f36ba20dbbcbe6c89a1b376434f1fb08c610bd9e77811",
+      "expectedByteSize": 10993021,
+      "durationSeconds": 341.542313
+    }
+  }
+}

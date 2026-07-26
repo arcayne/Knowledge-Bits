@@ -3,16 +3,74 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import sharp from 'sharp';
+
 import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
-import { MediaProviderAdapter, type MediaClient, type MediaKind } from './media.js';
+import {
+  cropNotebookLmInfographicFooter,
+  type GeneratedMedia,
+  MediaProviderAdapter,
+  prepareNotebookLmInfographicForStorage,
+  type MediaClient,
+  type MediaKind,
+} from './media.js';
 import type { ProviderExecutionInput, ProviderSupportArtifact } from './types.js';
 import { canonicalJsonBytes } from '../recipes/file-registry.js';
 import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
 
 const otherChecksum = 'b'.repeat(64);
 const requiredKinds = ['hero', 'infographic', 'audio_brief', 'audio_discussion'] as const;
+
+test('crops the NotebookLM footer by 4.72 percent of infographic width', async () => {
+  for (const { width, height, expectedCrop } of [
+    { width: 466, height: 820, expectedCrop: 22 },
+    { width: 1_024, height: 1_800, expectedCrop: 48 },
+    { width: 1_536, height: 2_700, expectedCrop: 72 },
+  ]) {
+    const input = await sharp({
+      create: { width, height, channels: 4, background: '#f9f0e8' },
+    }).png().toBuffer();
+
+    const output = await cropNotebookLmInfographicFooter(input);
+    const metadata = await sharp(output).metadata();
+
+    assert.equal(metadata.width, width);
+    assert.equal(metadata.height, height - expectedCrop);
+  }
+});
+
+test('stores cropped infographic bytes and corrected metadata after validating the provider original', async () => {
+  const infographic = await sharp({
+    create: { width: 466, height: 820, channels: 4, background: '#f9f0e8' },
+  }).png().toBuffer();
+  const cropPlan = structuredClone(generationPlan);
+  if (!cropPlan.mediaBaseline) throw new Error('fixture media baseline is required');
+  cropPlan.mediaBaseline.descriptor.artifacts.infographic.checksum = `sha256:${createHash('sha256').update(infographic).digest('hex')}`;
+  const provider = providerFor(
+    (request) => request.kinds.map((kind) => kind === 'infographic'
+      ? {
+        ...generated(kind, request.generationInputChecksum),
+        bytes: infographic,
+        mediaType: 'image/png',
+        metadata: { ...metadataFor(kind), byteSize: infographic.byteLength, width: 466, height: 820 },
+      }
+      : generated(kind, request.generationInputChecksum)),
+    cropPlan,
+    {},
+    prepareNotebookLmInfographicForStorage,
+  );
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const output = result.assets?.find(({ kind }) => kind === 'infographic');
+  assert.equal((await sharp(output?.body).metadata()).height, 798);
+  assert.equal(output?.provenance?.height, 798);
+  assert.equal(output?.provenance?.byteSize, output?.body.byteLength);
+});
 
 test('media fails closed unless exactly one current-checksum asset exists for every required kind', async () => {
   const incomplete = providerFor((request) => request.kinds.slice(0, 3).map((kind) => generated(kind)));
@@ -53,6 +111,39 @@ test('media passes four resolved recipe snapshots and per-run hero direction in 
   assert.equal(requests[0]?.resolvedRecipes.infographic.id, 'nuglet.visual.infographic');
   assert.equal(requests[0]?.resolvedRecipes.audioBrief.id, 'nuglet.audio.brief');
   assert.equal(requests[0]?.resolvedRecipes.audioDiscussion.id, 'nuglet.audio.discussion');
+});
+
+test('media regenerates only the explicitly requested review asset', async () => {
+  const requests: Array<Parameters<MediaClient['generate']>[0]> = [];
+  const provider = providerFor((request) => {
+    requests.push(request);
+    return request.kinds.map((kind) => generated(kind));
+  }, generationPlan, { mediaKinds: ['hero'], mediaOperation: 'generate' });
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
+  assert.deepEqual(requests[0]?.kinds, ['hero']);
+  if (result.kind === 'success') assert.deepEqual(result.assets?.map((asset) => asset.kind), ['hero']);
+});
+
+test('media accepts one technically valid public preview and keeps it pending human review', async () => {
+  const provider = providerFor((request) => request.kinds.map((kind) => generated(kind)), generationPlan, {
+    mediaKinds: ['public_preview'],
+    mediaOperation: 'generate',
+  });
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.deepEqual(result.assets?.map((asset) => asset.kind), ['public_preview']);
+  assert.equal(result.assets?.[0]?.provenance?.status, 'needs_review');
+  assert.deepEqual(result.assets?.[0]?.provenance?.review, {
+    decision: 'pending',
+    reviewerId: null,
+    reviewedAt: null,
+  });
 });
 
 test('media preserves measured metadata and recipe support evidence on all four outputs', async () => {
@@ -120,6 +211,40 @@ test('media requires Task 6 hero crop metadata and approved profile checksum', a
   await assert.rejects(() => mismatched.execute(mediaInput()), /media_hero_profile_mismatch/);
 });
 
+test('legacy hero recipes accept recorded immutable style references', async () => {
+  const legacyHeroValue = { ...resolvedRecipes.hero.value, referenceAssets: undefined };
+  const legacyHero = {
+    ...resolvedRecipes.hero,
+    canonicalBytes: canonicalJsonBytes(legacyHeroValue),
+    value: legacyHeroValue,
+  };
+  const legacyRecipes = { ...resolvedRecipes, hero: legacyHero };
+  const legacyHeroAsset = () => ({
+    ...generated('hero'),
+    supportArtifacts: supportPair('hero', legacyHero, Buffer.from('Generate hero'), {
+      model: 'vertex:fixture-image',
+      provider: 'vertex',
+    }),
+  });
+  const provider = providerFor(
+    () => [legacyHeroAsset()],
+    generationPlan,
+    { mediaKinds: ['hero'], resolvedRecipes: legacyRecipes },
+  );
+
+  assert.equal((await provider.execute(mediaInput())).kind, 'success');
+
+  const missingReferences = providerFor(
+    () => {
+      const asset = legacyHeroAsset();
+      return [{ ...asset, metadata: { ...asset.metadata, referenceChecksums: [] } }];
+    },
+    generationPlan,
+    { mediaKinds: ['hero'], resolvedRecipes: legacyRecipes },
+  );
+  await assert.rejects(() => missingReferences.execute(mediaInput()), /media_hero_metadata_invalid/);
+});
+
 test('media rejects baseline bytes that do not match the immutable descriptor', async () => {
   const provider = providerFor((request) => request.kinds.map((kind) => (
     kind === 'infographic'
@@ -161,9 +286,70 @@ test('media accepts every complete provenance pair and rejects an incomplete add
   await assert.rejects(() => incomplete.execute(mediaInput()), /media_support_evidence_incomplete/);
 });
 
+test('media attaches all four approved legacy assets without generation evidence', async () => {
+  const reusePlan = structuredClone(generationPlan);
+  reusePlan.mediaMode = 'reuse_legacy';
+  reusePlan.legacyMediaReuse = legacyMediaReuse();
+  const client = {
+    async generate(request: Parameters<MediaClient['generate']>[0]) {
+      assert.equal(request.mediaOperation, 'attach_existing');
+      assert.deepEqual(request.kinds, requiredKinds);
+      return request.kinds.map((kind) => ({ ...generated(kind), supportArtifacts: [] }));
+    },
+  } satisfies MediaClient;
+  const provider = new MediaProviderAdapter({
+    client,
+    transformInfographic: async (asset) => asset,
+    context: async () => ({
+      passedCheck: true,
+      content: candidate,
+      contentChecksum: semanticChecksum,
+      generationPlan: reusePlan,
+      resolvedRecipes,
+      legacyMediaReuse: reusePlan.legacyMediaReuse,
+      mediaOperation: 'attach_existing',
+      mediaKinds: requiredKinds,
+    }),
+  });
+
+  const result = await provider.execute(mediaInput());
+  assert.equal(result.kind, 'success');
+  if (result.kind === 'success') assert.deepEqual(result.supportArtifacts, []);
+});
+
+test('media keeps the historical audio-only attachment path compatible', async () => {
+  const reuse = legacyMediaReuse();
+  const kinds = ['audio_brief', 'audio_discussion'] as const;
+  const provider = new MediaProviderAdapter({
+    client: {
+      async generate(request) {
+        return request.kinds.map((kind) => ({ ...generated(kind), supportArtifacts: [] }));
+      },
+    },
+    transformInfographic: async (asset) => asset,
+    context: async () => ({
+      passedCheck: true,
+      content: candidate,
+      contentChecksum: semanticChecksum,
+      generationPlan,
+      resolvedRecipes,
+      legacyMediaReuse: reuse,
+      mediaOperation: 'attach_existing',
+      mediaKinds: kinds,
+    }),
+  });
+  assert.equal((await provider.execute(mediaInput())).kind, 'success');
+});
+
 function providerFor(
   generate: (request: Parameters<MediaClient['generate']>[0]) => unknown,
   plan: NugletGenerationPlan = generationPlan,
+  contextOverrides: {
+    mediaKinds?: readonly MediaKind[];
+    mediaOperation?: 'attach_existing' | 'generate';
+    resolvedRecipes?: ResolvedNugletRecipes;
+  } = {},
+  transformInfographic: (asset: GeneratedMedia) => Promise<GeneratedMedia> = async (asset) => asset,
 ) {
   const client = {
     async generate(request: Parameters<MediaClient['generate']>[0]) {
@@ -172,12 +358,14 @@ function providerFor(
   } as unknown as MediaClient;
   return new MediaProviderAdapter({
     client,
+    transformInfographic,
     context: async () => ({
       passedCheck: true,
       content: candidate,
       contentChecksum: semanticChecksum,
       generationPlan: plan,
-      resolvedRecipes,
+      resolvedRecipes: contextOverrides.resolvedRecipes ?? resolvedRecipes,
+      ...contextOverrides,
     }),
   });
 }
@@ -185,17 +373,38 @@ function providerFor(
 function generated(kind: MediaKind, inputChecksum = generationInputChecksum) {
   return {
     kind,
-    mediaType: kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
+    mediaType: kind === 'public_preview' ? 'video/mp4' : kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
     bytes: Buffer.from(kind),
     generationInputChecksum: inputChecksum,
     metadata: metadataFor(kind),
-    supportArtifacts: supportFor(kind),
+    supportArtifacts: kind === 'public_preview' ? [] : supportFor(kind),
   };
 }
 
 function metadataFor(kind: MediaKind): Record<string, unknown> {
   const byteSize = Buffer.from(kind).byteLength;
-  return kind.startsWith('audio_')
+  return kind === 'public_preview'
+    ? {
+      byteSize,
+      durationSeconds: 57.5,
+      width: 720,
+      height: 1280,
+      transcript: 'Attention can feel scattered when visible cues keep pulling at it.',
+      transcriptSource: 'vertex_gemini',
+      status: 'needs_review',
+      provider: 'notebooklm',
+      providerFormat: 'short',
+      providerArtifactId: 'preview-artifact',
+      validation: {
+        technicalPassed: true,
+        protectedContentPassed: true,
+        sourceGroundingPassed: null,
+        narrativePassed: null,
+        issues: [],
+      },
+      review: { decision: 'pending', reviewerId: null, reviewedAt: null },
+    }
+    : kind.startsWith('audio_')
     ? {
       byteSize,
       durationSeconds: kind === 'audio_brief' ? 91.25 : 287.5,
@@ -395,6 +604,28 @@ function binding<Id extends NugletGenerationPlan['recipes'][keyof NugletGenerati
   return { id, version: '1.0.0', checksum: `sha256:${digit.repeat(64)}` } as const;
 }
 
+function legacyMediaReuse() {
+  const receipt = (kind: MediaKind) => ({
+    path: `migrations/example/${kind}`,
+    checksum: `sha256:${createHash('sha256').update(kind).digest('hex')}`,
+    byteSize: Buffer.from(kind).byteLength,
+    mediaType: kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
+    ...(kind.startsWith('audio_') ? { durationSeconds: kind === 'audio_brief' ? 91.25 : 287.5 } : {}),
+  });
+  return {
+    source: 'nuglet_published' as const,
+    sourceRunId: 'published-example',
+    sourcePackagePath: 'migrations/example',
+    notebookId: 'notebook-fixture',
+    artifacts: {
+      hero: receipt('hero'),
+      infographic: receipt('infographic'),
+      audioBrief: receipt('audio_brief'),
+      audioDiscussion: receipt('audio_discussion'),
+    },
+  };
+}
+
 const candidate = candidateFixture() as never;
 const semanticChecksum = calculateContentChecksum(candidate);
 const generationInputChecksum = calculateContentChecksum({
@@ -440,7 +671,7 @@ function mediaInput(): ProviderExecutionInput {
       executionDeadlineAt: '2026-07-13T10:05:00.000Z',
       attempt: 1,
       revision: 1,
-      input: { brief: { generationPlan }, dependencies: [] },
+      input: { brief: { generationPlan }, dependencies: [], notebookLmNotebookId: 'notebook-fixture' },
     },
     signal: new AbortController().signal,
   };

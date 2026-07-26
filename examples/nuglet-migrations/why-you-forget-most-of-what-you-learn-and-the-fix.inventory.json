@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "why-you-forget-most-of-what-you-learn-and-the-fix",
+  "title": "Why you forget most of what you learn - and the fix",
+  "sourceRunId": "2026-06-29-why-you-forget-most-of-what-you-learn-and-the-fix",
+  "sourcePackagePath": "migrations/why-you-forget-most-of-what-you-learn-and-the-fix",
+  "notebookId": "4c88a3a2-f32e-4859-be6e-24e87ec2f277",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/why-you-forget-most-of-what-you-learn-and-the-fix-hero.webp"
+      },
+      "targetPath": "migrations/why-you-forget-most-of-what-you-learn-and-the-fix/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:c76664e56167cdfc0fc41fea4552cbd0b3869bf59f2c2d7ba48032b0bc53001c",
+      "expectedByteSize": 150458
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-you-forget-most-of-what-you-learn-and-the-fix/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/why-you-forget-most-of-what-you-learn-and-the-fix/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:1203a30363ce6a8702b1fadad19d79f5e73663b56af52f55d8c0b3802aebfc63",
+      "expectedByteSize": 4379092
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-you-forget-most-of-what-you-learn-and-the-fix/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/why-you-forget-most-of-what-you-learn-and-the-fix/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:3d5dfdff82b673fdb91fcd40cb6868d253065650f5b4c5f9ef459eacadc6aa7d",
+      "expectedByteSize": 3187303,
+      "durationSeconds": 99.009887
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-you-forget-most-of-what-you-learn-and-the-fix/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/why-you-forget-most-of-what-you-learn-and-the-fix/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:c746f00fa41f9c54dda412f19d927d15f9b890feec091430226ee76e90c1911b",
+      "expectedByteSize": 11315110,
+      "durationSeconds": 351.550113
+    }
+  }
+}

@@ -147,6 +147,17 @@ test('approval moves human review to delivery without a second approval', () => 
   assert.equal(result.approvedChecksum, CHECKSUM);
 });
 
+test('rejection closes human review without queueing more work', () => {
+  const result = nextTransition(reviewSnapshot(), {
+    type: 'review_rejected', reason: 'The generated lesson covers the wrong topic.', reviewerId: 'operator-1',
+  });
+
+  assert.equal(result.stage, 'human_review');
+  assert.equal(result.state, 'done');
+  assert.equal(result.reason, 'The generated lesson covers the wrong topic.');
+  assert.deepEqual(result.effects, []);
+});
+
 test('changes requested queue a new create stage', () => {
   const result = nextTransition(reviewSnapshot(), {
     type: 'changes_requested', reason: 'clarify the evidence', reviewerId: 'operator-1',

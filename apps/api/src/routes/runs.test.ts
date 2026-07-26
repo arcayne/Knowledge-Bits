@@ -66,6 +66,34 @@ test('requires the engine API token to create and inspect runs', async () => {
   assert.equal(wrongScope.status, 403);
 });
 
+test('allows an authenticated review operator to start a research run', async () => {
+  const app = createTestApp();
+  const response = await app.request('/runs', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer engine-review-test',
+      'X-Knowledge-Bits-Reviewer': 'operator@example.test',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      title: 'A new Nuglet',
+      locale: 'en',
+      notebookLmNotebookId: 'notebook-new',
+      brief: {
+        title: 'A new Nuglet',
+        topic: 'A new Nuglet',
+        objective: 'Help someone take one useful action.',
+        audience: 'general adult learners',
+        locale: 'en',
+        notebookLmNotebookId: 'notebook-new',
+      },
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal((await response.json()).notebookLmNotebookId, 'notebook-new');
+});
+
 test('rejects malformed run input', async () => {
   const app = createTestApp();
   const response = await app.request('/runs', {

@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "ai-prompting-frustration",
+  "title": "AI Prompting Frustration",
+  "sourceRunId": "2026-07-04-ai-prompting-frustration-84239618",
+  "sourcePackagePath": "migrations/ai-prompting-frustration",
+  "notebookId": "d788bc58-b827-4c80-a62f-99d94b869bff",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/knowledge-bits-migration-sources/ai-prompting-frustration/hero.png"
+      },
+      "targetPath": "migrations/ai-prompting-frustration/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:c9d3c120a74b3e7b91565cc50c8c5339feccd4ff1a2b8dd52285bd1048068983",
+      "expectedByteSize": 1353949
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-04-ai-prompting-frustration-84239618/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/ai-prompting-frustration/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:ecd4d7232561fd96a396a54ebdd0f6dc481c3256c8cccb9dac644f06b05a5059",
+      "expectedByteSize": 4372685
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-04-ai-prompting-frustration-84239618/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/ai-prompting-frustration/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:ce9d7214a8bf2f508dbdc0ac34a431ce0ac2c2abbb91ecf096189a06efdad185",
+      "expectedByteSize": 2964685,
+      "durationSeconds": 92.09034
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-04-ai-prompting-frustration-84239618/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/ai-prompting-frustration/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:202036b4c6d4f5014f98d50aa68f2fab855b870994d0258b447368b0d175484b",
+      "expectedByteSize": 12400158,
+      "durationSeconds": 385.265488
+    }
+  }
+}

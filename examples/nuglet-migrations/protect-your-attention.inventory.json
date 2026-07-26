@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "protect-your-attention",
+  "title": "Protect Your Attention",
+  "sourceRunId": "2026-07-01-protect-your-attention",
+  "sourcePackagePath": "migrations/protect-your-attention",
+  "notebookId": "e7022858-f74c-416e-a50d-55824fbc4605",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/protect-your-attention-hero.png"
+      },
+      "targetPath": "migrations/protect-your-attention/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:f625fca94f2b5d68e20f76288ecbbd92428ead46ec78561b24eec77429a5c576",
+      "expectedByteSize": 2484617
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-01-protect-your-attention/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/protect-your-attention/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:ef9aae0db21c5635e0a4717fdf857af9caf7db87b458ba7379aa11bc16fb6a0e",
+      "expectedByteSize": 365964
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-01-protect-your-attention/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/protect-your-attention/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:ffc0826d6f8ae94eba614bc43d518fb4be7465d3d76463810c2b9caf523cc48a",
+      "expectedByteSize": 3043124,
+      "durationSeconds": 94.48054421768707
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-01-protect-your-attention/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/protect-your-attention/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:484120f2370ac52124050ef506b6f43ec449808b54a32778ea5304433a2fb4e3",
+      "expectedByteSize": 10803904,
+      "durationSeconds": 335.6197732426304
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "the-hard-book-was-teaching-me-how-to-think-slowly",
+  "title": "The hard book was teaching me how to think slowly",
+  "sourceRunId": "2026-06-28-the-hard-book-was-teaching-me-how-to-think-slowly",
+  "sourcePackagePath": "migrations/the-hard-book-was-teaching-me-how-to-think-slowly",
+  "notebookId": "5a3d37a0-aed8-4936-89ac-28f86f7c734f",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "https",
+        "url": "https://nuglet.app/lesson-heroes/the-hard-book-was-teaching-me-how-to-think-slowly-hero.webp"
+      },
+      "targetPath": "migrations/the-hard-book-was-teaching-me-how-to-think-slowly/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:5736596839a642286e17056e97bdcc3a8b69ea8f2eb1cf38f17a14037875a596",
+      "expectedByteSize": 114082
+    },
+    "infographic": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "infographics/get-smarter/2026-06-28-the-hard-book-was-teaching-me-how-to-think-slowly/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/the-hard-book-was-teaching-me-how-to-think-slowly/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:16b6ba3338e289407e8cc70310d12f6b005c8ecffd7cb6970b19c5370dc61791",
+      "expectedByteSize": 5703335
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "audio/get-smarter/2026-06-28-the-hard-book-was-teaching-me-how-to-think-slowly/short-brief.m4a"
+      },
+      "targetPath": "migrations/the-hard-book-was-teaching-me-how-to-think-slowly/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:ab90a61f305c0d237a133af7882b7bcaaf19ce2ae6aa285a0fcc404ff73a423e",
+      "expectedByteSize": 2709082,
+      "durationSeconds": 84.149116
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "audio/get-smarter/2026-06-28-the-hard-book-was-teaching-me-how-to-think-slowly/medium-debate.m4a"
+      },
+      "targetPath": "migrations/the-hard-book-was-teaching-me-how-to-think-slowly/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:33585ccdbed72df12e5a939bb4109a9b5fcbbda9b86f64b634be746d87d6e437",
+      "expectedByteSize": 10403375,
+      "durationSeconds": 323.221769
+    }
+  }
+}

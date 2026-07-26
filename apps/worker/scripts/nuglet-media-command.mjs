@@ -7,6 +7,13 @@ import { dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { GoogleGenAI } from "@google/genai";
+import {
+  compilePublicPreview,
+  protectedLeakage,
+  publicPreviewSourceTitle,
+  renderPublicPreviewPrompt,
+  renderPublicPreviewSource,
+} from "./nuglet-public-preview.mjs";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_STYLE_REFERENCES = [
@@ -434,6 +441,9 @@ function notebookLmMarker(input, kind) {
 
 function notebookLmPrompt(input, kind) {
   const marker = notebookLmMarker(input, kind);
+  if (kind === "public_preview") {
+    return renderPublicPreviewPrompt(compilePublicPreview(input.content), marker);
+  }
   const { title, hook, takeaway } = contentText(input.content);
   const role = kind === "infographic" ? "infographic" : kind === "audio_brief" ? "audioBrief" : "audioDiscussion";
   const recipe = recipeSnapshot(input, role);
@@ -473,7 +483,7 @@ async function notebookLmStatus(notebookId) {
 }
 
 function matchingNotebookLmArtifact(artifacts, kind, marker) {
-  const expectedType = kind === "infographic" ? "infographic" : "audio";
+  const expectedType = kind === "infographic" ? "infographic" : kind === "public_preview" ? "video" : "audio";
   return artifacts.find((artifact) => artifact.type === expectedType
     && typeof artifact.custom_instructions === "string"
     && artifact.custom_instructions.includes(marker));
@@ -510,14 +520,49 @@ function soleUnmarkedInfographic(artifacts, wantedKinds) {
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-async function createNotebookLmArtifact(notebookId, kind, prompt) {
-  const args = kind === "infographic"
+async function createNotebookLmArtifact(notebookId, kind, prompt, sourceId) {
+  const args = kind === "public_preview"
+    ? [
+        "video", "create", notebookId,
+        "--format", "short",
+        "--language", "en",
+        "--focus", prompt,
+        "--source-ids", required(sourceId, "public preview source id"),
+        "--confirm",
+        "--json",
+      ]
+    : kind === "infographic"
     ? ["infographic", "create", notebookId, "--orientation", "portrait", "--detail", "concise", "--style", "editorial", "--focus", prompt, "--confirm"]
     : ["audio", "create", notebookId, "--format", kind === "audio_brief" ? "brief" : "deep_dive", "--length", kind === "audio_brief" ? "short" : "default", "--focus", prompt, "--confirm"];
   const { stdout } = await runNotebookLm(args);
-  const artifactId = stdout.match(/Artifact ID:\s*([a-f0-9-]+)/i)?.[1];
+  const parsed = kind === "public_preview" ? record(JSON.parse(stdout)) : {};
+  const artifactId = parsed.artifact_id
+    ?? parsed.id
+    ?? stdout.match(/Artifact ID:\s*([a-f0-9-]+)/i)?.[1];
   if (!artifactId) throw new Error(`NotebookLM did not return an artifact ID for ${kind}`);
-  return artifactId;
+  return String(artifactId);
+}
+
+async function ensurePublicPreviewSource(input, notebookId, state) {
+  const brief = compilePublicPreview(input.content);
+  const title = publicPreviewSourceTitle(brief);
+  const { stdout } = await runNotebookLm(["source", "list", notebookId, "--json"]);
+  let sources = JSON.parse(stdout);
+  let source = sources.find((candidate) => candidate.title === title);
+  if (!source) {
+    await runNotebookLm([
+      "source", "add", notebookId,
+      "--text", renderPublicPreviewSource(brief),
+      "--title", title,
+      "--wait",
+      "--wait-timeout", "600",
+    ], { timeout: 660_000 });
+    sources = JSON.parse((await runNotebookLm(["source", "list", notebookId, "--json"])).stdout);
+    source = sources.find((candidate) => candidate.title === title);
+  }
+  if (!source?.id) throw new Error("Could not resolve the curated NotebookLM public preview source");
+  state.public_preview_source = source.id;
+  return String(source.id);
 }
 
 async function ensureNotebookLmArtifacts(input, kinds) {
@@ -542,9 +587,17 @@ async function ensureNotebookLmArtifacts(input, kinds) {
       ? soleUnmarkedInfographic(artifacts, wanted)
       : undefined;
     const selected = existing ?? stateArtifact ?? unmarkedInfographic;
+    if (kind === "public_preview") {
+      await ensurePublicPreviewSource(input, notebookId, state);
+    }
     const artifactId = typeof selected?.id === "string" && selected.id
       ? selected.id
-      : await createNotebookLmArtifact(notebookId, kind, prompt);
+      : await createNotebookLmArtifact(
+        notebookId,
+        kind,
+        prompt,
+        kind === "public_preview" ? state.public_preview_source : undefined,
+      );
     state[kind] = artifactId;
     await writeNotebookLmState(input, notebookId, state);
     tracked.set(kind, { artifactId, prompt });
@@ -566,10 +619,13 @@ async function ensureNotebookLmArtifacts(input, kinds) {
 }
 
 async function downloadNotebookLmArtifact(notebookId, kind, artifactId, directory) {
-  const path = join(directory, kind === "infographic" ? `${kind}.png` : `${kind}.m4a`);
+  const path = join(
+    directory,
+    kind === "infographic" ? `${kind}.png` : kind === "public_preview" ? `${kind}.mp4` : `${kind}.m4a`,
+  );
   await runNotebookLm([
     "download",
-    kind === "infographic" ? "infographic" : "audio",
+    kind === "infographic" ? "infographic" : kind === "public_preview" ? "video" : "audio",
     notebookId,
     "--id",
     artifactId,
@@ -578,6 +634,46 @@ async function downloadNotebookLmArtifact(notebookId, kind, artifactId, director
     "--no-progress",
   ], { timeout: 180_000 });
   return readFile(path);
+}
+
+async function videoMetadata(bytes) {
+  const path = join(tmpdir(), `knowledge-bits-public-preview-${createHash("sha256").update(bytes).digest("hex")}.mp4`);
+  await writeFile(path, bytes);
+  try {
+    const { stdout } = await execFileAsync("ffprobe", [
+      "-v", "error", "-show_streams", "-show_format", "-of", "json", path,
+    ]);
+    const parsed = JSON.parse(stdout);
+    const video = parsed.streams?.find((stream) => stream.codec_type === "video");
+    return {
+      durationSeconds: Number(parsed.format?.duration),
+      width: Number(video?.width),
+      height: Number(video?.height),
+      hasAudio: parsed.streams?.some((stream) => stream.codec_type === "audio") ?? false,
+    };
+  } finally {
+    await unlink(path).catch(() => undefined);
+  }
+}
+
+async function transcribeVideo(bytes) {
+  const project = required(process.env.GOOGLE_CLOUD_PROJECT, "GOOGLE_CLOUD_PROJECT");
+  const location = (process.env.GOOGLE_CLOUD_LOCATION || "global").trim();
+  const model = (process.env.GEMINI_VERTEX_MODEL || "gemini-2.5-flash").trim();
+  delete process.env.GEMINI_API_KEY;
+  const ai = new GoogleGenAI({ vertexai: true, project, location });
+  const response = await ai.models.generateContent({
+    model,
+    contents: [
+      { inlineData: { data: bytes.toString("base64"), mimeType: "video/mp4" } },
+      { text: "Transcribe every spoken word faithfully. Return only the spoken words without headings, commentary, or markdown." },
+    ],
+  });
+  const transcript = typeof response.text === "string"
+    ? response.text.trim()
+    : response.candidates?.[0]?.content?.parts?.flatMap((part) => part.text ? [part.text] : []).join("\n").trim();
+  if (!transcript) throw new Error("Vertex returned no public preview transcript");
+  return { transcript, provider: `vertex:${model}` };
 }
 
 async function audioDurationSeconds(bytes) {
@@ -657,13 +753,56 @@ async function generateCurrentMedia(input) {
     if (heroAsset) assetsByKind.set("hero", heroAsset);
     for (const kind of kinds) {
       const role = kind === "hero" ? "hero" : kind === "infographic" ? "infographic" : kind === "audio_brief" ? "audioBrief" : "audioDiscussion";
-      const recipe = recipeSnapshot(input, role);
+      const recipe = kind === "public_preview" ? undefined : recipeSnapshot(input, role);
       if (kind === "hero") continue;
 
       if (!notebookLm) throw new Error(`NotebookLM preparation missing for ${kind}`);
       const tracked = notebookLm.tracked.get(kind);
       if (!tracked) throw new Error(`NotebookLM artifact tracking missing for ${kind}`);
       const bytes = await downloadNotebookLmArtifact(notebookLm.notebookId, kind, tracked.artifactId, directory);
+      if (kind === "public_preview") {
+        const metadata = await videoMetadata(bytes);
+        const transcription = await transcribeVideo(bytes);
+        const brief = compilePublicPreview(input.content);
+        const leaks = protectedLeakage(transcription.transcript, brief);
+        const technicalPassed = metadata.hasAudio
+          && metadata.durationSeconds >= 40
+          && metadata.durationSeconds <= 65
+          && Math.abs(metadata.width / metadata.height - 9 / 16) <= 0.08;
+        assetsByKind.set(kind, {
+          kind,
+          mediaType: "video/mp4",
+          bytesBase64: bytes.toString("base64"),
+          generationInputChecksum: input.generationInputChecksum,
+          metadata: {
+            byteSize: bytes.byteLength,
+            durationSeconds: metadata.durationSeconds,
+            width: metadata.width,
+            height: metadata.height,
+            transcript: transcription.transcript,
+            transcriptSource: "vertex_gemini",
+            transcriptProvider: transcription.provider,
+            status: "needs_review",
+            provider: "notebooklm",
+            providerFormat: "short",
+            providerArtifactId: tracked.artifactId,
+            promptTemplateVersion: brief.promptTemplateVersion,
+            validation: {
+              technicalPassed,
+              protectedContentPassed: leaks.length === 0,
+              sourceGroundingPassed: null,
+              narrativePassed: null,
+              issues: [
+                ...(technicalPassed ? [] : ["Video must be 40-65 seconds, near 9:16, and contain audio."]),
+                ...(leaks.length ? [`Possible protected-content leakage: ${leaks.join(" | ")}`] : []),
+              ],
+            },
+            review: { decision: "pending", reviewerId: null, reviewedAt: null },
+          },
+          support: { executions: [] },
+        });
+        continue;
+      }
       if (kind === "infographic") {
         assetsByKind.set(kind, {
           kind,

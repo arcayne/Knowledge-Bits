@@ -9,8 +9,10 @@ import {
   knowledgeBitsCreateRunRequestSchema,
   prepareLegacyRevisionRequestSchema,
   prepareLegacyRevisionResponseSchema,
+  regenerateMediaRequestSchema,
   knowledgeBitsRunBriefSchema,
   nugletGenerationPlanSchema,
+  nugletMigrationInventorySchema,
   storyPlaybookDraftSchema,
   storyPlaybookDraftContractDescriptor,
   storyPlaybookPayloadSchema,
@@ -65,6 +67,22 @@ test('Story and Playbook descriptor states the exact provider output contract', 
   });
   assert.doesNotThrow(() => JSON.stringify(descriptor));
   assert.equal(JSON.stringify(descriptor), JSON.stringify(descriptor));
+});
+
+test('media regeneration accepts a versioned infographic recipe override only with infographic work', () => {
+  const recipeOverride = {
+    id: 'nuglet.visual.infographic',
+    version: '1.1.0',
+    checksum: `sha256:${checksum}`,
+  };
+  assert.equal(regenerateMediaRequestSchema.safeParse({
+    kinds: ['infographic'],
+    recipeOverrides: { infographic: recipeOverride },
+  }).success, true);
+  assert.equal(regenerateMediaRequestSchema.safeParse({
+    kinds: ['hero'],
+    recipeOverrides: { infographic: recipeOverride },
+  }).success, false);
 });
 
 function validGenerationPlan() {
@@ -479,6 +497,54 @@ test('requires an inspectable immutable media baseline with complete NotebookLM 
   assert.equal(nugletGenerationPlanSchema.safeParse(escapingPath).success, false);
 });
 
+test('accepts a fresh Nuglet plan that explicitly generates all media', () => {
+  const plan = validGenerationPlan();
+  delete plan.mediaBaseline;
+  plan.mediaMode = 'generate';
+
+  assert.equal(nugletGenerationPlanSchema.safeParse(plan).success, true);
+  assert.equal(knowledgeBitsRunBriefSchema.safeParse({
+    contentKind: 'nuglet.lesson.v1',
+    generationPlan: plan,
+    notebookLmNotebookId: 'notebook-new',
+  }).success, true);
+  assert.equal(knowledgeBitsCreateRunRequestSchema.safeParse({
+    title: 'A new Nuglet',
+    locale: 'en',
+    notebookLmNotebookId: 'notebook-new',
+    brief: {
+      contentKind: 'nuglet.lesson.v1',
+      generationPlan: plan,
+      notebookLmNotebookId: 'notebook-new',
+    },
+  }).success, true);
+});
+
+test('accepts migrated approved media with a checksummed reuse receipt and no invented generation baseline', () => {
+  const plan = validGenerationPlan();
+  delete plan.mediaBaseline;
+  plan.mediaMode = 'reuse_legacy';
+  plan.legacyMediaReuse = {
+    source: 'nuglet_published',
+    sourceRunId: 'fixture-run',
+    sourcePackagePath: 'migrations/fixture-run',
+    notebookId: 'notebook-fixture',
+    artifacts: {
+      hero: { path: 'migrations/fixture-run/hero.webp', checksum: `sha256:${'1'.repeat(64)}`, byteSize: 100, mediaType: 'image/webp' },
+      infographic: { path: 'migrations/fixture-run/infographic.png', checksum: `sha256:${'2'.repeat(64)}`, byteSize: 100, mediaType: 'image/png' },
+      audioBrief: { path: 'migrations/fixture-run/brief.m4a', checksum: `sha256:${'3'.repeat(64)}`, byteSize: 100, mediaType: 'audio/mp4', durationSeconds: 90 },
+      audioDiscussion: { path: 'migrations/fixture-run/discussion.m4a', checksum: `sha256:${'4'.repeat(64)}`, byteSize: 100, mediaType: 'audio/mp4', durationSeconds: 300 },
+    },
+  };
+
+  assert.equal(nugletGenerationPlanSchema.safeParse(plan).success, true);
+  assert.equal(knowledgeBitsRunBriefSchema.safeParse({
+    baseline: { runId: 'fixture-run' },
+    generationPlan: plan,
+    notebookLmNotebookId: 'notebook-fixture',
+  }).success, true);
+});
+
 test('binds the Nuglet media baseline identity to the enclosing run brief', () => {
   const generationPlan = validGenerationPlan();
   const brief = {
@@ -594,6 +660,34 @@ test('requires a strictly bound Nuglet replacement brief to prepare a legacy rev
     previousRevision: 1,
     previousPackageChecksum: checksum,
   });
+});
+
+test('validates a four-asset Nuglet migration inventory with bounded target paths', () => {
+  const source = { kind: 'nuglet_r2', objectKey: 'audio/example/brief.m4a' };
+  const inventory = {
+    schemaVersion: 'knowledge-bits.nuglet-migration.v1',
+    nugletSlug: 'example-nuglet',
+    title: 'Example Nuglet',
+    sourceRunId: 'published-example',
+    sourcePackagePath: 'migrations/example-nuglet',
+    notebookId: 'notebook-example',
+    regenerate: ['story', 'playbook'],
+    artifacts: {
+      hero: { source: { kind: 'filesystem', path: '/tmp/hero.webp' }, targetPath: 'migrations/example-nuglet/hero.webp', mediaType: 'image/webp' },
+      infographic: { source: { kind: 'https', url: 'https://media.example.test/infographic.webp' }, targetPath: 'migrations/example-nuglet/infographic.webp', mediaType: 'image/webp' },
+      audioBrief: { source, targetPath: 'migrations/example-nuglet/brief.m4a', mediaType: 'audio/mp4', durationSeconds: 90 },
+      audioDiscussion: { source: { kind: 'nuglet_r2', objectKey: 'audio/example/discussion.m4a' }, targetPath: 'migrations/example-nuglet/discussion.m4a', mediaType: 'audio/mp4', durationSeconds: 300 },
+    },
+  };
+  assert.deepEqual(nugletMigrationInventorySchema.parse(inventory), inventory);
+
+  const outsideBundle = structuredClone(inventory);
+  outsideBundle.artifacts.hero.targetPath = 'another-bundle/hero.webp';
+  assert.equal(nugletMigrationInventorySchema.safeParse(outsideBundle).success, false);
+
+  const insecureUrl = structuredClone(inventory);
+  insecureUrl.artifacts.infographic.source.url = 'http://media.example.test/infographic.webp';
+  assert.equal(nugletMigrationInventorySchema.safeParse(insecureUrl).success, false);
 });
 
 test('requires distinct approved Brief and Discussion baseline artifacts', () => {
@@ -843,6 +937,23 @@ test('requires claim coverage for Story and Playbook learner paths', () => {
     ...draft,
     claimCoverage: draft.claimCoverage.filter((entry) => entry.path !== 'read.playbook'),
   }), /read\.playbook/i);
+});
+
+test('does not require claim coverage for learner paths without explicit claim references', () => {
+  const draft = storyPlaybookDraft();
+  const pathsWithoutNestedClaimRefs = new Set([
+    'identity.title',
+    'learning.whyItMatters',
+    'learning.oneLineToKeep',
+    'learning.action',
+    'listen.brief',
+    'listen.discussion',
+  ]);
+
+  assert.equal(storyPlaybookDraftSchema.safeParse({
+    ...draft,
+    claimCoverage: draft.claimCoverage.filter(({ path }) => !pathsWithoutNestedClaimRefs.has(path)),
+  }).success, true);
 });
 
 test('requires every nested Story Playbook visual and quiz claim reference to be declared', () => {

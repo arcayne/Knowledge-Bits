@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "attention-span-recovery-after-short-form-video",
+  "title": "Attention Span Recovery After Short-Form Video",
+  "sourceRunId": "2026-07-09-attention-span-recovery-after-short-form-video-6f7eb571",
+  "sourcePackagePath": "migrations/attention-span-recovery-after-short-form-video",
+  "notebookId": "d36305ab-e7a2-4803-95fa-65c2365a65c1",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/knowledge-bits-migration-sources/attention-span-recovery-after-short-form-video/hero.png"
+      },
+      "targetPath": "migrations/attention-span-recovery-after-short-form-video/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:d67af727140f761c675efe4815d71f69d2f6035171c51aadb4afa2777b321ac7",
+      "expectedByteSize": 1284989
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-attention-span-recovery-after-short-form-video-6f7eb571/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/attention-span-recovery-after-short-form-video/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:8129dfad97da8b1415b21d541749f686036af7efabda90e298661286605470d9",
+      "expectedByteSize": 4293866
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-attention-span-recovery-after-short-form-video-6f7eb571/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/attention-span-recovery-after-short-form-video/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:2db8b028f17d814bdb2ae50718ac8725b19401b1493d08231eaf8c7323990910",
+      "expectedByteSize": 3158168,
+      "durationSeconds": 98.104308
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-attention-span-recovery-after-short-form-video-6f7eb571/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/attention-span-recovery-after-short-form-video/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:9ff918801aa39e20cc0d825e118350ef89d48f997d77ca85d197b659fd4048ad",
+      "expectedByteSize": 11461530,
+      "durationSeconds": 356.101224
+    }
+  }
+}

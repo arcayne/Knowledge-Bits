@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "when-the-simplest-explanation-wins-and-when-it-fools-you",
+  "title": "When the simplest explanation wins (and when it fools you)",
+  "sourceRunId": "2026-06-29-when-the-simplest-explanation-wins-and-when-it-fools-you",
+  "sourcePackagePath": "migrations/when-the-simplest-explanation-wins-and-when-it-fools-you",
+  "notebookId": "a4eaaba8-02d0-4a6e-912f-e2236b85ada8",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/when-the-simplest-explanation-wins-and-when-it-fools-you-hero.webp"
+      },
+      "targetPath": "migrations/when-the-simplest-explanation-wins-and-when-it-fools-you/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:31eb82cdba0153b76d876ca528cca5f54ef63581000a5a328f3b004690cad1f2",
+      "expectedByteSize": 223266
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-when-the-simplest-explanation-wins-and-when-it-fools-you/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/when-the-simplest-explanation-wins-and-when-it-fools-you/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:56830684b3f7b9eeb4ef2ecf79c3470de7b49edfc642270e9d1c9e7c73e6b3bc",
+      "expectedByteSize": 4219995
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-when-the-simplest-explanation-wins-and-when-it-fools-you/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/when-the-simplest-explanation-wins-and-when-it-fools-you/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:4655f0fa82acb9a398ea331cce2b9151c5d9966d1a96818d922a70e7724f8855",
+      "expectedByteSize": 3056571,
+      "durationSeconds": 94.946395
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-when-the-simplest-explanation-wins-and-when-it-fools-you/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/when-the-simplest-explanation-wins-and-when-it-fools-you/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:1488a437ba1f2be543dc8c02b5eb423db40e6eb168e7a59ecd51905795c3385a",
+      "expectedByteSize": 10900272,
+      "durationSeconds": 338.663039
+    }
+  }
+}

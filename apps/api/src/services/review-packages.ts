@@ -19,6 +19,7 @@ import { calculateContentChecksum, calculatePackageChecksum } from '@knowledge-b
 import type {
   WorkflowArtifact,
   WorkflowRepository,
+  WorkflowRun,
 } from '../repositories/workflow-repository.js';
 import {
   readArtifactStorageObject,
@@ -39,8 +40,10 @@ const REVIEW_ASSETS = [
   { kind: 'infographic', key: 'infographic' },
   { kind: 'audio_brief', key: 'audioBrief' },
   { kind: 'audio_discussion', key: 'audioDiscussion' },
+  { kind: 'public_preview', key: 'publicPreview' },
 ] as const;
 const REVIEW_ASSET_KINDS = NUGLET_REVIEW_MEDIA_KINDS;
+const REVIEW_PACKAGE_ASSET_KINDS = [...REVIEW_ASSET_KINDS, 'public_preview'] as const;
 
 export class ReviewPackageService {
   constructor(private readonly dependencies: {
@@ -53,11 +56,16 @@ export class ReviewPackageService {
     if (!run) throw new ReviewPackageNotFoundError('Run not found');
     const artifacts = await this.dependencies.repository.listArtifactsForSuccessfulStageJobs(run.id, run.currentRevision);
     const packageArtifacts = canonicalPackageArtifacts(artifacts.filter((artifact) => (
-      !isReviewAssetKind(artifact.kind) || artifact.revision === run.currentRevision
+      !isReviewAssetKind(artifact.kind)
+      || artifact.revision === run.currentRevision
+      || artifact.provenance.mediaSource === 'legacy_nuglet'
     )));
     const assets = assetStates(run.id, packageArtifacts);
     const mediaIssues = REVIEW_ASSETS
-      .filter(({ key }) => assets[key].state === 'missing')
+      .filter(({ kind, key }) => (
+        assets[key].state === 'missing'
+        && (kind !== 'public_preview' || publicPreviewPlanned(run.brief))
+      ))
       .map(({ kind }) => `Required review media is missing: ${kind}`);
     let warnings: string[] = [];
 
@@ -68,7 +76,13 @@ export class ReviewPackageService {
       const evidenceArtifact = requiredParsedArtifact(packageArtifacts, 'collect_sources', 'evidence');
       const contentArtifact = requiredParsedArtifact(packageArtifacts, 'create_content', 'content');
       const contentOutput = await this.readJson(contentArtifact, 'content');
-      const assembled = assembleContent(run.brief, contentOutput, packageArtifacts);
+      const retainedMediaArtifactIds = await trustedRetainedMediaArtifactIds(
+        this.dependencies.repository,
+        run,
+        contentArtifact,
+        packageArtifacts,
+      );
+      const assembled = assembleContent(run.brief, contentOutput, packageArtifacts, retainedMediaArtifactIds);
       const content = assembled.content;
       const generationExecutions = assembled.generationExecutions;
       const editorialWarningsAllowed = isMaterializedStoryPlaybook(content.target);
@@ -77,13 +91,15 @@ export class ReviewPackageService {
         const artifact = latestArtifact(packageArtifacts, kind);
         if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
       }
+      const publicPreview = latestArtifact(packageArtifacts, 'public_preview');
+      if (publicPreview) await readArtifactStorageObject(this.dependencies.storage, publicPreview.storageKey);
       const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
       const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, packageArtifacts, content.target.payload.claims);
       const artifactInventory = packageArtifacts.map(toArtifactReference);
       const approvalIssues = [
         ...mediaIssues,
         ...qaApprovalIssues(qa, assembled.semanticChecksum, editorialWarningsAllowed),
-        ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum),
+        ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum, retainedMediaArtifactIds),
       ];
       const packageChecksum = calculatePackageChecksum({
         content,
@@ -195,6 +211,7 @@ function assembleContent(
   brief: Record<string, unknown>,
   contentOutput: Record<string, unknown>,
   artifacts: readonly WorkflowArtifact[],
+  retainedMediaArtifactIds: ReadonlySet<string> = new Set(),
 ) {
   if (contentOutput.kind === 'nuglet.lesson.v1' && contentOutput.schemaVersion === '1.1.0') {
     const generationPlan = generationPlanFromBrief(brief);
@@ -208,13 +225,14 @@ function assembleContent(
       semanticTarget: contentOutput,
       generationPlan,
       mediaArtifacts,
+      retainedMediaArtifactIds,
     });
     const content = knowledgeBitsContentSchema.parse({
       schemaVersion: 'knowledge-bits.content.v1',
       target,
     });
     const generationExecutions = assembleGenerationExecutions(artifacts, generationPlan);
-    assertHeroReferenceProvenance(generationExecutions.hero);
+    if (generationExecutions.hero.length > 0) assertHeroReferenceProvenance(generationExecutions.hero);
     return { content, generationExecutions, generationInputChecksum, semanticChecksum };
   }
 
@@ -259,6 +277,7 @@ export function assembleGenerationExecutions(
   for (const binding of GENERATION_ROLE_BINDINGS) {
     const recipe = generationPlan.recipes[binding.recipeKey];
     const output = latestArtifactForAction(artifacts, binding.outputKind, binding.action);
+    if (output?.provenance.mediaSource === 'legacy_nuglet') continue;
     if (!output || !executorBindingMatches(output)) {
       throw new ReviewPackageAssemblyError(`${binding.role} selected output execution provenance is missing`);
     }
@@ -422,7 +441,7 @@ function reportContainsExecution(
 
 function assertHeroReferenceProvenance(executions: readonly ReviewGenerationExecution[]): void {
   const expected = executions[0]?.referenceChecksums;
-  if (!expected || expected.length !== 2 || executions.some((execution) => (
+  if (!expected || expected.length === 0 || executions.some((execution) => (
     JSON.stringify(execution.referenceChecksums) !== JSON.stringify(expected)
   ))) {
     throw new ReviewPackageAssemblyError('Hero reference checksum provenance is mismatched');
@@ -466,15 +485,15 @@ function latestArtifactForAction(
 }
 
 function canonicalPackageArtifacts(artifacts: readonly WorkflowArtifact[]): WorkflowArtifact[] {
-  const requiredAssets = new Map(REVIEW_ASSET_KINDS.map((kind) => [kind, latestArtifact(artifacts, kind)]));
+  const requiredAssets = new Map(REVIEW_PACKAGE_ASSET_KINDS.map((kind) => [kind, latestArtifact(artifacts, kind)]));
   return artifacts.filter((artifact) => {
     if (!isReviewAssetKind(artifact.kind)) return true;
     return requiredAssets.get(artifact.kind)?.id === artifact.id;
   });
 }
 
-function isReviewAssetKind(kind: string): kind is typeof REVIEW_ASSET_KINDS[number] {
-  return REVIEW_ASSET_KINDS.some((candidate) => candidate === kind);
+function isReviewAssetKind(kind: string): kind is typeof REVIEW_PACKAGE_ASSET_KINDS[number] {
+  return REVIEW_PACKAGE_ASSET_KINDS.some((candidate) => candidate === kind);
 }
 
 function assetStates(runId: string, artifacts: readonly WorkflowArtifact[]) {
@@ -558,10 +577,34 @@ function normalizeEvidence(
   return knowledgeBitsEvidenceSchema.parse({
     schemaVersion: 'knowledge-bits.evidence.v1',
     acceptedSources,
-    rejectedSources: output.rejectedSources,
+    rejectedSources: output.rejectedSources.flatMap((source) => {
+      if (!isRecord(source)
+        || typeof source.sourceId !== 'string'
+        || typeof source.url !== 'string'
+        || !isHttpUrl(source.url)
+        || typeof source.title !== 'string'
+        || !isRecord(source.readability)
+        || !isRecord(source.credibility)) return [];
+      return [{
+        sourceId: source.sourceId,
+        url: source.url,
+        title: source.title,
+        readability: source.readability,
+        credibility: source.credibility,
+      }];
+    }),
     coverageGaps: output.coverageGaps,
     claims,
   });
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function qaApprovalIssues(
@@ -592,13 +635,51 @@ function editorialWarnings(qa: ReturnType<typeof knowledgeBitsQaSchema.parse>): 
     .map((finding) => `Editorial warning: ${finding.code}: ${finding.message}`);
 }
 
-function assetChecksumIssues(artifacts: readonly WorkflowArtifact[], contentChecksum: string): string[] {
-  return REVIEW_ASSET_KINDS.flatMap((kind) => {
+function assetChecksumIssues(
+  artifacts: readonly WorkflowArtifact[],
+  contentChecksum: string,
+  retainedMediaArtifactIds: ReadonlySet<string> = new Set(),
+): string[] {
+  return REVIEW_PACKAGE_ASSET_KINDS.flatMap((kind) => {
     const artifact = latestArtifact(artifacts, kind);
-    return artifact && artifact.inputChecksum !== contentChecksum
+    return artifact
+      && artifact.provenance.mediaSource !== 'legacy_nuglet'
+      && !retainedMediaArtifactIds.has(artifact.id)
+      && artifact.inputChecksum !== contentChecksum
       ? [`Required ${kind} input checksum does not match learner content`]
       : [];
   });
+}
+
+function publicPreviewPlanned(brief: Record<string, unknown>): boolean {
+  const regeneration = isRecord(brief.mediaRegeneration) ? brief.mediaRegeneration : undefined;
+  return Array.isArray(regeneration?.regeneratedKinds)
+    && regeneration.regeneratedKinds.includes('public_preview');
+}
+
+async function trustedRetainedMediaArtifactIds(
+  repository: WorkflowRepository,
+  run: WorkflowRun,
+  contentArtifact: WorkflowArtifact,
+  artifacts: readonly WorkflowArtifact[],
+): Promise<ReadonlySet<string>> {
+  const marker = isRecord(run.brief.mediaRegeneration) ? run.brief.mediaRegeneration : undefined;
+  const sourcePackageChecksum = nonEmptyString(marker?.sourcePackageChecksum);
+  const regeneratedKinds = Array.isArray(marker?.regeneratedKinds)
+    ? marker.regeneratedKinds.filter((kind): kind is NugletReviewMediaKind => (
+      typeof kind === 'string' && REVIEW_ASSET_KINDS.includes(kind as NugletReviewMediaKind)
+    ))
+    : [];
+  if (!sourcePackageChecksum || regeneratedKinds.length === 0) return new Set();
+  const sourcePackage = await repository.getPackageVersion(run.id, sourcePackageChecksum);
+  if (!sourcePackage) return new Set();
+  const sourceArtifactIds = new Set(sourcePackage.artifactInventory.map(({ artifactId }) => artifactId));
+  if (!sourceArtifactIds.has(contentArtifact.id)) return new Set();
+  return new Set(REVIEW_ASSET_KINDS.flatMap((kind) => {
+    if (regeneratedKinds.includes(kind)) return [];
+    const artifact = latestArtifact(artifacts, kind);
+    return artifact && sourceArtifactIds.has(artifact.id) ? [artifact.id] : [];
+  }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

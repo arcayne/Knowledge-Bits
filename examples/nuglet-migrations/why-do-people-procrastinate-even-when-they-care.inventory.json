@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "why-do-people-procrastinate-even-when-they-care",
+  "title": "Why do people procrastinate even when they care?",
+  "sourceRunId": "2026-06-22-why-do-people-procrastinate-even-when-they-care",
+  "sourcePackagePath": "migrations/why-do-people-procrastinate-even-when-they-care",
+  "notebookId": "1efec427-0a57-4cc5-b7c5-5bc8a31fa262",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/why-do-people-procrastinate-even-when-they-care-hero.webp"
+      },
+      "targetPath": "migrations/why-do-people-procrastinate-even-when-they-care/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:4d82a8db600445f2ea0b9ef740a8690c849ea0fc5e5979305748f2b5c6042023",
+      "expectedByteSize": 87314
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-22-why-do-people-procrastinate-even-when-they-care/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/why-do-people-procrastinate-even-when-they-care/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:970e5f1a1e84a6cc301b65d2fdc72c7b9452d02ec8c7ecf5e6c5c6af94e2b89b",
+      "expectedByteSize": 4433985
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-22-why-do-people-procrastinate-even-when-they-care/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/why-do-people-procrastinate-even-when-they-care/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:a58c9b72cf9927d57df7825ec665b67af1b577ddfa7f97d4b87a9acdf8088556",
+      "expectedByteSize": 2787521,
+      "durationSeconds": 86.587211
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-22-why-do-people-procrastinate-even-when-they-care/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/why-do-people-procrastinate-even-when-they-care/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:07de19312c98ed476598d4d0d1e79b82f9b57ba6409433ecf9c4106701c8483e",
+      "expectedByteSize": 11318845,
+      "durationSeconds": 351.666213
+    }
+  }
+}

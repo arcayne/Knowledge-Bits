@@ -213,6 +213,274 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
   assert.equal(Buffer.byteLength(report.renderedPrompt, 'utf8'), Buffer.byteLength(prompt, 'utf8'));
 });
 
+test('creates Story and Playbook with separate NotebookLM queries in production mode', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const response = await fixture('notebooklm-story-playbook.json');
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: response, stderr: '', exitCode: 0 },
+    { stdout: response, stderr: '', exitCode: 0 },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.equal(calls.length, 3);
+  const storyPrompt = String(calls[1]?.args[3]);
+  const playbookPrompt = String(calls[2]?.args[3]);
+  assert.match(storyPrompt, /This is the Story query/);
+  assert.match(storyPrompt, /Do not generate read\.playbook/);
+  assert.match(playbookPrompt, /separate Playbook query/);
+  assert.match(playbookPrompt, /Generate only the Playbook/);
+  assert.deepEqual(calls[2]?.args.slice(-3), [
+    '--conversation-id', 'conversation_fixture_story_playbook', '--json',
+  ]);
+  const parsed = result.parsedOutput as { payload: { read: { story: unknown; playbook: unknown } } };
+  assert.ok(parsed.payload.read.story);
+  assert.ok(parsed.payload.read.playbook);
+  assert.deepEqual(
+    (result.executionReport as { renderedPrompts: string[] }).renderedPrompts,
+    [storyPrompt, playbookPrompt],
+  );
+  const raw = JSON.parse(Buffer.from(result.rawResponse).toString('utf8')) as Record<string, unknown>;
+  assert.ok(raw.story);
+  assert.ok(raw.playbook);
+});
+
+test('drops unsupported citations and dangling claim references before semantic validation', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const fixtureResponse = JSON.parse(await fixture('notebooklm-story-playbook.json')) as {
+    conversationId: string;
+    answer: { payload: Record<string, unknown> & {
+      claims: Array<{ citations: Array<Record<string, unknown>> }>;
+      read: { story: unknown; playbook: { steps: Array<{ claimRefs: string[] }> } };
+    } };
+  };
+  const storyPayload = structuredClone(fixtureResponse.answer.payload);
+  const playbook = structuredClone(storyPayload.read.playbook);
+  delete (storyPayload.read as { playbook?: unknown }).playbook;
+  storyPayload.claims[0]?.citations.push({
+    sourceId: '99999999-9999-4999-8999-999999999999',
+    excerpt: 'Unsupported citation that must not survive normalization.',
+  });
+  playbook.steps[0]?.claimRefs.push('99999999-9999-4999-8999-999999999999');
+
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: storyPayload }),
+      stderr: '',
+      exitCode: 0,
+    },
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: { playbook } }),
+      stderr: '',
+      exitCode: 0,
+    },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const output = result.parsedOutput as {
+    payload: {
+      claims: Array<{ citations: Array<{ sourceId: string }> }>;
+      read: { playbook: { steps: Array<{ claimRefs: string[] }> } };
+    };
+  };
+  assert.equal(output.payload.claims[0]?.citations.some(({ sourceId }) => sourceId.startsWith('99999999')), false);
+  assert.equal(output.payload.read.playbook.steps[0]?.claimRefs.some((claimId) => claimId.startsWith('99999999')), false);
+  assert.equal(calls.length, 3);
+});
+
+test('reports phase-level progress for separate Story and Playbook generation', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const events: Array<{ phase: string; status: string }> = [];
+  const response = await fixture('notebooklm-story-playbook.json');
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: response, stderr: '', exitCode: 0 },
+    { stdout: response, stderr: '', exitCode: 0 },
+  ], true, (event) => events.push(event));
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.deepEqual(events.map(({ phase, status }) => ({ phase, status })), [
+    { phase: 'cli_version', status: 'started' },
+    { phase: 'cli_version', status: 'completed' },
+    { phase: 'source_sync', status: 'started' },
+    { phase: 'source_sync', status: 'completed' },
+    { phase: 'story_query', status: 'started' },
+    { phase: 'story_query', status: 'completed' },
+    { phase: 'story_parse_or_repair', status: 'started' },
+    { phase: 'story_parse_or_repair', status: 'completed' },
+    { phase: 'playbook_query', status: 'started' },
+    { phase: 'playbook_query', status: 'completed' },
+    { phase: 'playbook_parse_or_repair', status: 'started' },
+    { phase: 'playbook_parse_or_repair', status: 'completed' },
+  ]);
+  assert.deepEqual(
+    (result.executionReport as { phaseTimings: Array<{ phase: string }> }).phaseTimings.map(({ phase }) => phase),
+    ['cli_version', 'source_sync', 'story_query', 'story_parse_or_repair', 'playbook_query', 'playbook_parse_or_repair'],
+  );
+});
+
+test('merges direct Story payload and direct Playbook objects returned by NotebookLM', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const fixtureResponse = JSON.parse(await fixture('notebooklm-story-playbook.json')) as {
+    conversationId: string;
+    answer: { payload: Record<string, unknown> & { read: { story: unknown; playbook: Record<string, unknown> } } };
+  };
+  const payload = structuredClone(fixtureResponse.answer.payload);
+  const playbook = payload.read.playbook;
+  payload.read = { story: payload.read.story } as typeof payload.read;
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: payload }), stderr: '', exitCode: 0 },
+    { stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: playbook }), stderr: '', exitCode: 0 },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const output = result.parsedOutput as { payload: { read: { story: unknown; playbook: unknown } } };
+  assert.ok(output.payload.read.story);
+  assert.ok(output.payload.read.playbook);
+});
+
+test('repairs a top-level Story object instead of rejecting it before semantic validation', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const fixtureResponse = JSON.parse(await fixture('notebooklm-story-playbook.json')) as {
+    conversationId: string;
+    answer: { payload: { read: { story: Record<string, unknown>; playbook: Record<string, unknown> } } };
+  };
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    {
+      stdout: JSON.stringify({
+        conversationId: fixtureResponse.conversationId,
+        answer: { story: fixtureResponse.answer.payload.read.story },
+      }),
+      stderr: '',
+      exitCode: 0,
+    },
+    {
+      stdout: JSON.stringify({
+        conversationId: fixtureResponse.conversationId,
+        answer: { playbook: fixtureResponse.answer.payload.read.playbook },
+      }),
+      stderr: '',
+      exitCode: 0,
+    },
+    { stdout: JSON.stringify(fixtureResponse), stderr: '', exitCode: 0 },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  assert.equal(calls.length, 4);
+});
+
+test('passes loose direct Story and Playbook objects to strict semantic repair', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const repaired = await fixture('notebooklm-story-playbook.json');
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: JSON.stringify({ conversationId: 'loose-story', answer: { title: 'A loose Story draft' } }), stderr: '', exitCode: 0 },
+    { stdout: JSON.stringify({ conversationId: 'loose-playbook', answer: { title: 'A loose Playbook draft' } }), stderr: '', exitCode: 0 },
+    { stdout: repaired, stderr: '', exitCode: 0 },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  assert.equal(calls.length, 4);
+});
+
+test('preserves a valid Playbook when semantic repair omits it and normalizes known shape drift', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const fixtureResponse = JSON.parse(await fixture('notebooklm-story-playbook.json')) as {
+    conversationId: string;
+    answer: { payload: Record<string, unknown> & {
+      contentModel: string;
+      identity: Record<string, unknown> & { topic: { label: string; categoryId: string } };
+      read: { story: unknown; playbook: Record<string, unknown> };
+      claimCoverage: Array<{ path: string; claimIds: string[] }>;
+    } };
+  };
+  const storyPayload = structuredClone(fixtureResponse.answer.payload);
+  const playbook = storyPayload.read.playbook;
+  delete (storyPayload.read as { playbook?: unknown }).playbook;
+  storyPayload.contentModel = 'invalid-before-repair';
+
+  const repaired = structuredClone(fixtureResponse.answer);
+  delete (repaired.payload.read as { playbook?: unknown }).playbook;
+  const topic = repaired.payload.identity.topic;
+  topic.categoryId = 'focused-work';
+  delete (repaired.payload.identity as { topic?: unknown }).topic;
+  repaired.payload.identity['topic.label'] = topic.label;
+  repaired.payload.identity['topic.categoryId'] = topic.categoryId;
+  repaired.payload.claimCoverage.push({ path: 'read.playbook', claimIds: [] });
+
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: storyPayload }),
+      stderr: '',
+      exitCode: 0,
+    },
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: { playbook } }),
+      stderr: '',
+      exitCode: 0,
+    },
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: repaired }),
+      stderr: '',
+      exitCode: 0,
+    },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const output = result.parsedOutput as {
+    payload: {
+      identity: { topic: { label: string; categoryId: string } };
+      read: { playbook: unknown };
+      claimCoverage: Array<{ claimIds: string[] }>;
+    };
+  };
+  assert.ok(output.payload.read.playbook);
+  assert.equal(output.payload.identity.topic.label, topic.label);
+  assert.equal(output.payload.identity.topic.categoryId, topic.categoryId);
+  assert.equal(output.payload.claimCoverage.every(({ claimIds }) => claimIds.length > 0), true);
+  assert.equal(calls.length, 4);
+});
+
+test('keeps an invalid separate-query Story and Playbook candidate for human review', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const valid = await fixture('notebooklm-story-playbook.json');
+  const invalid = await deterministicInvalidStoryPlaybookAnswer();
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    { stdout: valid, stderr: '', exitCode: 0 },
+    { stdout: invalid, stderr: '', exitCode: 0 },
+    { stdout: invalid, stderr: '', exitCode: 0 },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'needs_human');
+  if (result.kind !== 'needs_human') return;
+  assert.equal(result.needsHumanKind, 'quality');
+  assert.equal(result.reason, 'notebooklm_content_invalid');
+  assert.ok(result.candidate);
+  const candidate = result.candidate?.parsedOutput as { payload?: { read?: { story?: unknown; playbook?: unknown } } };
+  assert.ok(candidate.payload?.read?.story);
+  assert.ok(candidate.payload?.read?.playbook);
+  assert.equal(calls.length, 4);
+  assert.equal((result.candidate?.executionReport as { reviewCandidate?: boolean }).reviewCandidate, true);
+});
+
 test('records every recipe-shaped NotebookLM repair call with its exact prompt', async () => {
   const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const recipes = generationRecipes();
@@ -624,7 +892,7 @@ test('does not issue a fourth query after malformed and semantic repairs are exh
   assert.deepEqual(calls[3]?.args.slice(-3), ['--conversation-id', 'conversation_after_malformed_repair', '--json']);
 });
 
-test('keeps accepted-source citation binding on a semantically repaired Story and Playbook answer', async () => {
+test('drops unsupported repaired citations before reporting remaining semantic issues', async () => {
   const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const recipes = generationRecipes();
   const repaired = JSON.parse(await fixture('notebooklm-story-playbook.json')) as { answer: { payload: { claims: Array<{ citations: Array<{ sourceId: string }> }> } } };
@@ -634,7 +902,7 @@ test('keeps accepted-source citation binding on a semantically repaired Story an
     { stdout: JSON.stringify(repaired), stderr: '', exitCode: 0 },
   ]);
 
-  await assert.rejects(() => provider.execute(input('create_content')), /notebooklm_citation_source_missing/);
+  await assert.rejects(() => provider.execute(input('create_content')), /notebooklm_content_invalid/);
   assert.equal(calls.length, 3);
 });
 
@@ -890,7 +1158,7 @@ test('rejects a malformed repair response without issuing semantic repair', asyn
   assert.deepEqual(calls[2]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
 });
 
-test('rejects citations that do not resolve to a returned source', async () => {
+test('records the research source list without requiring a second citation mapping', async () => {
   const provider = new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,
     process: processWith([], [
@@ -898,17 +1166,23 @@ test('rejects citations that do not resolve to a returned source', async () => {
       {
         stdout: JSON.stringify({
           conversationId: 'conversation_fixture_01',
-          answer: { claims: [{ statement: 'A claim', citations: [{ sourceId: '22222222-2222-4222-8222-222222222222', excerpt: 'proof' }] }], sources: [] },
+          answer: {
+            claims: [{ statement: 'Optional research summary', citations: [{ sourceId: '1', excerpt: 'proof' }] }],
+            sources: [{ sourceId, title: 'Accepted source', url: 'https://example.edu/research' }],
+          },
         }),
         stderr: '',
         exitCode: 0,
       },
-      { stdout: 'still not json', stderr: '', exitCode: 0 },
     ]),
     context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
   });
 
-  await assert.rejects(() => provider.execute(input('collect_sources')), /citation.*source/i);
+  const result = await provider.execute(input('collect_sources'));
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const output = result.parsedOutput as { acceptedSources: Array<{ sourceId: string }> };
+  assert.deepEqual(output.acceptedSources.map(({ sourceId: id }) => id), [sourceId]);
 });
 
 test('classifies process timeouts as a typed wait', async () => {
@@ -1054,9 +1328,13 @@ function storyPlaybookProvider(
   calls: Array<{ args: readonly string[]; stdin?: string }>,
   recipes: ReturnType<typeof generationRecipes>,
   responses: Array<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }>,
+  separateReadQueries = false,
+  phaseReporter?: (event: { phase: string; status: 'started' | 'completed' | 'failed' }) => void,
 ) {
   return new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,
+    separateReadQueries,
+    phaseReporter,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\\n', stderr: '', exitCode: 0 },
       ...responses,

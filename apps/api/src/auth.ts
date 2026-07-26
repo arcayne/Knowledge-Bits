@@ -54,6 +54,23 @@ export function requireReviewPrincipal(context: Context, config: EngineAuthConfi
   return reviewerId;
 }
 
+export function requireApiOrReviewPrincipal(context: Context, config: EngineAuthConfig): Response | null {
+  const header = context.req.header('Authorization');
+  if (!header?.startsWith('Bearer ')) {
+    return context.json({ error: 'Authentication is required' }, 401);
+  }
+  const token = header.slice('Bearer '.length);
+  if (tokensMatch(token, config.apiToken)) return null;
+  if (tokensMatch(token, config.reviewToken)) {
+    const reviewer = context.req.header('X-Knowledge-Bits-Reviewer')?.trim();
+    if (!reviewer || reviewer.length > 512) {
+      return context.json({ error: 'An authenticated review principal is required' }, 401);
+    }
+    return null;
+  }
+  return context.json({ error: 'Token does not have this scope' }, 403);
+}
+
 export function requireEngineScope(
   context: Context,
   config: EngineAuthConfig,

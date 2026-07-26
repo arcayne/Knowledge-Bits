@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "ai-is-prediction-not-magic",
+  "title": "AI is prediction, not magic",
+  "sourceRunId": "2026-06-29-ai-is-prediction-not-magic",
+  "sourcePackagePath": "migrations/ai-is-prediction-not-magic",
+  "notebookId": "0bb1925e-8ef7-43d0-a9f8-5dec33016eef",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-ai-is-prediction-not-magic/inhouse/hero-source.png"
+      },
+      "targetPath": "migrations/ai-is-prediction-not-magic/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:3e2f826f7b865912479e29286274efa737be61ec26a82527f45b932461d40823",
+      "expectedByteSize": 2921944
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-ai-is-prediction-not-magic/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/ai-is-prediction-not-magic/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:b49895656ac60df6b68218c2762e35428e86d95bf4d830159af4b4f7b1558591",
+      "expectedByteSize": 4291066
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-ai-is-prediction-not-magic/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/ai-is-prediction-not-magic/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:600360c7af9a9373c01527f28afc2d22d7270800f973e190be429f34919234c4",
+      "expectedByteSize": 3108117,
+      "durationSeconds": 96.548571
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-ai-is-prediction-not-magic/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/ai-is-prediction-not-magic/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:711f970fdab73da995f51d47795865a23c8c16c8738f3224bd37e44c74314ada",
+      "expectedByteSize": 44824383,
+      "durationSeconds": 1392.73288
+    }
+  }
+}

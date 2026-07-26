@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "the-map-is-not-the-territory",
+  "title": "The map is not the territory",
+  "sourceRunId": "2026-06-29-the-map-is-not-the-territory",
+  "sourcePackagePath": "migrations/the-map-is-not-the-territory",
+  "notebookId": "801c8a2c-3d5b-4d6d-b3a9-b4a860d85c84",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/the-map-is-not-the-territory-hero.webp"
+      },
+      "targetPath": "migrations/the-map-is-not-the-territory/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:2378b4422a3caedcc7ac5208b32096fcf2f263715285de56abb964ba8b5e1c94",
+      "expectedByteSize": 364766
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-map-is-not-the-territory/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/the-map-is-not-the-territory/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:42d12df7838b3a4299852e4052d35bf332bf8ef5404a1d85ad02be54bd8ae8f9",
+      "expectedByteSize": 4398521
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-map-is-not-the-territory/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/the-map-is-not-the-territory/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:4bce62fa9b44d4abe8d13183bf5cc78e3a601025130809f3cf2b4c6fbb707350",
+      "expectedByteSize": 3365214,
+      "durationSeconds": 104.536236
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-map-is-not-the-territory/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/the-map-is-not-the-territory/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:f68d256ab665b56e4ddc052cee9a92526185ddcfadcd8436f23a5806f5d54e22",
+      "expectedByteSize": 10920442,
+      "durationSeconds": 339.289977
+    }
+  }
+}

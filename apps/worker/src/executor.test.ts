@@ -115,6 +115,31 @@ test('reports an operator-fixable provider configuration error as needs human', 
   assert.equal(client.completedArtifacts.length, 0);
 });
 
+test('uploads a review candidate before reporting a quality issue as needs human', async () => {
+  const client = new FakeEngineClient();
+  const provider = providerFor('create_content', {
+    kind: 'needs_human',
+    needsHumanKind: 'quality',
+    reason: 'notebooklm_content_invalid',
+    candidate: {
+      rawResponse: Buffer.from('{"candidate":true}'),
+      parsedOutput: { payload: { read: { story: { title: 'Draft' }, playbook: { title: 'Draft' } } } },
+      executionReport: { reviewCandidate: true },
+    },
+  });
+  const executor = new WorkerExecutor({ client, providers: [provider], now: () => new Date(now) });
+
+  await executor.execute(job('create'));
+
+  assert.deepEqual(client.completedArtifacts.map(({ kind }) => kind), [
+    'raw_response', 'parsed_output', 'generation.execution.report',
+  ]);
+  assert.equal(client.results[0]?.result.state, 'needs_human');
+  assert.equal(client.results[0]?.result.needsHumanKind, 'quality');
+  assert.equal(client.results[0]?.result.error, 'notebooklm_content_invalid');
+  assert.equal(client.events.at(-1), 'report:needs_human');
+});
+
 test('reports malformed media provider configuration after claiming the job', async () => {
   const client = new FakeEngineClient();
   const providers = composeWorkerProviders({

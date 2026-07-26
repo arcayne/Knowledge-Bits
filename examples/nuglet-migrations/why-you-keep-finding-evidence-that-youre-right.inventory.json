@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "why-you-keep-finding-evidence-that-youre-right",
+  "title": "Why you keep finding evidence that you're right",
+  "sourceRunId": "2026-06-29-why-you-keep-finding-evidence-that-youre-right",
+  "sourcePackagePath": "migrations/why-you-keep-finding-evidence-that-youre-right",
+  "notebookId": "94333e1c-27f9-4421-adb5-07575aa45986",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-you-keep-finding-evidence-that-youre-right/inhouse/hero-source.png"
+      },
+      "targetPath": "migrations/why-you-keep-finding-evidence-that-youre-right/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:99b16a25e042523c537077174296801ad0133ff9546f363a62ce824589e380c6",
+      "expectedByteSize": 2403728
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-you-keep-finding-evidence-that-youre-right/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/why-you-keep-finding-evidence-that-youre-right/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:6c0a994d47afc5e36d0af2b825db54f1162a6dae90d97e82df10843f261e42c5",
+      "expectedByteSize": 4254444
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-you-keep-finding-evidence-that-youre-right/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/why-you-keep-finding-evidence-that-youre-right/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:47bd9c038a120ae423a36300b2f26d3ffc65a850f6d3aa67a6513dba265ada05",
+      "expectedByteSize": 2801715,
+      "durationSeconds": 87.02839
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-why-you-keep-finding-evidence-that-youre-right/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/why-you-keep-finding-evidence-that-youre-right/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:72615de7fec8b67d7889c5ad9c132c378380058540c4f9bb38b6fc717bd5ffdb",
+      "expectedByteSize": 13710181,
+      "durationSeconds": 425.970068
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "welcome-ai-as-your-creative-draft-partner",
+  "title": "Welcome AI as Your Creative Draft Partner",
+  "sourceRunId": "2026-06-25-ai-fluency-101",
+  "sourcePackagePath": "migrations/welcome-ai-as-your-creative-draft-partner",
+  "notebookId": "5d4fc41c-ea19-4fac-9b5f-cbac51284a59",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/ai-fluency-101-hero.png"
+      },
+      "targetPath": "migrations/welcome-ai-as-your-creative-draft-partner/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:e36487150c26a0c612fd1e66a9ba60d51af10aaf7006ce63e154e141a24598d6",
+      "expectedByteSize": 2165547
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-25-ai-fluency-101/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/welcome-ai-as-your-creative-draft-partner/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:6ea75fad59ec4dac033d3b62e00eca0dd2a27d378d0d8fe05115e1522d17393a",
+      "expectedByteSize": 4448794
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-25-ai-fluency-101/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/welcome-ai-as-your-creative-draft-partner/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:8f5803cd85d87e0654fa6f0cd494b4dacac5fd5dda0311bef222319a70a28ec3",
+      "expectedByteSize": 3114093,
+      "durationSeconds": 96.734331
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-25-ai-fluency-101/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/welcome-ai-as-your-creative-draft-partner/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:37f020b56d20c3bab1a4758c50e3fdc9e440fd570ac2be8942c69433b5a8856e",
+      "expectedByteSize": 4654973,
+      "durationSeconds": 382.107574
+    }
+  }
+}

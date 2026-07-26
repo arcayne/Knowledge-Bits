@@ -92,7 +92,7 @@ test('documented production local-worker startup supplies the absolute product r
   assert.match(localWorkerSection, /WORKER_PROVIDER_MODE="production"/);
   assert.match(
     localWorkerSection,
-    /PRODUCT_RECIPE_ROOTS='\{"nuglet\.lesson\.v1":"\/absolute\/path\/to\/nuglet\/apps\/nuglet-lab\/recipes\/nuglet\.lesson\.v1"\}'/,
+    /PRODUCT_RECIPE_ROOTS='\{"nuglet\.lesson\.v1":"\/absolute\/path\/to\/knowledge-bits\/recipes\/nuglet\.lesson\.v1"\}'/,
   );
   assert.match(localWorkerSection, /pnpm --filter @knowledge-bits\/worker exec tsx src\/index\.ts/);
 });

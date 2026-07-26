@@ -11,6 +11,7 @@ const CLASSIFICATIONS = [
   ['active', 'Active pipeline', 'Work still moving through research, creation, checks, assets, or human review.'],
   ['deliver', 'Delivering', 'Approved runs waiting for or executing delivery.'],
   ['completed', 'Completed', 'Runs whose delivery stage is done.'],
+  ['rejected', 'Rejected', 'Runs explicitly rejected by a reviewer and removed from active work.'],
   ['duplicate', 'Duplicates', 'Older records superseded by a newer run for the same Nuglet.'],
 ];
 
@@ -27,7 +28,9 @@ export function mountPipelinePage({ document = globalThis.document, fetch = glob
   const stageCounts = required('#stage-counts');
   const runs = required('#pipeline-runs');
   const error = required('#pipeline-error');
+  const refresh = required('#pipeline-refresh');
   const filters = [...document.querySelectorAll('[data-filter]')];
+  mountNewNugletForm({ document, fetch });
   let model;
   let filter = 'all';
 
@@ -44,7 +47,7 @@ export function mountPipelinePage({ document = globalThis.document, fetch = glob
       return run.classification === filter;
     });
     summary.textContent = filter === 'all'
-      ? `${model.runs.length} runs · ${model.counts.active} active · ${model.counts.delivering} delivering · ${model.counts.completed} completed · ${model.counts.duplicates} duplicates`
+      ? `${model.runs.length} runs · ${model.counts.active} active · ${model.counts.delivering} delivering · ${model.counts.completed} completed · ${model.counts.rejected} rejected · ${model.counts.duplicates} duplicates`
       : `${visibleRuns.length} run${visibleRuns.length === 1 ? '' : 's'} shown`;
     renderDailyProgress(document, dailyProgress, model.daily);
     renderOperations(document, operations, model);
@@ -52,6 +55,7 @@ export function mountPipelinePage({ document = globalThis.document, fetch = glob
       ['active', 'Active', model.counts.active],
       ['deliver', 'Delivering', model.counts.delivering],
       ['completed', 'Completed', model.counts.completed],
+      ['rejected', 'Rejected', model.counts.rejected],
       ['duplicates', 'Duplicates', model.counts.duplicates],
       ['needsHuman', 'Needs attention', model.counts.needsHuman],
     ].map(([key, label, count]) => {
@@ -106,7 +110,7 @@ export function mountPipelinePage({ document = globalThis.document, fetch = glob
     });
   }
 
-  return (async () => {
+  const load = async () => {
     try {
       const response = await fetch('/api/pipeline');
       const payload = await response.json();
@@ -119,7 +123,61 @@ export function mountPipelinePage({ document = globalThis.document, fetch = glob
       showError(loadError instanceof Error ? loadError.message : 'Could not load the pipeline.');
       return undefined;
     }
-  })();
+  };
+
+  refresh.addEventListener('click', () => { void load(); });
+  const refreshTimer = globalThis.setInterval?.(() => { void load(); }, 30_000);
+  void refreshTimer;
+  return load();
+}
+
+function mountNewNugletForm({ document, fetch }) {
+  const form = document.querySelector('#new-nuglet-form');
+  if (!form) return;
+  const submit = document.querySelector('#new-nuglet-submit');
+  const status = document.querySelector('#new-nuglet-status');
+  const csrfToken = document.querySelector('meta[name="review-csrf-token"]')?.content ?? '';
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    status.dataset.tone = '';
+    status.textContent = 'Creating the research run...';
+    const value = (name) => form.querySelector(`[name="${name}"]`)?.value.trim() ?? '';
+    const sourceUrls = value('sourceUrls').split(/\r?\n/).map((url) => url.trim()).filter(Boolean);
+    const brief = {
+      topic: value('title'),
+      title: value('title'),
+      objective: value('objective'),
+      audience: value('audience'),
+      locale: value('locale'),
+      notebookLmNotebookId: value('notebookLmNotebookId'),
+      ...(sourceUrls.length ? { sourceUrls } : {}),
+      intake: { requestedBy: 'review_operator', requestedFormat: 'story_playbook' },
+    };
+    try {
+      const response = await fetch('/api/runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ title: value('title'), locale: value('locale'), notebookLmNotebookId: value('notebookLmNotebookId'), brief }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not start the Nuglet.');
+      status.innerHTML = '';
+      status.append(document.createTextNode('Research started. '));
+      const link = document.createElement('a');
+      link.href = `/runs/${encodeURIComponent(payload.id)}`;
+      link.textContent = 'Open review';
+      status.append(link);
+      form.reset();
+      form.querySelector('[name="audience"]').value = 'general adult learners';
+      form.querySelector('[name="locale"]').value = 'en';
+    } catch (error) {
+      status.dataset.tone = 'error';
+      status.textContent = error instanceof Error ? error.message : 'Could not start the Nuglet.';
+    } finally {
+      submit.disabled = false;
+    }
+  });
 }
 
 function runRow(document, run) {
@@ -235,6 +293,7 @@ function labelForClassification(classification) {
     active: 'Active',
     deliver: 'Delivering',
     completed: 'Completed',
+    rejected: 'Rejected',
     duplicate: 'Duplicate',
   }[classification] || classification;
 }

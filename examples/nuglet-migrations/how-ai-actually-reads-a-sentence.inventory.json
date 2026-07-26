@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "how-ai-actually-reads-a-sentence",
+  "title": "How AI actually reads a sentence",
+  "sourceRunId": "2026-06-29-how-ai-actually-reads-a-sentence",
+  "sourcePackagePath": "migrations/how-ai-actually-reads-a-sentence",
+  "notebookId": "3ce9d873-23cf-4d90-9435-1da6dd65f1c0",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/how-ai-actually-reads-a-sentence-hero.webp"
+      },
+      "targetPath": "migrations/how-ai-actually-reads-a-sentence/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:4e19c1890b6e6e4ccdf7d02d1659d3f794b31fbb9f273c05c2ba61bcef05041a",
+      "expectedByteSize": 184314
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-how-ai-actually-reads-a-sentence/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/how-ai-actually-reads-a-sentence/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:4786709d628e3fc17c2b48be8cabcaafe533945eaea123061073b04d208273db",
+      "expectedByteSize": 4602377
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-how-ai-actually-reads-a-sentence/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/how-ai-actually-reads-a-sentence/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:da453819f558a5d6387d0c6b69b840607f6cbb2e3aee9b371b2c35dc1a730f8a",
+      "expectedByteSize": 3093923,
+      "durationSeconds": 96.107392
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-how-ai-actually-reads-a-sentence/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/how-ai-actually-reads-a-sentence/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:3d29036d09726308dc944409be385c8bd16d1da194111643f82def422a07cf6b",
+      "expectedByteSize": 10745635,
+      "durationSeconds": 333.856508
+    }
+  }
+}

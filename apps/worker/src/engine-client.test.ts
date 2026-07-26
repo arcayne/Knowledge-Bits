@@ -29,6 +29,22 @@ test('maps a renewed heartbeat response to continue', async () => {
   assert.deepEqual(await client.heartbeat(job), { kind: 'continue' });
 });
 
+test('sends optional run affinity when claiming the next job', async () => {
+  let body: unknown;
+  const client = new HttpEngineClient({
+    baseUrl: 'https://engine.example.test',
+    workerToken: 'worker-token',
+    fetch: async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(null, { status: 204 });
+    },
+  });
+
+  await client.claim(60, job.packageId);
+
+  assert.deepEqual(body, { leaseSeconds: 60, preferredRunId: job.packageId });
+});
+
 test('reads a declared artifact through the job-scoped control API', async () => {
   let requestedUrl = '';
   const artifactId = randomUUID();

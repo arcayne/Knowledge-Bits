@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "why-chatgpt-keeps-misunderstanding-you",
+  "title": "Why ChatGPT keeps misunderstanding you",
+  "sourceRunId": "2026-07-06-why-chatgpt-keeps-misunderstanding-you-7a0cd528",
+  "sourcePackagePath": "migrations/why-chatgpt-keeps-misunderstanding-you",
+  "notebookId": "5df157c7-497c-430d-9bbb-a7896e3c53d3",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/why-chatgpt-keeps-misunderstanding-you-hero.webp"
+      },
+      "targetPath": "migrations/why-chatgpt-keeps-misunderstanding-you/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:780d2611286c3ff3bb4cf5d6b8ae9f1bf560607e079cd81fa2ca0d5b343bed37",
+      "expectedByteSize": 198354
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-06-why-chatgpt-keeps-misunderstanding-you-7a0cd528/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/why-chatgpt-keeps-misunderstanding-you/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:a5df3182895c990592a80c89943997a3e11b16977a1e98a97388abac53e2a9ad",
+      "expectedByteSize": 4334974
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-06-why-chatgpt-keeps-misunderstanding-you-7a0cd528/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/why-chatgpt-keeps-misunderstanding-you/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:5a723480f54b47c57f667212c43345e45ab947a1e0624169d0a477fd10231696",
+      "expectedByteSize": 2741205,
+      "durationSeconds": 85.147574
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-06-why-chatgpt-keeps-misunderstanding-you-7a0cd528/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/why-chatgpt-keeps-misunderstanding-you/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:127cee751a0c8a64d21547a59326dcd842ffe7c32e2b8c86aa76802bbc310776",
+      "expectedByteSize": 9154610,
+      "durationSeconds": 284.421224
+    }
+  }
+}
