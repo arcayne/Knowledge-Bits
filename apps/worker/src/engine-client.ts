@@ -13,7 +13,7 @@ import {
 export type HeartbeatResult = { kind: 'continue' } | { kind: 'interrupted' };
 
 export interface WorkerEngineClient {
-  claim(leaseSeconds: number): Promise<JobClaim | null>;
+  claim(leaseSeconds: number, preferredRunId?: string): Promise<JobClaim | null>;
   heartbeat(job: JobClaim): Promise<HeartbeatResult>;
   readArtifact(job: JobClaim, artifactId: string, signal?: AbortSignal): Promise<{ body: Uint8Array; mediaType: string }>;
   prepareArtifact(input: ArtifactPrepareRequest, signal?: AbortSignal): Promise<ArtifactPrepareResponse>;
@@ -44,10 +44,10 @@ export class HttpEngineClient implements WorkerEngineClient {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
   }
 
-  async claim(leaseSeconds: number): Promise<JobClaim | null> {
+  async claim(leaseSeconds: number, preferredRunId?: string): Promise<JobClaim | null> {
     const response = await this.request('/jobs/claim', {
       method: 'POST',
-      body: JSON.stringify({ leaseSeconds }),
+      body: JSON.stringify({ leaseSeconds, ...(preferredRunId ? { preferredRunId } : {}) }),
     });
     if (response.status === 204) return null;
     return jobClaimSchema.parse(await this.readJson(response));

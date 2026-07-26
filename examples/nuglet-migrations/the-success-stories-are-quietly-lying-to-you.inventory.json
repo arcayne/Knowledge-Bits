@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "the-success-stories-are-quietly-lying-to-you",
+  "title": "The success stories are quietly lying to you",
+  "sourceRunId": "2026-06-29-the-success-stories-are-quietly-lying-to-you",
+  "sourcePackagePath": "migrations/the-success-stories-are-quietly-lying-to-you",
+  "notebookId": "d062c045-2bff-41af-a614-499911c3603d",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/the-success-stories-are-quietly-lying-to-you-hero.webp"
+      },
+      "targetPath": "migrations/the-success-stories-are-quietly-lying-to-you/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:f4565024ad4197c956c75599036bef0ff9c1e29208a36038a0e8305189198e3d",
+      "expectedByteSize": 89728
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-success-stories-are-quietly-lying-to-you/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/the-success-stories-are-quietly-lying-to-you/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:342c541b2ac6ee94451b3013fa014f75632cea54c7669e5ef4256ffd3fcdfa7c",
+      "expectedByteSize": 4856599
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-success-stories-are-quietly-lying-to-you/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/the-success-stories-are-quietly-lying-to-you/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:c2ad954bff011264ecbb52ae1a17a5c7a40af02161ab6971b7ff636595562795",
+      "expectedByteSize": 2865960,
+      "durationSeconds": 89.025306
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-success-stories-are-quietly-lying-to-you/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/the-success-stories-are-quietly-lying-to-you/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:b1ccf39183ed0bd61b2f263af6e06566c13c3dac4576abb6c54a7ea6b4b7b6a3",
+      "expectedByteSize": 10277010,
+      "durationSeconds": 319.297596
+    }
+  }
+}

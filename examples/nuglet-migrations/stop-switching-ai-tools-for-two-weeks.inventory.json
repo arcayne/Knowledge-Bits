@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "stop-switching-ai-tools-for-two-weeks",
+  "title": "Stop switching AI tools for two weeks",
+  "sourceRunId": "2026-07-11-stop-switching-ai-tools-for-two-weeks",
+  "sourcePackagePath": "migrations/stop-switching-ai-tools-for-two-weeks",
+  "notebookId": "42a6a518-b285-4ce7-b17d-69ade087bcd0",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-stop-switching-ai-tools-for-two-weeks/inhouse/hero-source.png"
+      },
+      "targetPath": "migrations/stop-switching-ai-tools-for-two-weeks/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:23fe2364a07833acca45afdda05515ffdbda4db62928c82519cd9c68244cf856",
+      "expectedByteSize": 2345388
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-stop-switching-ai-tools-for-two-weeks/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/stop-switching-ai-tools-for-two-weeks/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:cdaeaacc4b6bb6cf1f9156f2dad0ee9d6a1f170062f890fe589dd04ec871199a",
+      "expectedByteSize": 4443185
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-stop-switching-ai-tools-for-two-weeks/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/stop-switching-ai-tools-for-two-weeks/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:c3a7a8a1d68f4c2375e4eb26d76bd6d944982be3285d4841cc9d912984f31b5a",
+      "expectedByteSize": 3149204,
+      "durationSeconds": 97.825669
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-stop-switching-ai-tools-for-two-weeks/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/stop-switching-ai-tools-for-two-weeks/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:b46c0b2d6b8c146ff4f78e07bc521890eda082cec3b5560da70ae7e3d0724878",
+      "expectedByteSize": 35464361,
+      "durationSeconds": 1101.902948
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "the-number-your-gut-almost-always-ignores",
+  "title": "The number your gut almost always ignores",
+  "sourceRunId": "2026-06-29-the-number-your-gut-almost-always-ignores",
+  "sourcePackagePath": "migrations/the-number-your-gut-almost-always-ignores",
+  "notebookId": "abce72b8-2749-4d77-af94-f7e4b91bb3d0",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/the-number-your-gut-almost-always-ignores-hero.webp"
+      },
+      "targetPath": "migrations/the-number-your-gut-almost-always-ignores/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:7c14611fe671a93f41d4b3827497ecc1b2d18140f9c3f7bb91f11a5431bd1d73",
+      "expectedByteSize": 230258
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-number-your-gut-almost-always-ignores/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/the-number-your-gut-almost-always-ignores/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:816b425b42628dd27a4b08f0a4c129c7c3bf95d2af2ca02131118b27fae72645",
+      "expectedByteSize": 4514005
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-number-your-gut-almost-always-ignores/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/the-number-your-gut-almost-always-ignores/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:f01a820973e4106f38ca078aa7618d26e049758448c77369e34157fca004b859",
+      "expectedByteSize": 3122311,
+      "durationSeconds": 96.989751
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-29-the-number-your-gut-almost-always-ignores/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/the-number-your-gut-almost-always-ignores/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:60e0f57da5353e184dfd79da0fd81c47dbbb4e038c3aa4288ce291679d488f4c",
+      "expectedByteSize": 11803789,
+      "durationSeconds": 366.735964
+    }
+  }
+}

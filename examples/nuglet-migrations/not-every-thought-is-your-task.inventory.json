@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "not-every-thought-is-your-task",
+  "title": "Not every thought is your task",
+  "sourceRunId": "cb76f2d3-c38c-4144-aa58-810a3cb3f0c4",
+  "sourcePackagePath": "migrations/not-every-thought-is-your-task",
+  "notebookId": "ac4323c2-4498-447e-bbe9-fdbe8627d837",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "knowledge-bits/nuglet/cb76f2d3-c38c-4144-aa58-810a3cb3f0c4/3/2d9b6040-7198-42b3-aeb5-aabcb51bb195"
+      },
+      "targetPath": "migrations/not-every-thought-is-your-task/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:4eff086c21151d9b937af87c13c1d25d4a689cd217838743a098a2acbfc8457f",
+      "expectedByteSize": 2868579
+    },
+    "infographic": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "knowledge-bits/nuglet/cb76f2d3-c38c-4144-aa58-810a3cb3f0c4/3/450471e5-7d36-4ddb-8dab-8eac14253485"
+      },
+      "targetPath": "migrations/not-every-thought-is-your-task/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:efe29813690b2035892c4bf475fb1cca98ad6e5429bbd59b3f402a1543b7240b",
+      "expectedByteSize": 4508874
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "knowledge-bits/nuglet/cb76f2d3-c38c-4144-aa58-810a3cb3f0c4/3/c27de2d7-3b6a-479a-87a0-d7b52da16685"
+      },
+      "targetPath": "migrations/not-every-thought-is-your-task/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:b3e0d81666f176baab71ce822befc056b2eef5ffbf8b739a2e0c3307f2d8e587",
+      "expectedByteSize": 2848778,
+      "durationSeconds": 88
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "nuglet_r2",
+        "objectKey": "knowledge-bits/nuglet/cb76f2d3-c38c-4144-aa58-810a3cb3f0c4/3/31ece95e-8758-4dc1-9355-052b94ac6ad4"
+      },
+      "targetPath": "migrations/not-every-thought-is-your-task/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:2c4b9815419f1c6a963991143852e3a80611706028eb06b5d15d1eedb3a01f3c",
+      "expectedByteSize": 9778619,
+      "durationSeconds": 304
+    }
+  }
+}

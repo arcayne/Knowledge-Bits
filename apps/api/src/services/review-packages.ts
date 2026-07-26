@@ -19,6 +19,7 @@ import { calculateContentChecksum, calculatePackageChecksum } from '@knowledge-b
 import type {
   WorkflowArtifact,
   WorkflowRepository,
+  WorkflowRun,
 } from '../repositories/workflow-repository.js';
 import {
   readArtifactStorageObject,
@@ -53,7 +54,9 @@ export class ReviewPackageService {
     if (!run) throw new ReviewPackageNotFoundError('Run not found');
     const artifacts = await this.dependencies.repository.listArtifactsForSuccessfulStageJobs(run.id, run.currentRevision);
     const packageArtifacts = canonicalPackageArtifacts(artifacts.filter((artifact) => (
-      !isReviewAssetKind(artifact.kind) || artifact.revision === run.currentRevision
+      !isReviewAssetKind(artifact.kind)
+      || artifact.revision === run.currentRevision
+      || artifact.provenance.mediaSource === 'legacy_nuglet'
     )));
     const assets = assetStates(run.id, packageArtifacts);
     const mediaIssues = REVIEW_ASSETS
@@ -68,7 +71,13 @@ export class ReviewPackageService {
       const evidenceArtifact = requiredParsedArtifact(packageArtifacts, 'collect_sources', 'evidence');
       const contentArtifact = requiredParsedArtifact(packageArtifacts, 'create_content', 'content');
       const contentOutput = await this.readJson(contentArtifact, 'content');
-      const assembled = assembleContent(run.brief, contentOutput, packageArtifacts);
+      const retainedMediaArtifactIds = await trustedRetainedMediaArtifactIds(
+        this.dependencies.repository,
+        run,
+        contentArtifact,
+        packageArtifacts,
+      );
+      const assembled = assembleContent(run.brief, contentOutput, packageArtifacts, retainedMediaArtifactIds);
       const content = assembled.content;
       const generationExecutions = assembled.generationExecutions;
       const editorialWarningsAllowed = isMaterializedStoryPlaybook(content.target);
@@ -83,7 +92,7 @@ export class ReviewPackageService {
       const approvalIssues = [
         ...mediaIssues,
         ...qaApprovalIssues(qa, assembled.semanticChecksum, editorialWarningsAllowed),
-        ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum),
+        ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum, retainedMediaArtifactIds),
       ];
       const packageChecksum = calculatePackageChecksum({
         content,
@@ -195,6 +204,7 @@ function assembleContent(
   brief: Record<string, unknown>,
   contentOutput: Record<string, unknown>,
   artifacts: readonly WorkflowArtifact[],
+  retainedMediaArtifactIds: ReadonlySet<string> = new Set(),
 ) {
   if (contentOutput.kind === 'nuglet.lesson.v1' && contentOutput.schemaVersion === '1.1.0') {
     const generationPlan = generationPlanFromBrief(brief);
@@ -208,13 +218,14 @@ function assembleContent(
       semanticTarget: contentOutput,
       generationPlan,
       mediaArtifacts,
+      retainedMediaArtifactIds,
     });
     const content = knowledgeBitsContentSchema.parse({
       schemaVersion: 'knowledge-bits.content.v1',
       target,
     });
     const generationExecutions = assembleGenerationExecutions(artifacts, generationPlan);
-    assertHeroReferenceProvenance(generationExecutions.hero);
+    if (generationExecutions.hero.length > 0) assertHeroReferenceProvenance(generationExecutions.hero);
     return { content, generationExecutions, generationInputChecksum, semanticChecksum };
   }
 
@@ -259,6 +270,7 @@ export function assembleGenerationExecutions(
   for (const binding of GENERATION_ROLE_BINDINGS) {
     const recipe = generationPlan.recipes[binding.recipeKey];
     const output = latestArtifactForAction(artifacts, binding.outputKind, binding.action);
+    if (output?.provenance.mediaSource === 'legacy_nuglet') continue;
     if (!output || !executorBindingMatches(output)) {
       throw new ReviewPackageAssemblyError(`${binding.role} selected output execution provenance is missing`);
     }
@@ -422,7 +434,7 @@ function reportContainsExecution(
 
 function assertHeroReferenceProvenance(executions: readonly ReviewGenerationExecution[]): void {
   const expected = executions[0]?.referenceChecksums;
-  if (!expected || expected.length !== 2 || executions.some((execution) => (
+  if (!expected || expected.length === 0 || executions.some((execution) => (
     JSON.stringify(execution.referenceChecksums) !== JSON.stringify(expected)
   ))) {
     throw new ReviewPackageAssemblyError('Hero reference checksum provenance is mismatched');
@@ -558,10 +570,34 @@ function normalizeEvidence(
   return knowledgeBitsEvidenceSchema.parse({
     schemaVersion: 'knowledge-bits.evidence.v1',
     acceptedSources,
-    rejectedSources: output.rejectedSources,
+    rejectedSources: output.rejectedSources.flatMap((source) => {
+      if (!isRecord(source)
+        || typeof source.sourceId !== 'string'
+        || typeof source.url !== 'string'
+        || !isHttpUrl(source.url)
+        || typeof source.title !== 'string'
+        || !isRecord(source.readability)
+        || !isRecord(source.credibility)) return [];
+      return [{
+        sourceId: source.sourceId,
+        url: source.url,
+        title: source.title,
+        readability: source.readability,
+        credibility: source.credibility,
+      }];
+    }),
     coverageGaps: output.coverageGaps,
     claims,
   });
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function qaApprovalIssues(
@@ -592,13 +628,45 @@ function editorialWarnings(qa: ReturnType<typeof knowledgeBitsQaSchema.parse>): 
     .map((finding) => `Editorial warning: ${finding.code}: ${finding.message}`);
 }
 
-function assetChecksumIssues(artifacts: readonly WorkflowArtifact[], contentChecksum: string): string[] {
+function assetChecksumIssues(
+  artifacts: readonly WorkflowArtifact[],
+  contentChecksum: string,
+  retainedMediaArtifactIds: ReadonlySet<string> = new Set(),
+): string[] {
   return REVIEW_ASSET_KINDS.flatMap((kind) => {
     const artifact = latestArtifact(artifacts, kind);
-    return artifact && artifact.inputChecksum !== contentChecksum
+    return artifact
+      && artifact.provenance.mediaSource !== 'legacy_nuglet'
+      && !retainedMediaArtifactIds.has(artifact.id)
+      && artifact.inputChecksum !== contentChecksum
       ? [`Required ${kind} input checksum does not match learner content`]
       : [];
   });
+}
+
+async function trustedRetainedMediaArtifactIds(
+  repository: WorkflowRepository,
+  run: WorkflowRun,
+  contentArtifact: WorkflowArtifact,
+  artifacts: readonly WorkflowArtifact[],
+): Promise<ReadonlySet<string>> {
+  const marker = isRecord(run.brief.mediaRegeneration) ? run.brief.mediaRegeneration : undefined;
+  const sourcePackageChecksum = nonEmptyString(marker?.sourcePackageChecksum);
+  const regeneratedKinds = Array.isArray(marker?.regeneratedKinds)
+    ? marker.regeneratedKinds.filter((kind): kind is NugletReviewMediaKind => (
+      typeof kind === 'string' && REVIEW_ASSET_KINDS.includes(kind as NugletReviewMediaKind)
+    ))
+    : [];
+  if (!sourcePackageChecksum || regeneratedKinds.length === 0) return new Set();
+  const sourcePackage = await repository.getPackageVersion(run.id, sourcePackageChecksum);
+  if (!sourcePackage) return new Set();
+  const sourceArtifactIds = new Set(sourcePackage.artifactInventory.map(({ artifactId }) => artifactId));
+  if (!sourceArtifactIds.has(contentArtifact.id)) return new Set();
+  return new Set(REVIEW_ASSET_KINDS.flatMap((kind) => {
+    if (regeneratedKinds.includes(kind)) return [];
+    const artifact = latestArtifact(artifacts, kind);
+    return artifact && sourceArtifactIds.has(artifact.id) ? [artifact.id] : [];
+  }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

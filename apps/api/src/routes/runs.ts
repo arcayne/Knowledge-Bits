@@ -3,7 +3,7 @@ import { knowledgeBitsCreateRunRequestSchema, workflowRunResponseSchema } from '
 import type { Hono } from 'hono';
 
 import type { EngineAuthConfig } from '../auth.js';
-import { requireEngineScope } from '../auth.js';
+import { requireApiOrReviewPrincipal, requireEngineScope } from '../auth.js';
 import { WorkflowConflictError, type WorkflowRepository, type WorkflowRun } from '../repositories/workflow-repository.js';
 
 export function registerRunRoutes(
@@ -11,7 +11,7 @@ export function registerRunRoutes(
   dependencies: { repository: WorkflowRepository; auth: EngineAuthConfig },
 ): void {
   app.post('/runs', async (context) => {
-    const authFailure = requireEngineScope(context, dependencies.auth, 'api');
+    const authFailure = requireApiOrReviewPrincipal(context, dependencies.auth);
     if (authFailure) return authFailure;
     const input = knowledgeBitsCreateRunRequestSchema.safeParse(await readJson(context.req.raw));
     if (!input.success) return context.json({ error: 'Invalid run input' }, 400);

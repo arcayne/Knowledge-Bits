@@ -21,6 +21,7 @@ export const reviewStatusSchema = z.enum([
   'pending',
   'approved',
   'changes_requested',
+  'rejected',
 ]);
 
 export const checksumSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -95,6 +96,7 @@ export const createRunRequestSchema = z.object({
 
 export const claimJobRequestSchema = z.object({
   leaseSeconds: z.number().int().positive(),
+  preferredRunId: z.string().uuid().optional(),
 }).strict();
 
 export const reportJobResultRequestSchema = z.object({
@@ -138,7 +140,7 @@ export const pipelineRunSummarySchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(1),
   locale: z.string().min(1),
-  classification: z.enum(['active', 'deliver', 'completed', 'duplicate']),
+  classification: z.enum(['active', 'deliver', 'completed', 'rejected', 'duplicate']),
   duplicateOf: z.string().uuid().nullable(),
   currentStage: workflowStageSchema,
   currentState: stageStateSchema,
@@ -180,6 +182,7 @@ export const pipelineReadModelSchema = z.object({
     needsHuman: z.number().int().nonnegative(),
     active: z.number().int().nonnegative(),
     completed: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative(),
     duplicates: z.number().int().nonnegative(),
     blocked: z.number().int().nonnegative(),
     retrying: z.number().int().nonnegative(),
@@ -187,15 +190,15 @@ export const pipelineReadModelSchema = z.object({
   runs: z.array(pipelineRunSummarySchema),
 }).strict();
 
-export const reviewDecisionSchema = z.enum(['approve', 'request_changes']);
+export const reviewDecisionSchema = z.enum(['approve', 'request_changes', 'reject']);
 
 export const reviewRunRequestSchema = z.object({
   decision: reviewDecisionSchema,
   packageChecksum: checksumSchema,
   comment: z.string().trim().min(1).optional(),
 }).strict().superRefine((input, refinement) => {
-  if (input.decision === 'request_changes' && !input.comment) {
-    refinement.addIssue({ code: z.ZodIssueCode.custom, message: 'Changes requested require a comment', path: ['comment'] });
+  if ((input.decision === 'request_changes' || input.decision === 'reject') && !input.comment) {
+    refinement.addIssue({ code: z.ZodIssueCode.custom, message: 'Changes and rejections require a comment', path: ['comment'] });
   }
   if (input.decision === 'approve' && input.comment !== undefined) {
     refinement.addIssue({ code: z.ZodIssueCode.custom, message: 'Approval does not accept a comment', path: ['comment'] });

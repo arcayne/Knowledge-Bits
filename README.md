@@ -123,6 +123,11 @@ it. Review mutations also require the exact configured origin and a page-issued,
 token. Missing identity or CSRF configuration fails closed. The review page displays every delivered
 lesson field and the package checksum used by the single overall decision.
 
+The review app root is the pipeline dashboard. It reads the authenticated `GET /pipeline` API view,
+shows one current row per run identity, groups rows by stage, and links each row to `/runs/{runId}` for
+the full human review surface. The API also exposes authenticated progressive preview reads at
+`GET /runs/{runId}/preview` and `GET /runs/{runId}/artifacts/{artifactId}`.
+
 ## Local worker
 
 Workers run as separate one-shot processes, not in either web application. The API maps each bearer
@@ -150,21 +155,62 @@ The control API supplies lease-scoped job inputs and permits reads only for decl
 Each run must carry its own `notebookLmNotebookId`; the engine rejects assigning one NotebookLM notebook
 to multiple runs. Do not configure a global NotebookLM notebook ID. Existing local manifests should be
 reconciled into the run records before they are processed.
-The worker captures exact trusted source bytes before accepting evidence, binds citations to those
-snapshots, and passes content to the local Pi and media adapters. Provider calls and subprocesses use
+The worker records NotebookLM's accepted HTTPS source list as immutable source receipts, binds
+learner-facing citations during content generation, and passes content to the local Pi and media adapters. Provider calls and subprocesses use
 bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
 moves the affected stage to `needs_human`; production never falls back to fixture content.
 
 ### Starting a new Nuglet
 
 Start from ordinary text, screenshots, quotes, or source hints with the
-project-local `$start-nuglet` skill. It drafts the intake, asks only for
-information that blocks a safe start, confirms the proposed run, and returns
-the review link. It does not approve, publish, or deliver content.
+project-local [`$start-nuglet` skill](./.agents/skills/start-nuglet/SKILL.md).
+It drafts the intake, confirms the proposed run, and returns the review link;
+it never approves, publishes, or delivers content.
 
-The skill lives at
-[`./.agents/skills/start-nuglet/SKILL.md`](./.agents/skills/start-nuglet/SKILL.md).
-Operators can also use the review dashboard's **Start a new Nuglet** form.
+Operators can start a research run from the review dashboard at `/`, or use the matching CLI from
+the terminal. Both paths require a dedicated NotebookLM notebook ID and create the same research
+brief:
+
+```bash
+ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
+ENGINE_API_TOKEN="..." \
+KNOWLEDGE_BITS_REVIEW_URL="http://127.0.0.1:4321" \
+pnpm new:nuglet -- \
+  --title "Why you cannot focus after short videos" \
+  --objective "Explain the mechanism and give one kind action to rebuild focus." \
+  --audience "Adults rebuilding attention" \
+  --notebook "notebooklm-uuid" \
+  --source "https://example.com/credible-source"
+```
+
+The command prints the review URL immediately. The run starts in Research; the worker uses the
+NotebookLM notebook and any starting URLs, records the accepted source list, and advances the run as
+each stage becomes ready. The dashboard refreshes automatically and has a manual Refresh button.
+The final signed Nuglet generation recipe is bound by the worker, not guessed during intake.
+
+### Reusing approved Nuglet media
+
+A published Nuglet migration generates only its new Story and Playbook. Its approved hero,
+infographic, Brief audio, and Discussion audio are copied into a local migration bundle first, then
+uploaded by the normal asset job into immutable Knowledge Bits R2 keys. The source inventory accepts
+local files, HTTPS URLs, or public Nuglet R2 object keys. It never needs Nuglet database credentials.
+
+Start from [`examples/nuglet-migration.inventory.example.json`](./examples/nuglet-migration.inventory.example.json),
+fill all four approved assets, then run:
+
+```bash
+NUGLET_MEDIA_PUBLIC_BASE_URL="https://media.nuglet.app" \
+pnpm --filter @knowledge-bits/worker migration:prepare -- \
+  /absolute/path/to/inventory.json \
+  /absolute/path/to/knowledge-bits-migration-bundles
+```
+
+The command verifies any supplied source checksum and byte size, rejects identical Brief and
+Discussion audio, copies the exact bytes, and writes `legacy-media-reuse.json` inside the inventory's
+`sourcePackagePath`. Put that receipt in `generationPlan.legacyMediaReuse` and set
+`generationPlan.mediaMode` to `reuse_legacy`. After QA passes, the engine schedules all four assets as
+`attach_existing`; the worker does not regenerate them. Configure `NUGLET_LEGACY_REUSE_ROOT` with the
+same migration-bundle root when running the worker so the local media adapter can read those receipts.
 
 ### Local supervisor
 

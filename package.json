@@ -17,7 +17,8 @@
     "dev": "turbo run dev",
     "prisma:generate": "pnpm --filter @knowledge-bits/api prisma:generate",
     "migration:registry:validate": "node scripts/validate-nuglet-migration-registry.mjs",
-    "migration:registry:verify-live": "node scripts/validate-nuglet-migration-registry.mjs --live"
+    "migration:registry:verify-live": "node scripts/validate-nuglet-migration-registry.mjs --live",
+    "new:nuglet": "node scripts/new-nuglet.mjs"
   },
   "devDependencies": {
     "turbo": "2.9.18",

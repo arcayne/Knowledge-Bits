@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "phone-addiction-that-actually-works",
+  "title": "Phone Addiction That Actually Works",
+  "sourceRunId": "2026-07-09-phone-addiction-that-actually-works-430be5cf",
+  "sourcePackagePath": "migrations/phone-addiction-that-actually-works",
+  "notebookId": "c17e8cfe-fd5e-4b63-8c0b-c8bef649037e",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/knowledge-bits-migration-sources/phone-addiction-that-actually-works/hero.png"
+      },
+      "targetPath": "migrations/phone-addiction-that-actually-works/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:bde2ed4562c97acb1d6916318a731ce9c9acc367da03c4916f6bea86e0245979",
+      "expectedByteSize": 1335727
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-phone-addiction-that-actually-works-430be5cf/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/phone-addiction-that-actually-works/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:b7c2121ffa4bb0f318e8eb5858ed20ec508e9b70e4bcb071763dbf97c4558500",
+      "expectedByteSize": 4341548
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-phone-addiction-that-actually-works-430be5cf/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/phone-addiction-that-actually-works/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:42e97cc4bc4adbdb95917e998e8c39b8d18b8c5d4ddab5f97e3342410f7aab0f",
+      "expectedByteSize": 3222530,
+      "durationSeconds": 100.101224
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-phone-addiction-that-actually-works-430be5cf/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/phone-addiction-that-actually-works/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:8fcd0757093ffd4636321862fd873d62d5d8106667f55aab87c37f6dd67ad612",
+      "expectedByteSize": 10189606,
+      "durationSeconds": 316.580862
+    }
+  }
+}

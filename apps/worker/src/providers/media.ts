@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 
+import sharp from 'sharp';
+
 import type { ContentCandidate } from '../checks/deterministic.js';
 import type { NugletGenerationPlan, NugletMediaBaseline } from '@knowledge-bits/contracts';
+import { legacyMediaReuseSchema } from '@knowledge-bits/contracts';
 import {
   calculateContentChecksum,
   calculateNugletGenerationInputChecksum,
@@ -23,6 +26,8 @@ export type MediaKind =
   | 'audio_discussion';
 
 export type MediaOperation = 'attach_existing' | 'generate';
+
+const NOTEBOOKLM_INFOGRAPHIC_FOOTER_WIDTH_RATIO = 0.0472;
 
 export const REQUIRED_MEDIA_KINDS = [
   'hero',
@@ -51,8 +56,9 @@ export interface MediaClient {
     generationInputChecksum: string;
     kinds: readonly MediaKind[];
     idempotencyKey: string;
+    notebookLmNotebookId: string;
     heroDirection: NugletGenerationPlan['heroDirection'];
-    mediaBaseline: NugletMediaBaseline;
+    mediaBaseline?: NugletMediaBaseline;
     resolvedRecipes: MediaRecipes;
     executionInput: ProviderExecutionInput;
     legacyMediaReuse?: unknown;
@@ -76,8 +82,10 @@ export class MediaProviderAdapter implements MediaProvider {
       legacyMediaReuse?: unknown;
       mediaKinds?: readonly MediaKind[];
       mediaOperation?: MediaOperation;
+      notebookLmNotebookId?: string;
     }>;
     kinds?: readonly MediaKind[];
+    transformInfographic?: (asset: GeneratedMedia) => Promise<GeneratedMedia>;
   }) {}
 
   async execute(input: ProviderExecutionInput): Promise<ProviderExecution> {
@@ -91,19 +99,23 @@ export class MediaProviderAdapter implements MediaProvider {
     const kinds = context.mediaKinds ?? this.options.kinds ?? REQUIRED_MEDIA_KINDS;
     const mediaOperation = context.mediaOperation ?? 'generate';
     if (mediaOperation === 'attach_existing') assertLegacyMediaKinds(kinds, context.legacyMediaReuse);
-    else assertExactRequiredKinds(kinds);
+    else assertGeneratedMediaKinds(kinds);
     const generation = requiredMediaGenerationContext(context.generationPlan, context.resolvedRecipes);
     const generationInputChecksum = calculateNugletGenerationInputChecksum({
       semanticTarget: context.content,
       generationPlan: generation.plan,
     });
+    const notebookLmNotebookId = context.notebookLmNotebookId
+      ?? (typeof input.job.input.notebookLmNotebookId === 'string' ? input.job.input.notebookLmNotebookId.trim() : '');
+    if (!notebookLmNotebookId) throw new ProviderNeedsHumanError('notebooklm_notebook_id_missing');
     const generated = await this.options.client.generate({
       content: context.content,
       generationInputChecksum,
       kinds,
       idempotencyKey: input.idempotencyKey,
+      notebookLmNotebookId,
       heroDirection: generation.plan.heroDirection,
-      mediaBaseline: generation.plan.mediaBaseline,
+      ...(generation.plan.mediaBaseline ? { mediaBaseline: generation.plan.mediaBaseline } : {}),
       resolvedRecipes: generation.recipes,
       executionInput: input,
       ...(context.legacyMediaReuse === undefined ? {} : { legacyMediaReuse: context.legacyMediaReuse }),
@@ -117,9 +129,8 @@ export class MediaProviderAdapter implements MediaProvider {
     if (generated.some((asset) => asset.generationInputChecksum !== generationInputChecksum)) {
       throw new ProviderNeedsHumanError('media_input_checksum_mismatch');
     }
-    const boundGenerated = generated.map(bindGeneratedOutput);
-    assertDistinctAudioBytes(boundGenerated);
-    for (const asset of boundGenerated) {
+    assertDistinctAudioBytes(generated);
+    for (const asset of generated) {
       validateGeneratedMedia(
         asset,
         generation.recipes,
@@ -127,6 +138,11 @@ export class MediaProviderAdapter implements MediaProvider {
         mediaOperation === 'attach_existing',
       );
     }
+    const processed = await Promise.all(generated.map(async (asset) => {
+      if (asset.kind !== 'infographic') return asset;
+      return (this.options.transformInfographic ?? prepareNotebookLmInfographicForStorage)(asset);
+    }));
+    const boundGenerated = processed.map(bindGeneratedOutput);
 
     const assets = boundGenerated.map((asset) => ({
       byteSize: asset.bytes.byteLength,
@@ -160,6 +176,42 @@ export class MediaProviderAdapter implements MediaProvider {
   }
 }
 
+export async function cropNotebookLmInfographicFooter(bytes: Uint8Array): Promise<Uint8Array> {
+  try {
+    const image = sharp(bytes);
+    const metadata = await image.metadata();
+    if (!metadata.width || !metadata.height) throw new TypeError('image dimensions unavailable');
+    const cropBottom = Math.round(metadata.width * NOTEBOOKLM_INFOGRAPHIC_FOOTER_WIDTH_RATIO);
+    if (cropBottom < 1 || cropBottom >= metadata.height) throw new TypeError('invalid crop height');
+    return await image.extract({
+      left: 0,
+      top: 0,
+      width: metadata.width,
+      height: metadata.height - cropBottom,
+    }).toBuffer();
+  } catch {
+    throw new ProviderNeedsHumanError('media_infographic_crop_failed');
+  }
+}
+
+export async function prepareNotebookLmInfographicForStorage(asset: GeneratedMedia): Promise<GeneratedMedia> {
+  const bytes = await cropNotebookLmInfographicFooter(asset.bytes);
+  const metadata = await sharp(bytes).metadata();
+  if (!metadata.width || !metadata.height) {
+    throw new ProviderNeedsHumanError('media_infographic_crop_failed');
+  }
+  return {
+    ...asset,
+    bytes,
+    metadata: {
+      ...asset.metadata,
+      byteSize: bytes.byteLength,
+      height: metadata.height,
+      width: metadata.width,
+    },
+  };
+}
+
 function assertDistinctAudioBytes(generated: readonly GeneratedMedia[]): void {
   const brief = generated.find((asset) => asset.kind === 'audio_brief');
   const discussion = generated.find((asset) => asset.kind === 'audio_discussion');
@@ -187,18 +239,29 @@ function requiredMediaGenerationContext(
   };
 }
 
-function assertExactRequiredKinds(kinds: readonly MediaKind[]): void {
-  if (kinds.length !== REQUIRED_MEDIA_KINDS.length
-    || REQUIRED_MEDIA_KINDS.some((kind) => kinds.filter((candidate) => candidate === kind).length !== 1)) {
+function assertGeneratedMediaKinds(kinds: readonly MediaKind[]): void {
+  if (!kinds.length
+    || new Set(kinds).size !== kinds.length
+    || kinds.some((kind) => !REQUIRED_MEDIA_KINDS.includes(kind))) {
     throw new ProviderNeedsHumanError('media_kinds_invalid');
   }
 }
 
 function assertLegacyMediaKinds(kinds: readonly MediaKind[], reuse: unknown): void {
-  if (kinds.length !== 2
-    || !kinds.includes('audio_brief')
-    || !kinds.includes('audio_discussion')
-    || !isRecord(reuse)) {
+  const parsed = legacyMediaReuseSchema.safeParse(reuse);
+  if (!kinds.length
+    || new Set(kinds).size !== kinds.length
+    || kinds.some((kind) => !REQUIRED_MEDIA_KINDS.includes(kind))
+    || !parsed.success) {
+    throw new ProviderNeedsHumanError('legacy_media_reuse_invalid');
+  }
+  const receiptByKind: Record<MediaKind, keyof typeof parsed.data.artifacts> = {
+    hero: 'hero',
+    infographic: 'infographic',
+    audio_brief: 'audioBrief',
+    audio_discussion: 'audioDiscussion',
+  };
+  if (kinds.some((kind) => !parsed.data.artifacts[receiptByKind[kind]])) {
     throw new ProviderNeedsHumanError('legacy_media_reuse_invalid');
   }
 }
@@ -206,7 +269,7 @@ function assertLegacyMediaKinds(kinds: readonly MediaKind[], reuse: unknown): vo
 function validateGeneratedMedia(
   asset: GeneratedMedia,
   recipes: MediaRecipes,
-  baseline: NugletMediaBaseline,
+  baseline: NugletMediaBaseline | undefined,
   allowExistingMedia = false,
 ): void {
   if (!asset.mediaType.trim() || asset.bytes.byteLength === 0 || !isRecord(asset.metadata)) {
@@ -232,7 +295,7 @@ function validateGeneratedMedia(
         if (asset.metadata.styleProfileChecksum !== recipe.checksum) {
           throw new ProviderNeedsHumanError('media_hero_profile_mismatch');
         }
-        if (JSON.stringify(asset.metadata.referenceChecksums) !== JSON.stringify(heroReferenceChecksums(recipe))) {
+        if (JSON.stringify(asset.metadata.referenceChecksums) !== JSON.stringify(expectedHeroReferenceChecksums(recipe, asset.metadata))) {
           throw new ProviderNeedsHumanError('media_hero_metadata_invalid');
         }
       }
@@ -292,7 +355,7 @@ function validateSupportArtifacts(
   if (asset.supportArtifacts.length < minimumPairCount * 2 || asset.supportArtifacts.length % 2 !== 0) {
     throw new ProviderNeedsHumanError('media_support_evidence_incomplete');
   }
-  const expectedReferences = asset.kind === 'hero' ? heroReferenceChecksums(recipe) : [];
+  const expectedReferences = asset.kind === 'hero' ? expectedHeroReferenceChecksums(recipe, asset.metadata) : [];
   for (let index = 0; index < asset.supportArtifacts.length; index += 2) {
     const recipeArtifact = asset.supportArtifacts[index];
     const promptArtifact = asset.supportArtifacts[index + 1];
@@ -358,9 +421,10 @@ function validateExpectedExecutionPair(
 }
 
 function baselineArtifactForKind(
-  baseline: NugletMediaBaseline,
+  baseline: NugletMediaBaseline | undefined,
   kind: MediaKind,
 ): NugletMediaBaseline['descriptor']['artifacts'][keyof NugletMediaBaseline['descriptor']['artifacts']] | undefined {
+  if (!baseline) return undefined;
   if (kind === 'infographic') return baseline.descriptor.artifacts.infographic;
   if (kind === 'audio_brief') return baseline.descriptor.artifacts.audioBrief;
   if (kind === 'audio_discussion') return baseline.descriptor.artifacts.audioDiscussion;
@@ -373,6 +437,10 @@ function prefixedChecksum(bytes: Uint8Array): string {
 
 function heroReferenceChecksums(recipe: ResolvedRecipe): readonly string[] {
   const references = recipe.value.referenceAssets;
+  // The original nuglet.hero@1.0.0 recipe predates explicit style-reference
+  // provenance. Keep it valid as a prompt-only recipe; newer recipes can bind
+  // one or more immutable reference checksums.
+  if (references === undefined) return [];
   if (!Array.isArray(references)) throw new ProviderNeedsHumanError('media_hero_references_invalid');
   const checksums = references.map((reference) => (
     isRecord(reference) && typeof reference.checksum === 'string' && /^sha256:[a-f0-9]{64}$/.test(reference.checksum)
@@ -383,6 +451,22 @@ function heroReferenceChecksums(recipe: ResolvedRecipe): readonly string[] {
     throw new ProviderNeedsHumanError('media_hero_references_invalid');
   }
   return checksums as string[];
+}
+
+function expectedHeroReferenceChecksums(
+  recipe: ResolvedRecipe,
+  metadata: Record<string, unknown>,
+): readonly string[] {
+  const declared = heroReferenceChecksums(recipe);
+  if (declared.length > 0) return declared;
+
+  const recorded = metadata.referenceChecksums;
+  if (!Array.isArray(recorded)
+    || recorded.length === 0
+    || recorded.some((checksum) => typeof checksum !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(checksum))) {
+    throw new ProviderNeedsHumanError('media_hero_metadata_invalid');
+  }
+  return recorded as string[];
 }
 
 export function recipeForKind(recipes: MediaRecipes, kind: MediaKind): ResolvedRecipe {

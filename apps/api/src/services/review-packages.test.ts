@@ -243,6 +243,41 @@ test('keeps blocking editorial findings as decision-ready warnings for materiali
   ]);
 });
 
+test('keeps verified legacy media reviewable after Story Playbook content changes', async () => {
+  const { repository, storage } = await storyPlaybookFixture({
+    assetInputChecksum: 'd'.repeat(64),
+    legacyMedia: true,
+  });
+
+  const model = await new ReviewPackageService({ repository, storage }).load(runId);
+
+  assert.equal(model.decisionAllowed, true);
+  assert.ok(model.package);
+  assert.deepEqual(model.issues, []);
+});
+
+test('drops provider-only indexing metadata from rejected source decisions', async () => {
+  const { repository, storage } = await storyPlaybookFixture();
+  const stored = storage.objects.get('objects/story-evidence');
+  assert.ok(stored);
+  const evidence = JSON.parse(Buffer.from(stored.body).toString('utf8'));
+  evidence.rejectedSources = [{
+    sourceId: '44444444-4444-4444-8444-444444444444',
+    title: 'Rejected source',
+    url: 'https://example.test/rejected',
+    notebookLmCitationIndex: 7,
+    readability: { passed: false, reason: 'Unreadable' },
+    credibility: { passed: true, policy: 'fixture', reason: null },
+  }];
+  stored.body = Buffer.from(JSON.stringify(evidence));
+
+  const model = await new ReviewPackageService({ repository, storage }).load(runId);
+
+  assert.ok(model.package);
+  assert.equal(model.package.evidence.rejectedSources.length, 1);
+  assert.equal('notebookLmCitationIndex' in model.package.evidence.rejectedSources[0]!, false);
+});
+
 test('keeps blocking editorial findings as approval blockers for legacy packages', async () => {
   const { repository, storage } = await fixture({ blockingEditorial: true });
 
@@ -567,6 +602,8 @@ async function fixture(options: {
 async function storyPlaybookFixture(options: {
   qaPassed?: boolean;
   blockingEditorial?: boolean;
+  assetInputChecksum?: string;
+  legacyMedia?: boolean;
 } = {}) {
   const repository = new WorkflowRepository(createInMemoryWorkflowStore());
   repository.listArtifactsForSuccessfulStageJobs = (id, revision) => repository.listArtifacts(id, revision);
@@ -594,8 +631,9 @@ async function storyPlaybookFixture(options: {
     artifact.mediaType = mediaType;
     artifact.byteSize = body.byteLength;
     if (isMedia) {
-      artifact.inputChecksum = inputChecksum;
+      artifact.inputChecksum = options.assetInputChecksum ?? inputChecksum;
       Object.assign(artifact.provenance, storyMediaProvenance(artifact, plan));
+      if (options.legacyMedia) artifact.provenance.mediaSource = 'legacy_nuglet';
       if (artifact.kind === 'hero') artifactKeys.hero = artifact.storageKey;
     }
     storage.objects.set(artifact.storageKey, { body, mediaType });

@@ -89,7 +89,7 @@ export function canonicalNugletGenerationInput(input: {
         audioDiscussion: generationPlan.recipes.audioDiscussion,
       },
       heroDirection: generationPlan.heroDirection,
-      mediaBaseline: generationPlan.mediaBaseline,
+      ...(generationPlan.mediaBaseline ? { mediaBaseline: generationPlan.mediaBaseline } : {}),
     },
   });
 }

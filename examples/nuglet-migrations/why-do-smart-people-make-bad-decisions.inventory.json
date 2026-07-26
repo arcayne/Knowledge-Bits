@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "why-do-smart-people-make-bad-decisions",
+  "title": "Why do smart people make bad decisions?",
+  "sourceRunId": "2026-06-22-why-do-smart-people-make-bad-decisions",
+  "sourcePackagePath": "migrations/why-do-smart-people-make-bad-decisions",
+  "notebookId": "d0697fcb-069c-4988-b098-dd8b40bb527f",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/why-do-smart-people-make-bad-decisions-hero.webp"
+      },
+      "targetPath": "migrations/why-do-smart-people-make-bad-decisions/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:3964c0162e07b2d4515aaf5cd600bd2eb7c08f1b18fea8bd1eac3c4fc1fe5a79",
+      "expectedByteSize": 144640
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-22-why-do-smart-people-make-bad-decisions/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/why-do-smart-people-make-bad-decisions/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:06fb21c2239dd1daaafb880c42508069cad6edc7e4409ab4cd0f887e24dedca7",
+      "expectedByteSize": 4698982
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-22-why-do-smart-people-make-bad-decisions/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/why-do-smart-people-make-bad-decisions/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:adf1b9cddc96b78b37710f36b8113a580b6cb5219e5e8b043a9c63204a46400a",
+      "expectedByteSize": 3135010,
+      "durationSeconds": 97.38449
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-22-why-do-smart-people-make-bad-decisions/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/why-do-smart-people-make-bad-decisions/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:5734ce479552923ba4eb7b5ade59f63fb3e5122a87c8d711f5e395080f3c7908",
+      "expectedByteSize": 11779137,
+      "durationSeconds": 365.969705
+    }
+  }
+}

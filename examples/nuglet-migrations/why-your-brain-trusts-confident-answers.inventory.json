@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "why-your-brain-trusts-confident-answers",
+  "title": "Why your brain trusts confident answers",
+  "sourceRunId": "2026-07-08-why-your-brain-trusts-confident-answers-b7ee8382",
+  "sourcePackagePath": "migrations/why-your-brain-trusts-confident-answers",
+  "notebookId": "a2aacfeb-7001-474a-936d-f30047525ae9",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/why-your-brain-trusts-confident-answers-hero.png"
+      },
+      "targetPath": "migrations/why-your-brain-trusts-confident-answers/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:89af0baaa78097a60bc787cf430d544e21c87b46af4841d02b69f822c59505ef",
+      "expectedByteSize": 2216514
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-08-why-your-brain-trusts-confident-answers-b7ee8382/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/why-your-brain-trusts-confident-answers/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:66acdf39ed1f94115495cdc481e874418f7f31586678ec749ec0b6cc95b3141f",
+      "expectedByteSize": 4580478
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-08-why-your-brain-trusts-confident-answers-b7ee8382/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/why-your-brain-trusts-confident-answers/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:6c25a7a00caa1bc2f42879ceb3954b99c7018288f0676d57757a504088ae5def",
+      "expectedByteSize": 3213449,
+      "durationSeconds": 99.822585
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-08-why-your-brain-trusts-confident-answers-b7ee8382/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/why-your-brain-trusts-confident-answers/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:b2427aeae2d2409b0428378da028bafb22abc29b1e26a88d0c19bad369ec90a0",
+      "expectedByteSize": 42870181,
+      "durationSeconds": 1332.012698
+    }
+  }
+}

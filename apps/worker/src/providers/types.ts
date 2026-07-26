@@ -56,7 +56,17 @@ export type ProviderExecution =
     kind: 'needs_human';
     needsHumanKind: 'configuration' | 'quality';
     reason: string;
+    candidate?: ProviderCandidateExecution;
   };
+
+export interface ProviderCandidateExecution {
+  rawResponse: Uint8Array;
+  parsedOutput: unknown;
+  executionReport: unknown;
+  inputChecksum?: string;
+  assets?: readonly ProviderBinaryAsset[];
+  supportArtifacts?: readonly ProviderSupportArtifact[];
+}
 
 export interface WorkerProvider {
   name: string;

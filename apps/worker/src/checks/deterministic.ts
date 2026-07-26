@@ -53,19 +53,6 @@ export interface DeterministicCheckReport {
 
 const PLACEHOLDER = /\b(?:todo|tbd|placeholder|opportunity score|competitor)\b/i;
 const LEGACY_LEARNER_PATHS = ['title', 'takeaway', 'action', 'depths.quick', 'depths.core', 'depths.deep'] as const;
-const STORY_PLAYBOOK_LEARNER_PATHS = [
-  'identity.title',
-  'learning.centralIdea',
-  'learning.whyItMatters',
-  'learning.oneLineToKeep',
-  'learning.action',
-  'read.story',
-  'read.playbook',
-  'visual',
-  'listen.brief',
-  'listen.discussion',
-  'quiz',
-] as const;
 
 export function runDeterministicChecks(input: {
   candidate: ContentCandidate;
@@ -219,7 +206,7 @@ function checkStoryPlaybook(payload: StoryPlaybookDraft, findings: Deterministic
     ...payload.visual.claimRefs.map((claimId) => ({ path: 'visual', claimId })),
     ...questions.flatMap(({ claimRefs }) => claimRefs.map((claimId) => ({ path: 'quiz', claimId }))),
   ];
-  checkStoryPlaybookCoverage(payload.claims, payload.claimCoverage, STORY_PLAYBOOK_LEARNER_PATHS, nestedClaimRefs, findings);
+  checkStoryPlaybookCoverage(payload.claims, payload.claimCoverage, nestedClaimRefs, findings);
 }
 
 function checkLegacyCoverage(
@@ -271,18 +258,14 @@ function checkClaims(
 function checkStoryPlaybookCoverage(
   claims: readonly GroundedClaim[],
   coverageEntries: readonly { path: string; claimIds: readonly string[] }[],
-  requiredPaths: readonly string[],
   nestedClaimRefs: readonly { path: string; claimId: string }[],
   findings: DeterministicFinding[],
 ): void {
   const claimsById = new Map(claims.map((claim) => [claim.claimId, claim]));
   const coverageByPath = new Map(coverageEntries.map((coverage) => [coverage.path, coverage]));
   let invalid = coverageByPath.size !== coverageEntries.length;
-  for (const path of requiredPaths) {
-    const coverage = coverageByPath.get(path);
-    if (!coverage || coverage.claimIds.length === 0 || coverage.claimIds.some((claimId) => !claimsById.has(claimId))) {
-      invalid = true;
-    }
+  for (const coverage of coverageEntries) {
+    if (coverage.claimIds.length === 0 || coverage.claimIds.some((claimId) => !claimsById.has(claimId))) invalid = true;
   }
   for (const { path, claimId } of nestedClaimRefs) {
     if (!claimsById.has(claimId) || !coverageByPath.get(path)?.claimIds.includes(claimId)) {
@@ -290,7 +273,7 @@ function checkStoryPlaybookCoverage(
     }
   }
   if (invalid) {
-    findings.push({ code: 'claim-coverage', message: 'Every learner path and nested factual reference requires valid claim coverage.' });
+    findings.push({ code: 'claim-coverage', message: 'Every declared learner path and nested factual reference requires valid claim coverage.' });
   }
 }
 

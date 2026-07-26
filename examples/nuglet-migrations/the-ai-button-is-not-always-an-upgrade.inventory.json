@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "the-ai-button-is-not-always-an-upgrade",
+  "title": "The AI button is not always an upgrade",
+  "sourceRunId": "2026-07-11-the-ai-button-is-not-an-upgrade",
+  "sourcePackagePath": "migrations/the-ai-button-is-not-always-an-upgrade",
+  "notebookId": "87105f65-b9d7-4048-ad2d-2812554f2c20",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-the-ai-button-is-not-an-upgrade/inhouse/hero-source.png"
+      },
+      "targetPath": "migrations/the-ai-button-is-not-always-an-upgrade/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:bf7d929c5aa91fbd6bf64ebe461a5ce93939760653f57e61f5bd89d9000c8a1c",
+      "expectedByteSize": 2312857
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-the-ai-button-is-not-an-upgrade/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/the-ai-button-is-not-always-an-upgrade/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:b5833ee86b4fa92a87b7df1d164be307fb207bca1d93083428ec5438a67113dd",
+      "expectedByteSize": 4701094
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-the-ai-button-is-not-an-upgrade/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/the-ai-button-is-not-always-an-upgrade/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:2eb505ceb9c69376dbe871af21158a2f1afc039fb7f3d192c51c2918708828da",
+      "expectedByteSize": 3190291,
+      "durationSeconds": 99.102766
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-11-the-ai-button-is-not-an-upgrade/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/the-ai-button-is-not-always-an-upgrade/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:e2d36a3850e4144aae4deae21641c862d81ba5d74013359c15dd263bfaf72a74",
+      "expectedByteSize": 43054699,
+      "durationSeconds": 1337.748027
+    }
+  }
+}

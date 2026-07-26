@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "things-i-wish-i-knew-at-25-career-edition",
+  "title": "Things I Wish I Knew at 25 - Career Edition",
+  "sourceRunId": "2026-07-09-things-i-wish-i-knew-at-25-career-edition-53f368b4",
+  "sourcePackagePath": "migrations/things-i-wish-i-knew-at-25-career-edition",
+  "notebookId": "d1faa791-62f0-4895-9245-e7ec345d2242",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/knowledge-bits-migration-sources/things-i-wish-i-knew-at-25-career-edition/hero-v2.png"
+      },
+      "targetPath": "migrations/things-i-wish-i-knew-at-25-career-edition/hero-v2.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:402202afc0440567142e9668264d630d56e0f6f8074df7f99a134056c5f16d36",
+      "expectedByteSize": 1967586
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-things-i-wish-i-knew-at-25-career-edition-53f368b4/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/things-i-wish-i-knew-at-25-career-edition/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:27edbf0835db77b95d19e814d2fec211e05dd8b5ae9282d4597cf5d2b7d4f0ba",
+      "expectedByteSize": 4758759
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-things-i-wish-i-knew-at-25-career-edition-53f368b4/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/things-i-wish-i-knew-at-25-career-edition/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:8136c562ffcae786c7a59de21bec7dd892bc54503422305f1e25e8eafe45ae06",
+      "expectedByteSize": 3176097,
+      "durationSeconds": 98.661587
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-09-things-i-wish-i-knew-at-25-career-edition-53f368b4/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/things-i-wish-i-knew-at-25-career-edition/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:69870f99070a76d3ad891324c655c9343b35457a87175c92f8573f916fd0b653",
+      "expectedByteSize": 9543186,
+      "durationSeconds": 296.495601
+    }
+  }
+}

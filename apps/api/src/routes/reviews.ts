@@ -1,6 +1,7 @@
 import {
   prepareLegacyRevisionRequestSchema,
   prepareLegacyRevisionResponseSchema,
+  regenerateMediaRequestSchema,
   reviewRunRequestSchema,
   reviewRunResponseSchema,
 } from '@knowledge-bits/contracts';
@@ -83,6 +84,34 @@ export function registerReviewRoutes(
     if (principal instanceof Response) return principal;
     try {
       const run = await dependencies.repository.queueLegacyAudioReconciliation(context.req.param('id'));
+      const stage = run.stages[run.currentStage];
+      return context.json({
+        runId: run.id,
+        currentStage: run.currentStage,
+        state: stage?.state ?? null,
+        currentRevision: run.currentRevision,
+        reviewStatus: run.reviewStatus,
+        packageChecksum: run.packageChecksum,
+      }, 202);
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
+      throw error;
+    }
+  });
+
+  app.post('/runs/:id/regenerate-media', async (context) => {
+    const principal = requireReviewPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const input = regenerateMediaRequestSchema.safeParse(await readJson(context.req.raw));
+    if (!input.success) return context.json({ error: 'Invalid media regeneration input' }, 400);
+    try {
+      const run = await dependencies.repository.queueMediaRegeneration(
+        context.req.param('id'),
+        input.data.kinds,
+        input.data.recipeOverrides,
+      );
       const stage = run.stages[run.currentStage];
       return context.json({
         runId: run.id,

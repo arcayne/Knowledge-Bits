@@ -3,9 +3,9 @@ import { Hono } from 'hono';
 import { createEngineAuthConfig, type EngineAuthEnv } from './auth.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerJobRoutes } from './routes/jobs.js';
-import { registerPipelineRoutes } from './routes/pipeline.js';
 import { registerRunRoutes } from './routes/runs.js';
 import { registerReviewRoutes } from './routes/reviews.js';
+import { registerPipelineRoutes } from './routes/pipeline.js';
 import { registerDeliveryRoutes } from './routes/deliveries.js';
 import type { WorkflowRepository } from './repositories/workflow-repository.js';
 import { type ArtifactStorageAdapter, UnavailableArtifactStorageAdapter } from './services/artifacts.js';
@@ -27,7 +27,7 @@ export function createApp(options: CreateAppOptions): Hono {
   };
   const artifactStorage = options.artifactStorage ?? new UnavailableArtifactStorageAdapter();
   registerRunRoutes(app, dependencies);
-  registerPipelineRoutes(app, dependencies);
+  registerPipelineRoutes(app, { ...dependencies, artifactStorage });
   registerReviewRoutes(app, { ...dependencies, artifactStorage });
   registerJobRoutes(app, { ...dependencies, artifactStorage });
   registerArtifactRoutes(app, {

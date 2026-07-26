@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "confidence-is-not-accuracy",
+  "title": "Confidence is not accuracy",
+  "sourceRunId": "2026-06-23-confidence-is-not-accuracy",
+  "sourcePackagePath": "migrations/confidence-is-not-accuracy",
+  "notebookId": "0029fec0-de53-4dfe-b006-acec30df2058",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/confidence-is-not-accuracy-hero.webp"
+      },
+      "targetPath": "migrations/confidence-is-not-accuracy/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:0bcd555854678b0508984d376aca2c8ba56094cffff56e157620deace2b1a846",
+      "expectedByteSize": 93118
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-23-confidence-is-not-accuracy/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/confidence-is-not-accuracy/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:2a34a60d79145662bc02db370741b5a73e2a8bb306f15e66bcc661443c58f6fa",
+      "expectedByteSize": 4408713
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-23-confidence-is-not-accuracy/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/confidence-is-not-accuracy/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:1e2fd211eda201c1070f290709dfdd075d511164f01f7922ded1a39f5a5e2f9e",
+      "expectedByteSize": 3031919,
+      "durationSeconds": 94.180136
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-23-confidence-is-not-accuracy/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/confidence-is-not-accuracy/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:4c84ddbd945487e82b534c8f059c6b2f96c96c4d0f729f2db9bae130ec3a30a1",
+      "expectedByteSize": 11851600,
+      "durationSeconds": 368.222041
+    }
+  }
+}

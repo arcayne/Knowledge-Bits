@@ -99,6 +99,71 @@ test('approval freezes the checksum and queues one delivery action', async () =>
   }), null);
 });
 
+test('infographic regeneration supersedes queued delivery and requires approval again', async () => {
+  const { app, repository, storage } = createTestApp();
+  const regenerationBrief = strictLegacyReplacementBrief();
+  const generationPlan = regenerationBrief.generationPlan as Record<string, unknown>;
+  delete generationPlan.mediaBaseline;
+  generationPlan.mediaMode = 'generate';
+  const { runId, packageChecksum } = await reviewReadyRun(repository, storage, checksumA, regenerationBrief);
+
+  const approved = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify({ decision: 'approve', packageChecksum }),
+  });
+  assert.equal(approved.status, 200, await approved.clone().text());
+
+  const regenerated = await app.request(`/runs/${runId}/regenerate-media`, {
+    method: 'POST',
+    headers: { ...reviewHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kinds: ['infographic'],
+      recipeOverrides: {
+        infographic: {
+          id: 'nuglet.visual.infographic',
+          version: '1.1.0',
+          checksum: `sha256:${'b'.repeat(64)}`,
+        },
+      },
+    }),
+  });
+
+  assert.equal(regenerated.status, 202, await regenerated.clone().text());
+  assert.deepEqual(await regenerated.json(), {
+    runId,
+    currentStage: 'produce_assets',
+    state: 'queued',
+    currentRevision: 1,
+    reviewStatus: 'pending',
+    packageChecksum: null,
+  });
+  const media = await repository.claimJob({
+    workerId: 'asset-worker',
+    capabilities: ['produce_assets', 'deliver_package'],
+    leaseSeconds: 60,
+  });
+  assert.equal(media?.stage, 'produce_assets');
+  assert.deepEqual(media?.input.mediaKinds, ['infographic']);
+  assert.deepEqual(
+    ((media?.input.brief as Record<string, unknown>).generationPlan as Record<string, any>).recipes.infographic,
+    {
+      id: 'nuglet.visual.infographic',
+      version: '1.1.0',
+      checksum: `sha256:${'b'.repeat(64)}`,
+    },
+  );
+  const updatedRun = await repository.getRun(runId);
+  assert.equal(
+    (((updatedRun?.brief.generationPlan as Record<string, any>).recipes as Record<string, any>).infographic).version,
+    '1.1.0',
+  );
+  assert.deepEqual(updatedRun?.brief.mediaRegeneration, {
+    sourcePackageChecksum: packageChecksum,
+    regeneratedKinds: ['infographic'],
+  });
+});
+
 test('replays an earlier immutable approval after a newer package is pending review', async () => {
   const { app, repository, storage } = createTestApp();
   const packageA = await reviewReadyRun(repository, storage, checksumA);
@@ -478,11 +543,12 @@ async function reviewReadyRun(
   repository: WorkflowRepository,
   storage: ReviewStorage,
   checksum: string,
+  brief: Record<string, unknown> = { objective: 'Build one practical learner lesson.' },
 ): Promise<{ runId: string; packageChecksum: string }> {
   const run = await repository.bootstrapRun({
     title: 'Build a rainy day fund',
     locale: 'en',
-    brief: { objective: 'Build one practical learner lesson.' },
+    brief,
   });
   const capabilities = ['collect_sources', 'create_content', 'check_content', 'produce_assets'] as const;
   const fixtures = reviewStageFixtures();

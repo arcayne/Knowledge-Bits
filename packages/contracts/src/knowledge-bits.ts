@@ -4,6 +4,7 @@ import {
   artifactReferenceSchema,
   checksumSchema,
   createRunRequestSchema,
+  pipelineRunSummarySchema,
   reviewStatusSchema,
   workflowStageSchema,
   workflowRunResponseSchema,
@@ -108,7 +109,7 @@ const nugletHeroDirectionSchema = z.object({
     mustAvoid: z.array(z.string().trim().min(1)),
   }).strict();
 
-const legacyReuseArtifactSchema = z.object({
+export const legacyReuseArtifactSchema = z.object({
   path: relativeArtifactPathSchema,
   checksum: generationRecipeChecksumSchema,
   byteSize: z.number().int().positive(),
@@ -116,7 +117,7 @@ const legacyReuseArtifactSchema = z.object({
   durationSeconds: z.number().positive().optional(),
 }).strict();
 
-const legacyMediaReuseSchema = z.object({
+export const legacyMediaReuseSchema = z.object({
   source: z.literal('nuglet_published'),
   sourceRunId: z.string().trim().min(1),
   sourcePackagePath: relativeArtifactPathSchema,
@@ -129,12 +130,73 @@ const legacyMediaReuseSchema = z.object({
   }).strict(),
 }).strict();
 
+const migrationAssetSourceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('filesystem'),
+    path: z.string().trim().min(1),
+  }).strict(),
+  z.object({
+    kind: z.literal('https'),
+    url: z.string().url().refine((value) => new URL(value).protocol === 'https:', 'must use HTTPS'),
+  }).strict(),
+  z.object({
+    kind: z.literal('nuglet_r2'),
+    objectKey: relativeArtifactPathSchema,
+  }).strict(),
+]);
+
+const migrationAssetSchema = z.object({
+  source: migrationAssetSourceSchema,
+  targetPath: relativeArtifactPathSchema,
+  mediaType: z.string().trim().min(1),
+  expectedChecksum: generationRecipeChecksumSchema.optional(),
+  expectedByteSize: z.number().int().positive().optional(),
+}).strict();
+
+const migrationAudioAssetSchema = migrationAssetSchema.extend({
+  durationSeconds: z.number().positive(),
+}).strict();
+
+export const nugletMigrationInventorySchema = z.object({
+  schemaVersion: z.literal('knowledge-bits.nuglet-migration.v1'),
+  nugletSlug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  title: z.string().trim().min(1),
+  sourceRunId: z.string().trim().min(1),
+  sourcePackagePath: relativeArtifactPathSchema,
+  notebookId: z.string().trim().min(1),
+  regenerate: z.tuple([z.literal('story'), z.literal('playbook')]),
+  artifacts: z.object({
+    hero: migrationAssetSchema,
+    infographic: migrationAssetSchema,
+    audioBrief: migrationAudioAssetSchema,
+    audioDiscussion: migrationAudioAssetSchema,
+  }).strict(),
+}).strict().superRefine((inventory, context) => {
+  const targetPaths = Object.values(inventory.artifacts).map((artifact) => artifact.targetPath);
+  if (new Set(targetPaths).size !== targetPaths.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Migration artifact target paths must be distinct',
+      path: ['artifacts'],
+    });
+  }
+  for (const [role, artifact] of Object.entries(inventory.artifacts)) {
+    if (!artifact.targetPath.startsWith(`${inventory.sourcePackagePath}/`)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Migration artifact target path must be inside sourcePackagePath',
+        path: ['artifacts', role, 'targetPath'],
+      });
+    }
+  }
+});
+
 export const nugletGenerationPlanSchema = z.object({
   contentKind: z.literal('nuglet.lesson.v1'),
   schemaVersion: z.literal('1.1.0'),
   recipes: nugletGenerationRecipesSchema,
   heroDirection: nugletHeroDirectionSchema,
-  mediaBaseline: nugletMediaBaselineSchema,
+  mediaBaseline: nugletMediaBaselineSchema.optional(),
   mediaMode: z.enum(['generate', 'reuse_legacy']).optional(),
   legacyMediaReuse: legacyMediaReuseSchema.optional(),
 }).strict().superRefine((plan, context) => {
@@ -145,6 +207,14 @@ export const nugletGenerationPlanSchema = z.object({
       path: ['legacyMediaReuse'],
     });
   }
+  if (plan.mediaMode !== 'reuse_legacy' && plan.mediaMode !== 'generate' && !plan.mediaBaseline) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Generated media requires an immutable media baseline',
+      path: ['mediaBaseline'],
+    });
+  }
+  if (!plan.mediaBaseline) return;
   const expected = [
     ['infographic', plan.recipes.infographic],
     ['audioBrief', plan.recipes.audioBrief],
@@ -208,15 +278,21 @@ export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((br
   }
   const baseline = isUnknownRecord(brief.baseline) ? brief.baseline : undefined;
   const baselineRunId = baseline?.runId;
-  if (typeof baselineRunId !== 'string' || baselineRunId !== parsed.data.mediaBaseline.descriptor.runId) {
+  const evidenceRunId = parsed.data.mediaBaseline?.descriptor.runId
+    ?? parsed.data.legacyMediaReuse?.sourceRunId;
+  const evidenceNotebookId = parsed.data.mediaBaseline?.descriptor.notebookId
+    ?? parsed.data.legacyMediaReuse?.notebookId;
+  if (evidenceRunId !== undefined
+    && (typeof baselineRunId !== 'string' || baselineRunId !== evidenceRunId)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'media baseline run ID must match brief baseline run ID',
       path: ['baseline', 'runId'],
     });
   }
-  if (typeof brief.notebookLmNotebookId !== 'string'
-    || brief.notebookLmNotebookId !== parsed.data.mediaBaseline.descriptor.notebookId) {
+  if (evidenceNotebookId !== undefined
+    && (typeof brief.notebookLmNotebookId !== 'string'
+      || brief.notebookLmNotebookId !== evidenceNotebookId)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'media baseline notebook ID must match brief NotebookLM notebook ID',
@@ -266,12 +342,31 @@ export const prepareLegacyRevisionRequestSchema = z.object({
     });
     return;
   }
+  const evidenceNotebookId = generationPlan.data.mediaBaseline?.descriptor.notebookId
+    ?? generationPlan.data.legacyMediaReuse?.notebookId;
   if (parsedBrief.data.notebookLmNotebookId !== request.notebookLmNotebookId
-    || generationPlan.data.mediaBaseline.descriptor.notebookId !== request.notebookLmNotebookId) {
+    || evidenceNotebookId !== request.notebookLmNotebookId) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'Replacement brief NotebookLM notebook ID must match the request',
       path: ['notebookLmNotebookId'],
+    });
+  }
+});
+
+export const regenerateMediaRequestSchema = z.object({
+  kinds: z.array(z.enum(['hero', 'infographic', 'audio_brief', 'audio_discussion']))
+    .min(1)
+    .refine((kinds) => new Set(kinds).size === kinds.length, 'Media kinds must be distinct'),
+  recipeOverrides: z.object({
+    infographic: generationRecipeBindingSchema('nuglet.visual.infographic').optional(),
+  }).strict().optional(),
+}).strict().superRefine(({ kinds, recipeOverrides }, context) => {
+  if (recipeOverrides?.infographic && !kinds.includes('infographic')) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'The infographic recipe can only be overridden when regenerating the infographic',
+      path: ['recipeOverrides', 'infographic'],
     });
   }
 });
@@ -771,15 +866,6 @@ function validateStoryPlaybookClaims(
 ): void {
   const claimIds = new Set(value.claims.map((claim) => claim.claimId));
   const coveredPaths = new Set(value.claimCoverage.map((entry) => entry.path));
-  for (const path of storyPlaybookLearnerContentPathSchema.options) {
-    if (!coveredPaths.has(path)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Claim coverage is required for ${path}`,
-        path: ['claimCoverage'],
-      });
-    }
-  }
   if (coveredPaths.size !== value.claimCoverage.length) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -876,7 +962,7 @@ export const nugletGenerationInputSchema = z.object({
       audioDiscussion: true,
     }),
     heroDirection: nugletHeroDirectionSchema,
-    mediaBaseline: nugletMediaBaselineSchema,
+    mediaBaseline: nugletMediaBaselineSchema.optional(),
   }).strict(),
 }).strict();
 
@@ -1049,6 +1135,9 @@ export const knowledgeBitsSchema = z.object({
 
 export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
 export type NugletGenerationPlan = z.infer<typeof nugletGenerationPlanSchema>;
+export type RegenerateMediaRequest = z.infer<typeof regenerateMediaRequestSchema>;
+export type LegacyMediaReuse = z.infer<typeof legacyMediaReuseSchema>;
+export type NugletMigrationInventory = z.infer<typeof nugletMigrationInventorySchema>;
 export type NugletGenerationInput = z.infer<typeof nugletGenerationInputSchema>;
 type LegacyUnversionedNugletLessonTarget = Omit<z.infer<typeof legacyNugletLessonTargetSchema>, 'schemaVersion'>;
 export type KnowledgeBitsContent = z.infer<typeof knowledgeBitsContentSchema> | {
@@ -1167,3 +1256,98 @@ export type ReviewGenerationRole = z.infer<typeof reviewGenerationRoleSchema>;
 export type ReviewGenerationExecution = z.infer<typeof reviewGenerationExecutionSchema>;
 export type ReviewGenerationExecutions = z.infer<typeof reviewGenerationExecutionsSchema>;
 export type ReviewReadModel = z.infer<typeof reviewReadModelSchema>;
+
+const forbiddenPreviewDataKeys = new Set([
+  'storagekey', 'storagekeys', 'prompt', 'prompts', 'recipe', 'recipes',
+  'rawproviderresponse', 'rawproviderresponses', 'executionreport', 'executionreports',
+  'credential', 'credentials', 'apikey', 'token', 'tokens', 'accesstoken',
+  'refreshtoken', 'password', 'secret', 'secrets', 'clientsecret', 'privatekey',
+  'authorization',
+]);
+
+function normalizedPreviewDataKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function isForbiddenPreviewDataKey(key: string): boolean {
+  const normalized = normalizedPreviewDataKey(key);
+  return [...forbiddenPreviewDataKeys].some((forbidden) => normalized.endsWith(forbidden));
+}
+
+function findForbiddenPreviewDataKey(
+  value: unknown,
+  path: Array<string | number> = [],
+  seen = new WeakSet<object>(),
+): { key: string; path: Array<string | number> } | null {
+  if (typeof value !== 'object' || value === null) return null;
+  if (seen.has(value)) return null;
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const forbidden = findForbiddenPreviewDataKey(item, [...path, index], seen);
+      if (forbidden) return forbidden;
+    }
+    return null;
+  }
+
+  for (const [key, nested] of Object.entries(value)) {
+    const keyPath = [...path, key];
+    if (key === 'prompt' && isLearnerQuizPromptPath(keyPath)) continue;
+    if (isForbiddenPreviewDataKey(key)) return { key, path: keyPath };
+    const forbidden = findForbiddenPreviewDataKey(nested, keyPath, seen);
+    if (forbidden) return forbidden;
+  }
+  return null;
+}
+
+function isLearnerQuizPromptPath(path: Array<string | number>): boolean {
+  return path.length >= 5
+    && path[path.length - 1] === 'prompt'
+    && typeof path[path.length - 2] === 'number'
+    && path[path.length - 3] === 'questions'
+    && path[path.length - 4] === 'quiz'
+    && path[path.length - 5] === 'payload';
+}
+
+const progressivePreviewDataSchema = z.record(z.unknown()).superRefine((data, context) => {
+  const forbidden = findForbiddenPreviewDataKey(data);
+  if (!forbidden) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: `Preview document data contains forbidden field: ${forbidden.key}`,
+    path: forbidden.path,
+  });
+});
+
+export const progressivePreviewDocumentSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('missing'), artifactId: z.null(), data: z.null(), issue: z.null() }).strict(),
+  z.object({ state: z.literal('available'), artifactId: z.string().uuid(), data: progressivePreviewDataSchema, issue: z.null() }).strict(),
+  z.object({ state: z.literal('unavailable'), artifactId: z.string().uuid(), issue: z.string().min(1) }).strict(),
+]);
+
+export const progressivePreviewMediaSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('missing'), artifactId: z.null(), kind: z.string().min(1), label: z.string().min(1), mediaType: z.null(), previewPath: z.null(), issue: z.null() }).strict(),
+  z.object({ state: z.literal('planned'), artifactId: z.null(), kind: z.string().min(1), label: z.string().min(1), mediaType: z.string().min(1), previewPath: z.null(), issue: z.null(), checksum: generationRecipeChecksumSchema, byteSize: z.number().int().positive() }).strict(),
+  z.object({ state: z.literal('available'), artifactId: z.string().uuid(), kind: z.string().min(1), label: z.string().min(1), mediaType: z.string().min(1), previewPath: z.string().min(1), issue: z.null() }).strict(),
+  z.object({ state: z.literal('unavailable'), artifactId: z.string().uuid(), kind: z.string().min(1), label: z.string().min(1), mediaType: z.string().min(1), previewPath: z.null(), issue: z.string().min(1) }).strict(),
+]);
+
+export const progressivePreviewReadModelSchema = z.object({
+  run: pipelineRunSummarySchema,
+  documents: z.object({
+    evidence: progressivePreviewDocumentSchema,
+    content: progressivePreviewDocumentSchema,
+    qa: progressivePreviewDocumentSchema,
+  }).strict(),
+  media: z.array(progressivePreviewMediaSchema),
+  decision: z.object({
+    allowed: z.boolean(),
+    issues: z.array(z.string().min(1)),
+    packageChecksum: checksumSchema.nullable(),
+  }).strict(),
+}).strict();
+
+export type ProgressivePreviewDocument = z.infer<typeof progressivePreviewDocumentSchema>;
+export type ProgressivePreviewMedia = z.infer<typeof progressivePreviewMediaSchema>;
+export type ProgressivePreviewReadModel = z.infer<typeof progressivePreviewReadModelSchema>;

@@ -74,6 +74,28 @@ function packageVersionInput(variant: string, revision = 1) {
   return strictPackageVersionInput(runId, variant, revision);
 }
 
+function completeLegacyMediaReuse() {
+  const receipt = (path: string, mediaType: string, digit: string, durationSeconds?: number) => ({
+    path,
+    checksum: `sha256:${digit.repeat(64)}`,
+    byteSize: 128,
+    mediaType,
+    ...(durationSeconds ? { durationSeconds } : {}),
+  });
+  return {
+    source: 'nuglet_published',
+    sourceRunId: 'published-example',
+    sourcePackagePath: 'migrations/published-example',
+    notebookId: 'notebook-fixture',
+    artifacts: {
+      hero: receipt('migrations/published-example/hero.webp', 'image/webp', 'd'),
+      infographic: receipt('migrations/published-example/infographic.webp', 'image/webp', 'e'),
+      audioBrief: receipt('migrations/published-example/brief.m4a', 'audio/mp4', 'f', 90),
+      audioDiscussion: receipt('migrations/published-example/discussion.m4a', 'audio/mp4', '1', 300),
+    },
+  };
+}
+
 test('creates and retrieves a workflow run', async () => {
   const { repository } = createRepository();
   const created = await createRun(repository);
@@ -127,6 +149,124 @@ test('claimJob leases one eligible job once', async () => {
 
   assert.equal(first?.jobId, queuedJob.id);
   assert.equal(second, null);
+});
+
+test('claimJob prefers work closest to completion over older early-stage work', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  await queueJob(repository);
+  const finishingRunId = '1f8fad5b-d9cb-469f-a165-70867728950e';
+  await repository.createRun({
+    id: finishingRunId,
+    title: 'Almost finished',
+    locale: 'en',
+    brief: { lessonSlug: 'almost-finished' },
+    currentStage: 'produce_assets',
+    stages: [{ name: 'produce_assets', state: 'queued' }],
+  });
+  await repository.queueJob({
+    runId: finishingRunId,
+    stage: 'produce_assets',
+    action: 'produce_assets',
+    idempotencyKey: 'almost-finished-assets',
+    input: { brief: 'almost finished' },
+  });
+
+  const claim = await repository.claimJob({ workerId: 'worker', leaseSeconds: 120 });
+
+  assert.equal(claim?.packageId, finishingRunId);
+  assert.equal(claim?.stage, 'produce_assets');
+});
+
+test('claimJob keeps subsequent claims on the preferred run', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  await queueJob(repository);
+  const otherRunId = '2f8fad5b-d9cb-469f-a165-70867728950e';
+  await repository.createRun({
+    id: otherRunId,
+    title: 'Other run',
+    locale: 'en',
+    brief: { lessonSlug: 'other-run' },
+    currentStage: 'research',
+    stages: [{ name: 'research', state: 'queued' }],
+  });
+  await repository.queueJob({
+    runId: otherRunId,
+    stage: 'research',
+    action: 'collect_sources',
+    idempotencyKey: 'other-run-research',
+    input: { query: 'other run' },
+  });
+
+  const claim = await repository.claimJob({
+    workerId: 'worker',
+    leaseSeconds: 120,
+    preferredRunId: otherRunId,
+  });
+
+  assert.equal(claim?.packageId, otherRunId);
+  assert.equal(await repository.claimJob({
+    workerId: 'worker',
+    leaseSeconds: 120,
+    preferredRunId: otherRunId,
+  }), null);
+});
+
+test('claimJob gives create_content more execution time than other actions', async () => {
+  const { repository } = createRepository();
+  await repository.createRun({
+    id: runId,
+    title: 'Create deadline',
+    locale: 'en',
+    brief: { lessonSlug: 'create-deadline' },
+    currentStage: 'create',
+    stages: [{ name: 'create', state: 'queued' }],
+  });
+  await repository.queueJob({
+    runId,
+    stage: 'create',
+    action: 'create_content',
+    idempotencyKey: 'create-deadline',
+    input: { brief: 'create deadline' },
+  });
+
+  const claim = await repository.claimJob({ workerId: 'create-worker', leaseSeconds: 90 });
+
+  assert.equal(claim?.executionDeadlineAt, '2026-07-12T12:07:00.000Z');
+});
+
+test('claimJob keeps the default execution time for non-create actions', async () => {
+  const { repository } = createRepository();
+  await createRun(repository);
+  await queueJob(repository);
+
+  const claim = await repository.claimJob({ workerId: 'research-worker', leaseSeconds: 90 });
+
+  assert.equal(claim?.executionDeadlineAt, '2026-07-12T12:05:00.000Z');
+});
+
+test('claimJob gives produce_assets enough time for NotebookLM media generation', async () => {
+  const { repository } = createRepository();
+  await repository.createRun({
+    id: runId,
+    title: 'Media deadline',
+    locale: 'en',
+    brief: { lessonSlug: 'media-deadline' },
+    currentStage: 'produce_assets',
+    stages: [{ name: 'produce_assets', state: 'queued' }],
+  });
+  await repository.queueJob({
+    runId,
+    stage: 'produce_assets',
+    action: 'produce_assets',
+    idempotencyKey: 'media-deadline',
+    input: { brief: 'media deadline' },
+  });
+
+  const claim = await repository.claimJob({ workerId: 'media-worker', leaseSeconds: 90 });
+
+  assert.equal(claim?.executionDeadlineAt, '2026-07-12T12:20:00.000Z');
 });
 
 test('renewJobLease extends the active lease by its original duration', async () => {
@@ -318,6 +458,44 @@ test('claims revision two through create, check, and asset production after a qu
   });
   const revisionTwoAssets = await repository.claimJob({ workerId: 'asset-worker', capabilities: ['produce_assets'], leaseSeconds: 60 });
   assert.equal(revisionTwoAssets?.revision, 2);
+});
+
+test('queues all four legacy media roles for a reuse migration after QA passes', async () => {
+  const { repository, now } = createRepository();
+  const brief = strictLegacyReplacementBrief();
+  const plan = brief.generationPlan as Record<string, unknown>;
+  plan.mediaMode = 'reuse_legacy';
+  plan.legacyMediaReuse = completeLegacyMediaReuse();
+  await repository.createRun({
+    id: runId,
+    title: 'Legacy reuse flow',
+    locale: 'en',
+    brief,
+    notebookLmNotebookId: 'notebook-fixture',
+    currentStage: 'check',
+    stages: [{ name: 'check', state: 'queued' }],
+  });
+  await repository.queueJob({
+    runId,
+    stage: 'check',
+    action: 'check_content',
+    idempotencyKey: 'legacy-reuse-check',
+    input: { brief, notebookLmNotebookId: 'notebook-fixture' },
+  });
+  const check = await repository.claimJob({ workerId: 'check-worker', capabilities: ['check_content'], leaseSeconds: 60 });
+  const context = await repository.getJobContext(check!.jobId);
+  await repository.applyJobResult({
+    workerId: 'check-worker',
+    result: { ...completedResult(check!.jobId, now), stage: 'check' },
+    transition: nextTransition({
+      stage: 'check', state: 'running', revisionAttempts: context!.stage.revisionAttempts,
+      packageChecksum: null, approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum }),
+  });
+
+  const assets = await repository.claimJob({ workerId: 'asset-worker', capabilities: ['produce_assets'], leaseSeconds: 60 });
+  assert.equal(assets?.input.mediaOperation, 'attach_existing');
+  assert.deepEqual(assets?.input.mediaKinds, ['hero', 'infographic', 'audio_brief', 'audio_discussion']);
 });
 
 test('rejects a retry timestamp at or before the repository clock', async () => {
@@ -584,6 +762,35 @@ test('request changes replays by immutable package identity and compares every d
   assert.equal(replay.currentRevision, 2);
   await assert.rejects(repository.reviewRun({ ...decision, comment: 'Use a different source.' }), /conflict/i);
   await assert.rejects(repository.reviewRun({ ...decision, reviewerId: 'other-principal' }), /conflict/i);
+});
+
+test('reject closes a review without creating another worker job', async () => {
+  const { repository } = createRepository();
+  const packageA = packageVersionInput('rejected-package');
+  await repository.createRun({
+    id: runId,
+    title: 'Wrong topic',
+    locale: 'en',
+    brief: {},
+    currentStage: 'human_review',
+    packageChecksum: packageA.packageChecksum,
+    stages: [{ name: 'human_review', state: 'needs_human' }],
+  });
+  await repository.recordPackageVersion(packageA);
+
+  const rejected = await repository.reviewRun({
+    runId,
+    packageChecksum: packageA.packageChecksum,
+    decision: 'reject',
+    reviewerId: 'review-principal',
+    comment: 'The lesson covers the wrong topic.',
+  });
+
+  assert.equal(rejected.reviewStatus, 'rejected');
+  assert.equal(rejected.currentStage, 'human_review');
+  assert.equal(rejected.stages.human_review?.state, 'done');
+  assert.equal(rejected.stages.human_review?.reason, 'The lesson covers the wrong topic.');
+  assert.equal(await repository.claimJob({ workerId: 'worker', capabilities: ['create_content'], leaseSeconds: 60 }), null);
 });
 
 test('rejects a package version whose checksum does not match its canonical contents', async () => {

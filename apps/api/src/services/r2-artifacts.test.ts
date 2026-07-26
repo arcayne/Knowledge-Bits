@@ -18,7 +18,6 @@ const config = {
   bucket: 'nuglet-media-prod',
   accessKeyId: 'access-key',
   secretAccessKey: 'secret-key',
-  publicBaseUrl: 'https://media.nuglet.app',
 };
 
 test('prepares a signed R2 upload with server-owned metadata', async () => {

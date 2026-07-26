@@ -115,6 +115,17 @@ test('reports incomplete semantic claim coverage', async () => {
   assert.ok(report.findings.some(({ code }) => code === 'claim-coverage'));
 });
 
+test('allows omitted claim coverage for learner paths without explicit claim references', async () => {
+  const candidate = await semanticCandidate();
+  const payload = semanticPayload(candidate);
+  const requiredByNestedReferences = new Set(['read.story', 'read.playbook', 'visual', 'quiz']);
+  payload.claimCoverage = payload.claimCoverage.filter(({ path }) => requiredByNestedReferences.has(path));
+
+  const report = runDeterministicChecks({ candidate, evidence });
+
+  assert.equal(report.findings.some(({ code }) => code === 'claim-coverage'), false);
+});
+
 test('preserves legacy claim-coverage messages and cardinality', () => {
   const candidate = legacyCandidate();
   candidate.claimCoverage = [

@@ -86,6 +86,33 @@ export interface ResearchSourceVerifier {
   }>;
 }
 
+export type NotebookLmPhase =
+  | 'cli_version'
+  | 'source_sync'
+  | 'research_query'
+  | 'research_parse_or_repair'
+  | 'research_verification'
+  | 'create_query'
+  | 'create_parse_or_repair'
+  | 'story_query'
+  | 'story_parse_or_repair'
+  | 'playbook_query'
+  | 'playbook_parse_or_repair'
+  | 'semantic_repair';
+
+export interface NotebookLmPhaseEvent {
+  phase: NotebookLmPhase;
+  status: 'started' | 'completed' | 'failed';
+  at: string;
+  durationMs?: number;
+  error?: string;
+}
+
+interface NotebookLmPhaseTiming {
+  phase: NotebookLmPhase;
+  durationMs: number;
+}
+
 export class NotebookLmProvider implements ContentProvider {
   readonly name = 'notebooklm';
   readonly capabilities = ['collect_sources', 'create_content'] as const;
@@ -95,6 +122,8 @@ export class NotebookLmProvider implements ContentProvider {
     process: NotebookLmProcess;
     context: (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
     sourceVerifier?: ResearchSourceVerifier;
+    separateReadQueries?: boolean;
+    phaseReporter?: (event: NotebookLmPhaseEvent) => void;
     now?: () => Date;
     timeoutMs?: number;
   }) {
@@ -112,7 +141,9 @@ export class NotebookLmProvider implements ContentProvider {
     const promptBytes = input.action === 'collect_sources'
       ? renderPromptSections([renderNotebookLmResearchPrompt({ topic: context.topic })])
       : recipeExecution
-        ? renderRecipeCreatePrompt(context, recipeExecution)
+        ? this.options.separateReadQueries
+          ? renderRecipeStoryPrompt(context, recipeExecution)
+          : renderRecipeCreatePrompt(context, recipeExecution)
         : renderPromptSections([renderNotebookLmCreatePrompt({
           topic: context.topic,
           revision: input.job.revision,
@@ -125,42 +156,129 @@ export class NotebookLmProvider implements ContentProvider {
       : recipeExecution
         ? NOTEBOOKLM_RECIPE_CREATE_PROMPT_VERSION
         : NOTEBOOKLM_CREATE_PROMPT_VERSION;
-    const cliVersion = await this.version(input.signal);
-    await this.importSources(context, input.signal);
-    const response = await this.query(context.notebookId, prompt, input.signal);
-    let parsed = await this.parseOrRepair(context.notebookId, prompt, response, input.signal);
-    validateCitations(parsed.answer, input.action === 'create_content' ? context.evidence : undefined);
+    const phaseTimings: NotebookLmPhaseTiming[] = [];
+    const queryPhase: NotebookLmPhase = input.action === 'collect_sources'
+      ? 'research_query'
+      : recipeExecution && this.options.separateReadQueries
+        ? 'story_query'
+        : 'create_query';
+    const parsePhase: NotebookLmPhase = input.action === 'collect_sources'
+      ? 'research_parse_or_repair'
+      : recipeExecution && this.options.separateReadQueries
+        ? 'story_parse_or_repair'
+        : 'create_parse_or_repair';
+    const cliVersion = await this.runPhase('cli_version', phaseTimings, () => this.version(input.signal));
+    await this.runPhase('source_sync', phaseTimings, () => this.importSources(context, input.signal));
+    const response = await this.runPhase(queryPhase, phaseTimings, () => (
+      this.query(context.notebookId, prompt, input.signal)
+    ));
+    let parsed = await this.runPhase(parsePhase, phaseTimings, () => (
+      this.parseOrRepair(context.notebookId, prompt, response, input.signal)
+    ));
+    let rawResponse = parsed.raw;
+    if (recipeExecution && this.options.separateReadQueries) {
+      const playbookPrompt = renderRecipePlaybookPrompt(context, recipeExecution, parsed.answer);
+      const playbookResponse = await this.runPhase('playbook_query', phaseTimings, () => this.query(
+        context.notebookId,
+        playbookPrompt,
+        input.signal,
+        parsed.conversationId,
+      ));
+      const playbookParsed = await this.runPhase('playbook_parse_or_repair', phaseTimings, () => this.parseOrRepair(
+        context.notebookId,
+        playbookPrompt,
+        playbookResponse,
+        input.signal,
+      ));
+      parsed = {
+        raw: playbookParsed.raw,
+        conversationId: playbookParsed.conversationId,
+        answer: normalizeGroundedStoryPlaybookAnswer(
+          normalizeStoryPlaybookAnswer(mergeStoryAndPlaybookAnswers(parsed.answer, playbookParsed.answer)),
+          context.evidence,
+        ),
+        prompts: [...parsed.prompts, ...playbookParsed.prompts],
+      };
+      rawResponse = JSON.stringify({
+        story: JSON.parse(response.stdout),
+        playbook: JSON.parse(playbookResponse.stdout),
+      });
+    }
+    if (input.action === 'create_content') validateCitations(parsed.answer, context.evidence);
     if (recipeExecution) {
       const issues = storyPlaybookSemanticIssues(parsed.answer, context.evidence);
       if (hasStoryPlaybookSemanticIssues(issues)) {
         const semanticRepairPrompt = renderStoryPlaybookSemanticRepairPrompt(issues);
-        const semanticRepairResponse = await this.query(
-          context.notebookId,
-          semanticRepairPrompt,
-          input.signal,
-          parsed.conversationId,
-        );
-        const repaired = parseStructuredResponse(semanticRepairResponse.stdout);
-        if (!repaired) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
+        const repaired = await this.runPhase('semantic_repair', phaseTimings, async () => {
+          const semanticRepairResponse = await this.query(
+            context.notebookId,
+            semanticRepairPrompt,
+            input.signal,
+            parsed.conversationId,
+          );
+          const semanticRepair = parseStructuredResponse(semanticRepairResponse.stdout);
+          if (!semanticRepair) throw new ProviderNeedsHumanError('notebooklm_malformed_output');
+          return semanticRepair;
+        });
         parsed = {
           ...repaired,
+          answer: normalizeGroundedStoryPlaybookAnswer(
+            mergeSemanticRepairAnswer(parsed.answer, repaired.answer),
+            context.evidence,
+          ),
           prompts: [...parsed.prompts, semanticRepairPrompt],
         };
         validateCitations(parsed.answer, context.evidence);
-        if (hasStoryPlaybookSemanticIssues(storyPlaybookSemanticIssues(parsed.answer, context.evidence))) {
-          throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
+        const remainingIssues = storyPlaybookSemanticIssues(parsed.answer, context.evidence);
+        if (hasStoryPlaybookSemanticIssues(remainingIssues)) {
+          if (!this.options.separateReadQueries) {
+            throw new ProviderNeedsHumanError('notebooklm_content_invalid', 'quality');
+          }
+          const renderedPrompts = parsed.prompts;
+          return {
+            kind: 'needs_human',
+            needsHumanKind: 'quality',
+            reason: 'notebooklm_content_invalid',
+            candidate: {
+              rawResponse: Buffer.from(rawResponse),
+              parsedOutput: parsed.answer,
+              executionReport: {
+                cliVersion,
+                conversationId: parsed.conversationId,
+                promptVersion,
+                provider: this.name,
+                renderedPrompt: prompt,
+                renderedPrompts,
+                sourceIds: sourceIds(parsed.answer),
+                validationIssues: remainingIssues,
+                reviewCandidate: true,
+                phaseTimings,
+              },
+              supportArtifacts: renderedPrompts.flatMap((renderedPrompt) => recipeExecution.flatMap((recipe) => (
+                generationSupportArtifacts({
+                  recipe,
+                  prompt: Buffer.from(renderedPrompt),
+                  model: `notebooklm-cli:${cliVersion}`,
+                  executionInput: input,
+                })
+              ))),
+            },
+          };
         }
       }
     }
+    if (!this.options.separateReadQueries) rawResponse = parsed.raw;
     const verified = input.action === 'collect_sources'
-      ? await this.verifyResearch(parsed.answer, context, input.signal)
+      ? await this.runPhase('research_verification', phaseTimings, () => (
+        this.verifyResearch(parsed.answer, context, input.signal)
+      ))
       : undefined;
     const parsedOutput = verified?.evidence
       ?? parseCreateOutput(parsed.answer, context.evidence, context.generationPlan);
 
     return {
       kind: 'success',
-      rawResponse: Buffer.from(parsed.raw),
+      rawResponse: Buffer.from(rawResponse),
       parsedOutput,
       executionReport: {
         cliVersion,
@@ -170,6 +288,7 @@ export class NotebookLmProvider implements ContentProvider {
         renderedPrompt: prompt,
         renderedPrompts: parsed.prompts,
         sourceIds: sourceIds(parsed.answer),
+        phaseTimings,
       },
       ...(recipeExecution ? {
         supportArtifacts: parsed.prompts.flatMap((renderedPrompt) => recipeExecution.flatMap((recipe) => (
@@ -183,6 +302,41 @@ export class NotebookLmProvider implements ContentProvider {
       } : {}),
       ...(verified ? { assets: verified.snapshots } : {}),
     };
+  }
+
+  private async runPhase<T>(
+    phase: NotebookLmPhase,
+    timings: NotebookLmPhaseTiming[],
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const startedAt = this.now();
+    this.reportPhase({ phase, status: 'started', at: startedAt.toISOString() });
+    try {
+      const value = await operation();
+      const completedAt = this.now();
+      const durationMs = Math.max(0, completedAt.getTime() - startedAt.getTime());
+      timings.push({ phase, durationMs });
+      this.reportPhase({ phase, status: 'completed', at: completedAt.toISOString(), durationMs });
+      return value;
+    } catch (error) {
+      const failedAt = this.now();
+      this.reportPhase({
+        phase,
+        status: 'failed',
+        at: failedAt.toISOString(),
+        durationMs: Math.max(0, failedAt.getTime() - startedAt.getTime()),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  private reportPhase(event: NotebookLmPhaseEvent): void {
+    try {
+      this.options.phaseReporter?.(event);
+    } catch {
+      // Observability must never change provider behavior.
+    }
   }
 
   private async verifyResearch(answer: Record<string, unknown>, context: NotebookLmContext, signal: AbortSignal) {
@@ -369,6 +523,40 @@ function resolvedCreateRecipes(context: NotebookLmContext): readonly ResolvedRec
   return resolved as ResolvedRecipe[];
 }
 
+function renderRecipeStoryPrompt(
+  context: NotebookLmContext,
+  recipes: readonly ResolvedRecipe[],
+): Uint8Array {
+  if (!context.generationPlan || !context.evidence) {
+    throw new ProviderNeedsHumanError('notebooklm_create_evidence_missing');
+  }
+  const promptInputs: PromptInputs = {
+    topic: context.topic,
+    locale: context.locale ?? 'en',
+    audience: context.audience ?? 'general adult learners',
+    objective: context.objective ?? context.topic,
+    acceptedSourceIds: context.evidence.sources.map(({ sourceId }) => sourceId),
+    ...(context.centralIdea ? { centralIdea: context.centralIdea } : {}),
+  };
+  const storyRecipe = recipes.find(({ id }) => id === 'nuglet.lesson.story');
+  const challengeRecipe = recipes.find(({ id }) => id === 'nuglet.challenge');
+  if (!storyRecipe || !challengeRecipe) {
+    throw new ProviderNeedsHumanError('generation_recipe_resolution_missing');
+  }
+  return renderPromptSections([
+    'Return one response encoded as a strict JSON object with no markdown fences.',
+    'This is the Story query. Generate the shared lesson foundation, Story, challenge, citations, and media briefs.',
+    'Do not generate read.playbook. The Playbook is requested separately after this response.',
+    STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS,
+    `Named inputs:\n${JSON.stringify(promptInputs)}`,
+    `Output contract descriptor:\n${JSON.stringify(storyPlaybookDraftContractDescriptor)}`,
+    ...[storyRecipe, challengeRecipe].map((recipe) => [
+      `Resolved recipe ${recipe.id}@${recipe.version} (compact canonical JSON):`,
+      compactCanonicalJson(recipe.canonicalBytes),
+    ].join('\n')),
+  ]);
+}
+
 function renderRecipeCreatePrompt(
   context: NotebookLmContext,
   recipes: readonly ResolvedRecipe[],
@@ -394,6 +582,220 @@ function renderRecipeCreatePrompt(
       compactCanonicalJson(recipe.canonicalBytes),
     ].join('\n')),
   ]);
+}
+
+function renderRecipePlaybookPrompt(
+  context: NotebookLmContext,
+  recipes: readonly ResolvedRecipe[],
+  storyAnswer: Record<string, unknown>,
+): string {
+  const playbookRecipe = recipes.find(({ id }) => id === 'nuglet.lesson.playbook');
+  if (!playbookRecipe) throw new ProviderNeedsHumanError('generation_recipe_resolution_missing');
+  const payload = objectValue(storyAnswer.payload);
+  const foundation = {
+    topic: context.topic,
+    learning: payload?.learning,
+    claims: payload?.claims,
+    acceptedSourceIds: context.evidence?.sources.map(({ sourceId }) => sourceId) ?? [],
+  };
+  const prompt = Buffer.from(renderPromptSections([
+    'This is the separate Playbook query. Use the preceding Story response as context.',
+    'Return one strict JSON object with no markdown fences in exactly this shape: {"playbook":{...}}.',
+    'Generate only the Playbook. Do not regenerate Story, quiz, hero, visual, audio briefs, sources, or claims.',
+    'Use only claim IDs already present in the Story response. Do not invent claims or source IDs.',
+    STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS,
+    `Shared foundation:\n${JSON.stringify(foundation)}`,
+    `Required Playbook fields:\n${JSON.stringify(storyPlaybookDraftContractDescriptor.payloadShape.read.playbook)}`,
+    `Resolved recipe ${playbookRecipe.id}@${playbookRecipe.version} (compact canonical JSON):\n${compactCanonicalJson(playbookRecipe.canonicalBytes)}`,
+  ])).toString('utf8');
+  assertNotebookLmQueryPromptSize(prompt);
+  return prompt;
+}
+
+function mergeStoryAndPlaybookAnswers(
+  storyAnswer: Record<string, unknown>,
+  playbookAnswer: Record<string, unknown>,
+): Record<string, unknown> {
+  const wrappedStoryPayload = objectValue(storyAnswer.payload);
+  const storyPayload = wrappedStoryPayload ?? storyPayloadCandidate(storyAnswer) ?? {
+    read: { story: storyAnswer },
+  };
+  const storyRead = objectValue(storyPayload.read) ?? {};
+  const directPlaybook = objectValue(playbookAnswer.playbook);
+  const nestedPlaybook = objectValue(objectValue(playbookAnswer.read)?.playbook);
+  const envelopePlaybook = objectValue(objectValue(objectValue(playbookAnswer.payload)?.read)?.playbook);
+  const playbook = directPlaybook
+    ?? nestedPlaybook
+    ?? envelopePlaybook
+    ?? playbookAnswer;
+  return {
+    ...(wrappedStoryPayload ? storyAnswer : {
+      kind: 'nuglet.lesson.v1',
+      schemaVersion: '1.1.0',
+    }),
+    payload: {
+      ...storyPayload,
+      read: {
+        ...storyRead,
+        playbook,
+      },
+    },
+  };
+}
+
+function mergeSemanticRepairAnswer(
+  previousAnswer: Record<string, unknown>,
+  repairedAnswer: Record<string, unknown>,
+): Record<string, unknown> {
+  const previous = normalizeStoryPlaybookAnswer(previousAnswer);
+  const repaired = normalizeStoryPlaybookAnswer(repairedAnswer);
+  const previousPayload = objectValue(previous.payload);
+  const repairedPayload = objectValue(repaired.payload);
+  if (!previousPayload || !repairedPayload) return repaired;
+
+  const previousRead = objectValue(previousPayload.read);
+  const repairedRead = objectValue(repairedPayload.read);
+  const previousPlaybook = objectValue(previousRead?.playbook);
+  if (!previousPlaybook || objectValue(repairedRead?.playbook)) return repaired;
+
+  return {
+    ...repaired,
+    payload: {
+      ...repairedPayload,
+      read: {
+        ...repairedRead,
+        playbook: previousPlaybook,
+      },
+    },
+  };
+}
+
+function normalizeStoryPlaybookAnswer(answer: Record<string, unknown>): Record<string, unknown> {
+  const payload = objectValue(answer.payload);
+  if (!payload) return answer;
+  const identity = objectValue(payload.identity);
+  const topic = objectValue(identity?.topic);
+  const topicLabel = typeof identity?.['topic.label'] === 'string' ? identity['topic.label'] : undefined;
+  const topicCategoryId = typeof identity?.['topic.categoryId'] === 'string'
+    ? identity['topic.categoryId']
+    : undefined;
+  const normalizedIdentity = identity && !topic && topicLabel && topicCategoryId
+    ? Object.fromEntries(Object.entries({
+      ...identity,
+      topic: { label: topicLabel, categoryId: topicCategoryId },
+    }).filter(([key]) => key !== 'topic.label' && key !== 'topic.categoryId'))
+    : identity;
+  const claimCoverage = Array.isArray(payload.claimCoverage)
+    ? payload.claimCoverage.filter((entry) => {
+      const candidate = objectValue(entry);
+      return !Array.isArray(candidate?.claimIds) || candidate.claimIds.length > 0;
+    })
+    : payload.claimCoverage;
+
+  return {
+    ...answer,
+    payload: {
+      ...payload,
+      ...(normalizedIdentity ? { identity: normalizedIdentity } : {}),
+      ...(claimCoverage ? { claimCoverage } : {}),
+    },
+  };
+}
+
+function normalizeGroundedStoryPlaybookAnswer(
+  answer: Record<string, unknown>,
+  evidence: EvidenceManifest | undefined,
+): Record<string, unknown> {
+  const payload = objectValue(answer.payload);
+  if (!payload || !evidence) return answer;
+
+  const acceptedSourceIds = new Set(evidence.sources.map(({ sourceId }) => sourceId));
+  const claims = Array.isArray(payload.claims) ? payload.claims.flatMap((value) => {
+    const claim = objectValue(value);
+    if (!claim || typeof claim.claimId !== 'string' || !Array.isArray(claim.citations)) return [];
+    const citations = claim.citations.filter((value) => {
+      const citation = objectValue(value);
+      return citation
+        && typeof citation.sourceId === 'string'
+        && acceptedSourceIds.has(citation.sourceId)
+        && typeof citation.excerpt === 'string'
+        && citation.excerpt.trim().length > 0;
+    });
+    return citations.length > 0 ? [{ ...claim, citations }] : [];
+  }) : payload.claims;
+  if (!Array.isArray(claims)) return answer;
+
+  const claimIds = new Set(claims.flatMap((value) => {
+    const claim = objectValue(value);
+    return claim && typeof claim.claimId === 'string' ? [claim.claimId] : [];
+  }));
+  const filterClaimRefs = (value: unknown): unknown => Array.isArray(value)
+    ? value.filter((claimId): claimId is string => typeof claimId === 'string' && claimIds.has(claimId))
+    : value;
+  const normalizeClaimRefList = (values: unknown): unknown => Array.isArray(values)
+    ? values.map((value) => {
+      const item = objectValue(value);
+      return item ? { ...item, claimRefs: filterClaimRefs(item.claimRefs) } : value;
+    })
+    : values;
+
+  const read = objectValue(payload.read);
+  const story = objectValue(read?.story);
+  const playbook = objectValue(read?.playbook);
+  const example = objectValue(playbook?.example);
+  const visual = objectValue(payload.visual);
+  const quiz = objectValue(payload.quiz);
+  const claimCoverage = Array.isArray(payload.claimCoverage) ? payload.claimCoverage.flatMap((value) => {
+    const coverage = objectValue(value);
+    if (!coverage) return [];
+    const filtered = filterClaimRefs(coverage.claimIds);
+    return Array.isArray(filtered) && filtered.length > 0 ? [{ ...coverage, claimIds: filtered }] : [];
+  }) : payload.claimCoverage;
+
+  return {
+    ...answer,
+    payload: {
+      ...payload,
+      claims,
+      claimCoverage,
+      ...(read ? {
+        read: {
+          ...read,
+          ...(story ? { story: { ...story, blocks: normalizeClaimRefList(story.blocks) } } : {}),
+          ...(playbook ? {
+            playbook: {
+              ...playbook,
+              steps: normalizeClaimRefList(playbook.steps),
+              ...(example ? { example: { ...example, claimRefs: filterClaimRefs(example.claimRefs) } } : {}),
+            },
+          } : {}),
+        },
+      } : {}),
+      ...(visual ? { visual: { ...visual, claimRefs: filterClaimRefs(visual.claimRefs) } } : {}),
+      ...(quiz ? { quiz: { ...quiz, questions: normalizeClaimRefList(quiz.questions) } } : {}),
+    },
+  };
+}
+
+function storyPayloadCandidate(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  const read = objectValue(value.read);
+  if (objectValue(read?.story)) return value;
+
+  const story = objectValue(value.story);
+  if (!story) return undefined;
+  return {
+    ...value,
+    read: {
+      ...read,
+      story,
+    },
+  };
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function compactCanonicalJson(bytes: Uint8Array): string {
@@ -495,7 +897,7 @@ const SAFE_DETERMINISTIC_MESSAGES_BY_CODE: Readonly<Record<DeterministicFinding[
   'citation-excerpt': 'Give every citation a non-empty excerpt.',
   'content-shape': 'Supply every required learner-facing field.',
   'claim-inventory': 'Supply at least one supported claim.',
-  'claim-coverage': 'Give every learner path and nested factual reference valid claim coverage.',
+  'claim-coverage': 'Give every declared learner path and nested factual reference valid claim coverage.',
 };
 
 interface StoryPlaybookSemanticIssues {

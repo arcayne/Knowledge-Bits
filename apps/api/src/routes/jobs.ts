@@ -36,6 +36,7 @@ export function registerJobRoutes(
       workerId: principal.workerId,
       capabilities: principal.capabilities,
       leaseSeconds: input.data.leaseSeconds,
+      preferredRunId: input.data.preferredRunId,
     });
     if (!claim) return new Response(null, { status: 204 });
     return context.json(claim);

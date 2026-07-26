@@ -83,6 +83,25 @@ test('rejects stale generation input and invalid hero crop metadata', () => {
   }), /crop/i);
 });
 
+test('accepts explicitly retained media from the immutable source package during targeted regeneration', () => {
+  const semanticTarget = target();
+  const generationPlan = plan();
+  const staleAssets = assets('f'.repeat(64), generationPlan);
+  const retainedMediaArtifactIds = new Set([
+    staleAssets.hero.id,
+    staleAssets.audio_brief.id,
+    staleAssets.audio_discussion.id,
+  ]);
+  staleAssets.infographic.inputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
+
+  assert.doesNotThrow(() => materializeStoryPlaybookTarget({
+    semanticTarget,
+    generationPlan,
+    mediaArtifacts: staleAssets,
+    retainedMediaArtifactIds,
+  }));
+});
+
 test('changes the generation input checksum when validated media directions change', () => {
   const semanticTarget = target();
   const generationPlan = plan();
@@ -118,6 +137,38 @@ test('requires the selected hero to carry the approved profile checksum', () => 
     generationPlan,
     mediaArtifacts: mismatched,
   }), /profile checksum/i);
+});
+
+test('materializes approved legacy media without applying new-generation hero checks', () => {
+  const semanticTarget = target();
+  semanticTarget.payload.hero.mediaBrief = {
+    concept: 'A new semantic description of the lesson',
+    metaphor: 'A different editorial metaphor',
+    compositionFamily: 'editorial-illustration',
+  };
+  const generationPlan = plan();
+  const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
+  const mediaArtifacts = assets(generationInputChecksum, generationPlan);
+  for (const artifact of Object.values(mediaArtifacts)) {
+    artifact.inputChecksum = 'f'.repeat(64);
+    artifact.provenance.mediaSource = 'legacy_nuglet';
+  }
+  mediaArtifacts.hero.provenance.width = 1536;
+  mediaArtifacts.hero.provenance.height = 1024;
+  delete mediaArtifacts.hero.provenance.styleProfileChecksum;
+  mediaArtifacts.audio_brief.provenance.transcriptSource = 'legacy_nuglet';
+  mediaArtifacts.audio_discussion.provenance.transcriptSource = 'legacy_nuglet';
+
+  const materialized = materializeStoryPlaybookTarget({
+    semanticTarget,
+    generationPlan,
+    mediaArtifacts,
+  });
+
+  assert.equal(materialized.payload.materialization, 'materialized');
+  assert.equal(materialized.payload.hero.asset.artifactId, mediaArtifacts.hero.id);
+  assert.equal(materialized.payload.listen.brief.transcript.text, 'Brief final transcript.');
+  assert.equal(materialized.payload.listen.discussion.transcript.text, 'Discussion final transcript.');
 });
 
 test('materializes the exact Task 6 media result metadata contract', () => {

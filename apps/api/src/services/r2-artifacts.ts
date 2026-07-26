@@ -16,8 +16,6 @@ import {
 } from './artifacts.js';
 
 const DEFAULT_BUCKET = 'nuglet-media-prod';
-const DEFAULT_PUBLIC_BASE_URL = 'https://media.nuglet.app';
-
 type R2Client = Pick<S3Client, 'send'>;
 type PresignPut = (client: S3Client, command: PutObjectCommand, options: { expiresIn: number }) => Promise<string>;
 
@@ -26,7 +24,6 @@ export interface R2ArtifactStorageConfig {
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
-  publicBaseUrl: string;
 }
 
 export class R2ArtifactStorageAdapter implements ArtifactStorageAdapter {
@@ -118,10 +115,9 @@ export function createArtifactStorageFromEnv(env: NodeJS.ProcessEnv): ArtifactSt
     bucket: env.ARTIFACT_STORAGE_R2_BUCKET ?? DEFAULT_BUCKET,
     accessKeyId: env.ARTIFACT_STORAGE_R2_ACCESS_KEY_ID,
     secretAccessKey: env.ARTIFACT_STORAGE_R2_SECRET_ACCESS_KEY,
-    publicBaseUrl: env.ARTIFACT_STORAGE_PUBLIC_BASE_URL ?? DEFAULT_PUBLIC_BASE_URL,
   };
   const missing = Object.entries(config)
-    .filter(([key, value]) => key !== 'publicBaseUrl' && !value)
+    .filter(([, value]) => !value)
     .map(([key]) => key);
   if (missing.length > 0) {
     throw new Error(`ARTIFACT_STORAGE_MODE=r2 requires: ${missing.join(', ')}`);

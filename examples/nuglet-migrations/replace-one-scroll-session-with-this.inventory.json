@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "replace-one-scroll-session-with-this",
+  "title": "Replace one scroll session with this",
+  "sourceRunId": "2026-07-10-replace-one-scroll-session-with-this",
+  "sourcePackagePath": "migrations/replace-one-scroll-session-with-this",
+  "notebookId": "617c7012-5f9c-4603-91ad-d096cced4cc8",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-10-replace-one-scroll-session-with-this/inhouse/hero-source.png"
+      },
+      "targetPath": "migrations/replace-one-scroll-session-with-this/hero.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:45886adad45c644b98abf32fef85fa9c5b480e90efc011698c7bcbe316427aee",
+      "expectedByteSize": 2640120
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-10-replace-one-scroll-session-with-this/notebooklm/infographic/en/portrait/notebooklm-infographic-portrait.png"
+      },
+      "targetPath": "migrations/replace-one-scroll-session-with-this/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:61c0d21566ffc873202de34b24aa505b00bc82b668e86d1728b1751b3831e09a",
+      "expectedByteSize": 4460671
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-10-replace-one-scroll-session-with-this/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/replace-one-scroll-session-with-this/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:a7f9b4aef0b3815a172251daac392070d0c10646dcdc7bcc154629527eec18e0",
+      "expectedByteSize": 2855502,
+      "durationSeconds": 88.700227
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-07-10-replace-one-scroll-session-with-this/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/replace-one-scroll-session-with-this/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:b360f4f684bcdeb28cce822f0494248c4d9e0698d933b1e0f0279380555a1d6b",
+      "expectedByteSize": 43979881,
+      "durationSeconds": 1366.494331
+    }
+  }
+}

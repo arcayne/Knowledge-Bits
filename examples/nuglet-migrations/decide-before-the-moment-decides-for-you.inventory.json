@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "knowledge-bits.nuglet-migration.v1",
+  "nugletSlug": "decide-before-the-moment-decides-for-you",
+  "title": "Decide before the moment decides for you",
+  "sourceRunId": "2026-06-30-decide-before-the-moment-decides-for-you",
+  "sourcePackagePath": "migrations/decide-before-the-moment-decides-for-you",
+  "notebookId": "cba52115-d9aa-4cea-ae91-05a69dc63c9e",
+  "regenerate": [
+    "story",
+    "playbook"
+  ],
+  "artifacts": {
+    "hero": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/web/public/lesson-heroes/decide-before-the-moment-decides-for-you-hero.webp"
+      },
+      "targetPath": "migrations/decide-before-the-moment-decides-for-you/hero.webp",
+      "mediaType": "image/webp",
+      "expectedChecksum": "sha256:e5ed4b42db8a872ac6c0418adcc382252f2785b3b5289004a34ad0bcf9d992d4",
+      "expectedByteSize": 97036
+    },
+    "infographic": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-30-decide-before-the-moment-decides-for-you/notebooklm/infographic/en/notebooklm-infographic.png"
+      },
+      "targetPath": "migrations/decide-before-the-moment-decides-for-you/infographic.png",
+      "mediaType": "image/png",
+      "expectedChecksum": "sha256:ab4ef3807278784afcb8488fd3d6c1344f0a2bee00b711cf446456102e39d594",
+      "expectedByteSize": 4408029
+    },
+    "audioBrief": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-30-decide-before-the-moment-decides-for-you/audio/notebooklm-short-brief.m4a"
+      },
+      "targetPath": "migrations/decide-before-the-moment-decides-for-you/short-brief.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:5bc4758de082bca0502d52443896e1ceaf598ff0f64a709017d69c99f8dfc59a",
+      "expectedByteSize": 2899661,
+      "durationSeconds": 90.070204
+    },
+    "audioDiscussion": {
+      "source": {
+        "kind": "filesystem",
+        "path": "/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/outputs/2026-06-30-decide-before-the-moment-decides-for-you/audio/notebooklm-medium-debate.m4a"
+      },
+      "targetPath": "migrations/decide-before-the-moment-decides-for-you/medium-debate.m4a",
+      "mediaType": "audio/mp4",
+      "expectedChecksum": "sha256:24a6ea1b516acd72bfbfefc3539fcd9cd192e19280163b9a4873b8e3511213cf",
+      "expectedByteSize": 11839647,
+      "durationSeconds": 367.850522
+    }
+  }
+}

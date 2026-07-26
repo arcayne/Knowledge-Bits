@@ -20,6 +20,10 @@ test('pipeline page exposes daily throughput, operations, filters, and preview l
   assert.match(source, /id="status-counts"/);
   assert.match(source, /id="stage-counts"/);
   assert.match(source, /id="pipeline-runs"/);
+  assert.match(source, /id="new-nuglet-form"/);
+  assert.match(source, /meta name="review-csrf-token"/);
+  assert.match(source, /id="pipeline-refresh"/);
+  assert.match(source, /NotebookLM notebook ID/);
   assert.match(source, /id="daily-progress"/);
   assert.match(source, /id="operations"/);
   assert.match(clientSource, /fetch\('\/api\/pipeline'\)/);
@@ -30,6 +34,11 @@ test('pipeline page exposes daily throughput, operations, filters, and preview l
   assert.match(clientSource, /delivered today/);
   assert.match(clientSource, /Retries scheduled/);
   assert.match(clientSource, /Delivery attempts/);
+  assert.match(clientSource, /fetch\('\/api\/runs'/);
+  assert.match(clientSource, /X-CSRF-Token/);
+  assert.match(clientSource, /30_000/);
+  assert.match(clientSource, /requestedFormat: 'story_playbook'/);
+  assert.doesNotMatch(clientSource, /contentKind: 'nuglet\.lesson\.v1'/);
 });
 
 test('pipeline page proxy uses the authenticated review service', async () => {

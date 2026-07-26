@@ -560,6 +560,29 @@ test('executes editorial inference through the local Pi SDK adapter with an abor
   assert.ok(observed?.signal instanceof AbortSignal);
 });
 
+test('reports expired Google ADC as explicit human reauthentication work', async () => {
+  const client = new LocalPiSdkClient({
+    provider: 'google-vertex',
+    model: 'gemini-2.5-flash-lite',
+    models: {
+      async complete() {
+        throw new Error('{"error":"invalid_grant","error_description":"reauth related error (invalid_rapt)"}');
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => client.check({
+      candidate,
+      evidence,
+      rubric: 'Check it.',
+      idempotencyKey: 'expired-google-adc',
+      signal: new AbortController().signal,
+    }),
+    /google_credentials_reauthentication_required/,
+  );
+});
+
 test('executes media generation through one bounded local command adapter', async () => {
   let commandInput: Record<string, unknown> | undefined;
   const recipes = resolvedRecipesFor(generationPlan);
@@ -599,10 +622,17 @@ test('executes media generation through one bounded local command adapter', asyn
     generationInputChecksum: inputChecksum,
     kinds: ['hero'],
     idempotencyKey: 'stable-media-key',
+    notebookLmNotebookId: 'notebook-fixture',
     heroDirection: generationPlan.heroDirection,
     mediaBaseline: generationPlan.mediaBaseline,
     resolvedRecipes: recipes,
-    executionInput: input('produce_assets', [], { generationPlan }),
+    executionInput: input('produce_assets', [], {
+      generationPlan,
+      mediaRegeneration: {
+        sourcePackageChecksum: 'f'.repeat(64),
+        regeneratedKinds: ['infographic'],
+      },
+    }),
     signal: new AbortController().signal,
   });
 
@@ -611,11 +641,16 @@ test('executes media generation through one bounded local command adapter', asyn
     Buffer.from(result[0]!.supportArtifacts[1]!.body).toString(),
     'Rendered hero prompt.',
   );
+  assert.equal(result[0]!.supportArtifacts[0]!.provenance.provider, 'media');
+  assert.equal(result[0]!.supportArtifacts[0]!.provenance.upstreamProvider, 'vertex');
+  assert.equal(JSON.parse(String(commandInput?.stdin)).runId, '44444444-4444-4444-8444-444444444444');
   assert.match(String(commandInput?.stdin), /stable-media-key/);
+  assert.match(String(commandInput?.stdin), /notebook-fixture/);
   assert.match(String(commandInput?.stdin), /canonicalBase64/);
   assert.match(String(commandInput?.stdin), /Move from distraction to focus/);
   assert.match(String(commandInput?.stdin), /media-baseline\.v1\.json/);
   assert.match(String(commandInput?.stdin), /fixture-run/);
+  assert.deepEqual(JSON.parse(String(commandInput?.stdin)).regeneratedKinds, ['infographic']);
   assert.equal(commandInput?.timeoutMs, 600_000);
 });
 
