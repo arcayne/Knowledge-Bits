@@ -14,6 +14,7 @@ import {
   renderPublicPreviewPrompt,
   renderPublicPreviewSource,
 } from "./nuglet-public-preview.mjs";
+import { renderPublicPreviewVideo } from "./nuglet-public-preview-renderer.mjs";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_STYLE_REFERENCES = [
@@ -636,26 +637,6 @@ async function downloadNotebookLmArtifact(notebookId, kind, artifactId, director
   return readFile(path);
 }
 
-async function videoMetadata(bytes) {
-  const path = join(tmpdir(), `knowledge-bits-public-preview-${createHash("sha256").update(bytes).digest("hex")}.mp4`);
-  await writeFile(path, bytes);
-  try {
-    const { stdout } = await execFileAsync("ffprobe", [
-      "-v", "error", "-show_streams", "-show_format", "-of", "json", path,
-    ]);
-    const parsed = JSON.parse(stdout);
-    const video = parsed.streams?.find((stream) => stream.codec_type === "video");
-    return {
-      durationSeconds: Number(parsed.format?.duration),
-      width: Number(video?.width),
-      height: Number(video?.height),
-      hasAudio: parsed.streams?.some((stream) => stream.codec_type === "audio") ?? false,
-    };
-  } finally {
-    await unlink(path).catch(() => undefined);
-  }
-}
-
 async function transcribeVideo(bytes) {
   const project = required(process.env.GOOGLE_CLOUD_PROJECT, "GOOGLE_CLOUD_PROJECT");
   const location = (process.env.GOOGLE_CLOUD_LOCATION || "global").trim();
@@ -759,11 +740,13 @@ async function generateCurrentMedia(input) {
       if (!notebookLm) throw new Error(`NotebookLM preparation missing for ${kind}`);
       const tracked = notebookLm.tracked.get(kind);
       if (!tracked) throw new Error(`NotebookLM artifact tracking missing for ${kind}`);
-      const bytes = await downloadNotebookLmArtifact(notebookLm.notebookId, kind, tracked.artifactId, directory);
+      let bytes = await downloadNotebookLmArtifact(notebookLm.notebookId, kind, tracked.artifactId, directory);
       if (kind === "public_preview") {
-        const metadata = await videoMetadata(bytes);
-        const transcription = await transcribeVideo(bytes);
         const brief = compilePublicPreview(input.content);
+        const rendered = await renderPublicPreviewVideo(bytes, brief.title);
+        bytes = rendered.bytes;
+        const metadata = rendered.metadata;
+        const transcription = await transcribeVideo(bytes);
         const leaks = protectedLeakage(transcription.transcript, brief);
         const technicalPassed = metadata.hasAudio
           && metadata.durationSeconds >= 40
@@ -787,6 +770,13 @@ async function generateCurrentMedia(input) {
             providerFormat: "short",
             providerArtifactId: tracked.artifactId,
             promptTemplateVersion: brief.promptTemplateVersion,
+            providerDurationSeconds: rendered.providerDurationSeconds,
+            providerTailTrimSeconds: rendered.providerTailTrimSeconds,
+            narrativeDurationSeconds: rendered.narrativeDurationSeconds,
+            endCardDurationSeconds: rendered.endCardDurationSeconds,
+            endCardVersion: rendered.endCardVersion,
+            endCardBackgroundChecksum: rendered.endCardBackgroundChecksum,
+            logoChecksum: rendered.logoChecksum,
             validation: {
               technicalPassed,
               protectedContentPassed: leaks.length === 0,

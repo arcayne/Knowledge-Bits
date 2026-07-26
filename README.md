@@ -149,6 +149,9 @@ pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker.
 The Nuglet recipe registry, media command, and approved visual style references live in this repository.
 The worker does not depend on `apps/nuglet-lab` or any other Nuglet source checkout.
+NotebookLM Shorts are post-processed locally with `ffmpeg`, `ffprobe`, and `pango-view`: the provider
+tail is removed, the real Nuglet footer and Focus Aperture end card are added, and the exact title and
+CTA use bundled Nuglet fonts. The result remains `needs_review` until a human approves it.
 The worker will not start unless `PRODUCT_RECIPE_ROOTS` contains a non-empty mapping from each product
 content kind to its absolute local recipe directory. These filesystem paths remain local to the worker.
 The control API supplies lease-scoped job inputs and permits reads only for declared artifact dependencies.
