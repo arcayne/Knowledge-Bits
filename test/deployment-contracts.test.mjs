@@ -5,6 +5,7 @@ import test from 'node:test';
 const repositoryRoot = new URL('../', import.meta.url);
 
 test('API app exposes a catch-all Hono Vercel function from its documented root', async () => {
+  const rootPackageJson = await readJson('package.json');
   const config = await readJson('apps/api/vercel.json');
   const packageJson = await readJson('apps/api/package.json');
   const entrypoint = await readFile(new URL('apps/api/api/index.js', repositoryRoot), 'utf8');
@@ -15,6 +16,7 @@ test('API app exposes a catch-all Hono Vercel function from its documented root'
   assert.equal(config.installCommand, 'pnpm install --frozen-lockfile');
   assert.equal(config.buildCommand, 'pnpm build');
   assert.equal(config.functions['api/handler.js'].includeFiles, 'apps/api/dist/**');
+  assert.match(rootPackageJson.scripts.postinstall, /--filter @knowledge-bits\/api build/);
   assert.deepEqual(config.rewrites, [
     {
       source: '/api/(.*)',
