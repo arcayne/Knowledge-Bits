@@ -13,7 +13,10 @@ const content = {
   kind: "nuglet.lesson.v1",
   schemaVersion: "1.1.0",
   payload: {
-    identity: { title: "Protect Your Attention" },
+    identity: {
+      title: "Protect Your Attention",
+      topic: { label: "attention" },
+    },
     learning: {
       centralIdea: "Visible cues make attention easier to pull away.",
       oneLineToKeep: "Design the setup before relying on effort.",
@@ -38,6 +41,10 @@ test("compiles a limited English source without protected lesson answers", () =>
   assert.match(source, /deliberately limited promotional preview source/);
   assert.doesNotMatch(source, /Put the phone away/);
   assert.doesNotMatch(source, /Remove easy distractions/);
+  assert.doesNotMatch(source, /Visible cues make attention easier to pull away/);
+  assert.doesNotMatch(source, /Design the setup before relying on effort/);
+  assert.match(source, /attention pattern/);
+  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.1.0");
   assert.match(publicPreviewSourceTitle(brief), /^Nuglet public preview [a-f0-9]{12}$/);
 });
 
@@ -56,4 +63,41 @@ test("flags obvious practice and quiz-answer leakage", () => {
     brief,
   ).length > 0);
   assert.deepEqual(protectedLeakage("See why attention can feel scattered.", brief), []);
+});
+
+test("never places the complete reframe or central idea in the provider source", () => {
+  const cases = [
+    {
+      title: "The hard book was teaching me how to think slowly",
+      centralIdea: "A difficult book is not always a problem; sometimes the friction is useful because it slows you down.",
+      oneLineToKeep: "The friction of a hard text is not a barrier; it is the workout that builds cognitive patience.",
+    },
+    {
+      title: "The One-Sentence Test for True Understanding",
+      centralIdea: "You can test whether you understand one idea by explaining it plainly, from memory.",
+      oneLineToKeep: "Familiarity is not understanding; true comprehension requires explanation from memory.",
+    },
+    {
+      title: "Not Every Thought is Work",
+      centralIdea: "Overthinking gets quieter when you stop treating every thought as a responsibility.",
+      oneLineToKeep: "A thought can ask for your attention without becoming a task.",
+    },
+  ];
+
+  for (const candidate of cases) {
+    const source = renderPublicPreviewSource(compilePublicPreview({
+      ...content,
+      payload: {
+        ...content.payload,
+        identity: { title: candidate.title },
+        learning: {
+          ...content.payload.learning,
+          centralIdea: candidate.centralIdea,
+          oneLineToKeep: candidate.oneLineToKeep,
+        },
+      },
+    }));
+    assert.doesNotMatch(source, new RegExp(candidate.centralIdea.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(source, new RegExp(candidate.oneLineToKeep.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
 });
