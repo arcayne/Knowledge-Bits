@@ -133,16 +133,17 @@ receives only its own token:
 ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
 ENGINE_WORKER_TOKEN="local-worker-token" \
 WORKER_PROVIDER_MODE="production" \
-PRODUCT_RECIPE_ROOTS='{"nuglet.lesson.v1":"/absolute/path/to/nuglet/apps/nuglet-lab/recipes/nuglet.lesson.v1"}' \
-NOTEBOOKLM_TRUSTED_SOURCE_HOSTS="example.org,research.example.edu" \
+PRODUCT_RECIPE_ROOTS='{"nuglet.lesson.v1":"/absolute/path/to/knowledge-bits/recipes/nuglet.lesson.v1"}' \
 PI_PROVIDER="configured-pi-provider" \
 PI_MODEL="configured-pi-model" \
-MEDIA_GENERATION_COMMAND="/absolute/path/to/local-media-adapter" \
-MEDIA_GENERATION_ARGS='["--json"]' \
+MEDIA_GENERATION_COMMAND="/opt/homebrew/bin/node" \
+MEDIA_GENERATION_ARGS='["/absolute/path/to/knowledge-bits/apps/worker/scripts/nuglet-media-command.mjs"]' \
 pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 ```
 
 Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker.
+The Nuglet recipe registry, media command, and approved visual style references live in this repository.
+The worker does not depend on `apps/nuglet-lab` or any other Nuglet source checkout.
 The worker will not start unless `PRODUCT_RECIPE_ROOTS` contains a non-empty mapping from each product
 content kind to its absolute local recipe directory. These filesystem paths remain local to the worker.
 The control API supplies lease-scoped job inputs and permits reads only for declared artifact dependencies.
@@ -153,6 +154,17 @@ The worker captures exact trusted source bytes before accepting evidence, binds 
 snapshots, and passes content to the local Pi and media adapters. Provider calls and subprocesses use
 bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
 moves the affected stage to `needs_human`; production never falls back to fixture content.
+
+### Starting a new Nuglet
+
+Start from ordinary text, screenshots, quotes, or source hints with the
+project-local `$start-nuglet` skill. It drafts the intake, asks only for
+information that blocks a safe start, confirms the proposed run, and returns
+the review link. It does not approve, publish, or deliver content.
+
+The skill lives at
+[`./.agents/skills/start-nuglet/SKILL.md`](./.agents/skills/start-nuglet/SKILL.md).
+Operators can also use the review dashboard's **Start a new Nuglet** form.
 
 ### Local supervisor
 

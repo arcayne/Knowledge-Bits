@@ -1,0 +1,10 @@
+{
+  "id": "nuglet.challenge",
+  "instructions": [
+    "Create exactly three quick comprehension questions that test the lesson's core insight, example, and action.",
+    "Use one clearly correct answer and plausible alternatives without trick wording.",
+    "Do not introduce facts, examples, or terminology absent from the Story and Playbook."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

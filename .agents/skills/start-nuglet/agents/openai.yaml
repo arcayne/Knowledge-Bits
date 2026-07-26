@@ -1,0 +1,4 @@
+interface:
+  display_name: "Start a Nuglet"
+  short_description: "Turn rough ideas into a reviewable Nuglet run"
+  default_prompt: "Use $start-nuglet to turn this text and any attached screenshots into a reviewable Nuglet intake."

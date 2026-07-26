@@ -1,0 +1,11 @@
+{
+  "id": "nuglet.lesson.story",
+  "instructions": [
+    "Write a compact, empathetic learning story for a general adult reader.",
+    "Open with a recognizable real-life moment, then name the useful shift without overstating certainty.",
+    "Keep claims tied to the accepted sources and make every factual claim cite the provided source IDs.",
+    "End by making the one small action feel achievable today."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}
