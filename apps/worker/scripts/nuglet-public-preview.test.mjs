@@ -44,7 +44,7 @@ test("compiles a limited English source without protected lesson answers", () =>
   assert.doesNotMatch(source, /Visible cues make attention easier to pull away/);
   assert.doesNotMatch(source, /Design the setup before relying on effort/);
   assert.match(source, /attention pattern/);
-  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.1.0");
+  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.2.0");
   assert.match(publicPreviewSourceTitle(brief), /^Nuglet public preview [a-f0-9]{12}$/);
 });
 
@@ -54,6 +54,16 @@ test("prompt binds NotebookLM Short format and the protected boundary", () => {
   assert.match(prompt, /45-60 seconds/);
   assert.match(prompt, /only allowed source/);
   assert.doesNotMatch(prompt, /Put the phone away/);
+});
+
+test("prompt biases casting toward the core audience without making it exclusive", () => {
+  const prompt = renderPublicPreviewPrompt(compilePublicPreview(content), "[marker]");
+  assert.match(prompt, /working adults aged roughly 25-40/);
+  assert.match(prompt, /women represented most often/);
+  assert.match(prompt, /Younger men and people from varied backgrounds/);
+  assert.match(prompt, /flexible direction, not an exclusive rule or rigid quota/);
+  assert.match(prompt, /Avoid repeatedly defaulting to middle-aged or older men/);
+  assert.match(prompt, /avoid stereotypes or tokenistic casting/);
 });
 
 test("flags obvious practice and quiz-answer leakage", () => {

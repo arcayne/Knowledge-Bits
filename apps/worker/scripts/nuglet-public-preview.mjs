@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.1.0";
+export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.2.0";
 
 export function compilePublicPreview(content) {
   const lesson = lessonPayload(content);
@@ -88,6 +88,7 @@ export function renderPublicPreviewPrompt(brief, marker) {
     "Use NotebookLM Short format: approximately 45-60 seconds, vertical, and mobile-first.",
     "Open immediately inside the recognition moment. Build tension, explain why it matters, then promise what the full Nuglet helps the viewer understand without giving the answer.",
     "Use one calm narrative arc.",
+    "Visual casting should generally reflect working adults aged roughly 25-40, with women represented most often. Younger men and people from varied backgrounds should appear naturally too. This is a flexible direction, not an exclusive rule or rigid quota. Avoid repeatedly defaulting to middle-aged or older men, and avoid stereotypes or tokenistic casting.",
     "Tone: warm, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises.",
   ].join(" ");
 }
