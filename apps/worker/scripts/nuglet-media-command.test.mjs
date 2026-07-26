@@ -13,6 +13,7 @@ import {
   normalizeLegacyHero,
   notebookLmPrompt,
   prepareCurrentMediaLanes,
+  shouldReuseLegacyMedia,
 } from "./nuglet-media-command.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -190,6 +191,25 @@ test("hero and NotebookLM media preparation start concurrently", async () => {
     { kind: "hero" },
     { notebookId: "notebook", tracked: new Map() },
   ]);
+});
+
+test("public preview regeneration bypasses retained legacy media", () => {
+  const legacyMediaReuse = { source: "nuglet_published" };
+
+  assert.equal(shouldReuseLegacyMedia({
+    kinds: ["public_preview"],
+    legacyMediaReuse,
+    mediaOperation: "generate",
+  }), false);
+  assert.equal(shouldReuseLegacyMedia({
+    kinds: ["hero", "infographic"],
+    legacyMediaReuse,
+    mediaOperation: "attach_existing",
+  }), true);
+  assert.equal(shouldReuseLegacyMedia({
+    kinds: ["hero", "infographic"],
+    legacyMediaReuse,
+  }), true);
 });
 
 function recipe(id) {
