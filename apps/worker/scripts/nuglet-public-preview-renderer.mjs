@@ -9,8 +9,10 @@ import sharp from "sharp";
 
 const execFileAsync = promisify(execFile);
 
-export const PUBLIC_PREVIEW_END_CARD_VERSION = "nuglet.short-end-card@1.0.0";
+export const PUBLIC_PREVIEW_END_CARD_VERSION = "nuglet.short-end-card@2.0.0";
 export const PUBLIC_PREVIEW_END_CARD_SECONDS = 3;
+export const PUBLIC_PREVIEW_END_CARD_TRANSITION_SECONDS = 0.45;
+export const PUBLIC_PREVIEW_END_CARD_VOICE_OVERLAP_SECONDS = 0.65;
 export const PUBLIC_PREVIEW_MAX_SECONDS = 65;
 export const PUBLIC_PREVIEW_PROVIDER_TAIL_SECONDS = 8;
 
@@ -78,6 +80,12 @@ export function publicPreviewEndCardPlan(metadata, title, options = {}) {
   const endCardDurationSeconds = Number.isFinite(options.endCardDurationSeconds)
     ? Math.min(PUBLIC_PREVIEW_MAX_SECONDS - 1, Math.max(0.25, Number(options.endCardDurationSeconds)))
     : PUBLIC_PREVIEW_END_CARD_SECONDS;
+  const endCardTransitionSeconds = Number.isFinite(options.endCardTransitionSeconds)
+    ? Math.min(0.75, Math.max(0.1, Number(options.endCardTransitionSeconds)))
+    : PUBLIC_PREVIEW_END_CARD_TRANSITION_SECONDS;
+  const endCardVoiceOverlapSeconds = Number.isFinite(options.endCardVoiceOverlapSeconds)
+    ? Math.min(1.5, Math.max(0, Number(options.endCardVoiceOverlapSeconds)))
+    : PUBLIC_PREVIEW_END_CARD_VOICE_OVERLAP_SECONDS;
   const contentDurationSeconds = Math.max(
     1,
     Math.min(
@@ -92,6 +100,8 @@ export function publicPreviewEndCardPlan(metadata, title, options = {}) {
     providerTailSeconds: providerDurationSeconds - contentDurationSeconds,
     contentDurationSeconds,
     endCardDurationSeconds,
+    endCardTransitionSeconds,
+    endCardVoiceOverlapSeconds,
     finalDurationSeconds: contentDurationSeconds + endCardDurationSeconds,
     width,
     height,
@@ -149,18 +159,32 @@ export async function renderPublicPreviewVideo(bytes, title, options = {}) {
       displayFont: "Nuglet Fraunces",
       supportFont: "Nuglet Bricolage Regular",
       ctaFont: "Nuglet Bricolage",
+      endCardArtworkBytes: options.endCardArtworkBytes,
     });
-    const fadeStart = Math.max(0, plan.contentDurationSeconds - 0.3).toFixed(3);
+    const transition = plan.endCardTransitionSeconds.toFixed(3);
+    const transitionStart = Math.max(
+      0,
+      plan.contentDurationSeconds
+        - plan.endCardTransitionSeconds
+        - plan.endCardVoiceOverlapSeconds,
+    ).toFixed(3);
+    const audioFadeDuration = Math.min(0.12, plan.contentDurationSeconds).toFixed(3);
+    const audioFadeStart = Math.max(
+      0,
+      plan.contentDurationSeconds - Number(audioFadeDuration),
+    ).toFixed(3);
     const filter = [
       `[2:v]scale=${footerLogoWidth}:-1[footerLogo];`,
       `[0:v]trim=duration=${content},setpts=PTS-STARTPTS,`,
       `drawbox=x=0:y=ih-${footerHeight}:w=iw:h=${footerHeight}:color=0xF7F3EE@0.97:t=fill[contentClean];`,
       `[contentClean][footerLogo]overlay=x=W-w-8:y=H-h-2[contentBranded];`,
-      `[1:v]scale=${width}:${height},format=rgba[card];`,
+      `[1:v]scale=${width}:${height},format=rgba,`,
+      `fade=t=in:st=0:d=${transition}:alpha=1,setpts=PTS+${transitionStart}/TB[card];`,
       `[contentBranded]tpad=stop_mode=clone:stop_duration=${plan.endCardDurationSeconds}[base];`,
-      `[base][card]overlay=x=0:y=0:enable='gte(t,${content})'[v];`,
+      `[base][card]overlay=x=0:y=0:eof_action=pass:shortest=0[v];`,
       `[0:a]atrim=duration=${content},asetpts=PTS-STARTPTS,`,
-      `afade=t=out:st=${fadeStart}:d=0.3,apad=pad_dur=${plan.endCardDurationSeconds}[a]`,
+      `afade=t=out:st=${audioFadeStart}:d=${audioFadeDuration},`,
+      `apad=pad_dur=${plan.endCardDurationSeconds}[a]`,
     ].join("");
 
     await execFileAsync(ffmpeg, [
@@ -193,8 +217,13 @@ export async function renderPublicPreviewVideo(bytes, title, options = {}) {
       providerTailTrimSeconds: plan.providerTailSeconds,
       narrativeDurationSeconds: plan.contentDurationSeconds,
       endCardDurationSeconds: plan.endCardDurationSeconds,
+      endCardTransitionSeconds: plan.endCardTransitionSeconds,
+      endCardVoiceOverlapSeconds: plan.endCardVoiceOverlapSeconds,
       endCardVersion: PUBLIC_PREVIEW_END_CARD_VERSION,
       endCardBackgroundChecksum: checksum(backgroundBytes),
+      endCardArtworkChecksum: options.endCardArtworkBytes
+        ? checksum(options.endCardArtworkBytes)
+        : null,
       logoChecksum: checksum(logoBytes),
     };
   } finally {
@@ -237,9 +266,17 @@ async function renderEndCard(path, options) {
   )));
   const supportOverlay = await centeredOverlay(support, options.width, options.supportY);
   const ctaOverlay = await centeredOverlay(cta, options.width, options.ctaY);
+  const artworkOverlays = options.endCardArtworkBytes
+    ? await personalizedArtworkOverlays(
+        options.endCardArtworkBytes,
+        options.width,
+        options.height,
+      )
+    : [];
   await sharp(END_CARD_BACKGROUND)
     .resize(options.width, options.height, { fit: "fill" })
     .composite([
+      ...artworkOverlays,
       ...titleOverlays,
       supportOverlay,
       ctaOverlay,
@@ -247,6 +284,51 @@ async function renderEndCard(path, options) {
     ])
     .png()
     .toFile(path);
+}
+
+async function personalizedArtworkOverlays(bytes, canvasWidth, canvasHeight) {
+  const artworkWidth = Math.round(canvasWidth * 0.76);
+  const artworkHeight = Math.round(artworkWidth * 0.75);
+  const matte = Math.max(8, Math.round(canvasWidth * 0.014));
+  const frameWidth = artworkWidth + matte * 2;
+  const frameHeight = artworkHeight + matte * 2;
+  const frameLeft = Math.round((canvasWidth - frameWidth) / 2);
+  const frameTop = Math.round(canvasHeight * 0.05);
+  const coverHeight = Math.round(canvasHeight * 0.54);
+  const cover = await sharp({
+    create: {
+      width: canvasWidth,
+      height: coverHeight,
+      channels: 4,
+      background: { r: 247, g: 243, b: 238, alpha: 0.96 },
+    },
+  }).png().toBuffer();
+  const artwork = await sharp(bytes)
+    .resize(artworkWidth, artworkHeight, { fit: "cover", position: "centre" })
+    .modulate({ brightness: 1.02, saturation: 0.88 })
+    .png()
+    .toBuffer();
+  const framedArtwork = await sharp({
+    create: {
+      width: frameWidth,
+      height: frameHeight,
+      channels: 4,
+      background: { r: 255, g: 253, b: 249, alpha: 1 },
+    },
+  }).composite([{ input: artwork, left: matte, top: matte }]).png().toBuffer();
+  const shadow = await sharp({
+    create: {
+      width: frameWidth,
+      height: frameHeight,
+      channels: 4,
+      background: { r: 35, g: 30, b: 24, alpha: 0.16 },
+    },
+  }).blur(Math.max(3, Math.round(canvasWidth * 0.012))).png().toBuffer();
+  return [
+    { input: cover, left: 0, top: 0 },
+    { input: shadow, left: frameLeft + 5, top: frameTop + 8 },
+    { input: framedArtwork, left: frameLeft, top: frameTop },
+  ];
 }
 
 async function centeredOverlay(input, canvasWidth, top) {
