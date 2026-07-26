@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.0.0";
+export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.1.0";
 
 export function compilePublicPreview(content) {
   const lesson = lessonPayload(content);
@@ -17,14 +17,18 @@ export function compilePublicPreview(content) {
     lesson.learning?.oneLineToKeep ?? lesson.commonMistake ?? centralIdea,
     "one line to keep",
   );
+  const topicLabel = optional(
+    lesson.identity?.topic?.label ?? lesson.topic?.label,
+    "the lesson topic",
+  );
   const brief = {
     schemaVersion: "nuglet.public-preview-brief.v1",
     promptTemplateVersion: PUBLIC_PREVIEW_TEMPLATE_VERSION,
     locale: "en",
     title,
-    recognitionMoment: firstSentence(centralIdea),
-    centralProblem: firstSentence(oneLineToKeep),
-    whyItMatters: firstSentence(centralIdea),
+    recognitionMoment: `Introduce the everyday tension suggested by "${title}" without explaining how to resolve it.`,
+    centralProblem: `Show why this ${topicLabel} pattern can feel confusing or personally frustrating.`,
+    whyItMatters: "Build curiosity about why the pattern matters without stating the lesson's reframe or action.",
     learningOutcomes: [
       `recognize the situation behind "${title}"`,
       "understand why the pattern matters",
@@ -134,8 +138,8 @@ function required(value, name) {
   return value.trim();
 }
 
-function firstSentence(value) {
-  return String(value).trim().match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? String(value).trim();
+function optional(value, fallback) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
 function normalize(value) {
