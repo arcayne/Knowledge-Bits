@@ -129,6 +129,29 @@ test("NotebookLM media prompts are stable and keep Brief and Discussion distinct
   assert.notEqual(brief, discussion);
 });
 
+test("public preview marker binds the prompt contract version", () => {
+  const prompt = notebookLmPrompt({
+    content: {
+      kind: "nuglet.lesson.v1",
+      schemaVersion: "1.1.0",
+      payload: {
+        identity: { title: "Protect Your Attention" },
+        learning: {
+          centralIdea: "Visible cues make attention easier to pull away.",
+          oneLineToKeep: "Design the setup before relying on effort.",
+          action: { instruction: "Put the phone away for one focus block." },
+        },
+      },
+    },
+    generationInputChecksum: "a".repeat(64),
+  }, "public_preview");
+
+  assert.match(
+    prompt,
+    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.2\.0\]/,
+  );
+});
+
 test("NotebookLM artifact propagation 404s remain retryable", () => {
   assert.equal(
     isNotebookLmArtifactPropagationDelay(
@@ -213,26 +236,33 @@ test("public preview regeneration bypasses retained legacy media", () => {
   }), true);
 });
 
-test("forced NotebookLM regeneration bypasses matching and sidecar artifacts", () => {
+test("forced NotebookLM regeneration creates once, then reuses its current-prompt sidecar", () => {
+  const marker = "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet.public-preview@1.2.0]";
   const artifacts = [
     {
       id: "matching-video",
       type: "video",
       status: "completed",
+      custom_instructions: marker,
+    },
+    {
+      id: "old-sidecar-video",
+      type: "video",
+      status: "completed",
       custom_instructions: "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview]",
     },
     {
-      id: "sidecar-video",
+      id: "current-sidecar-video",
       type: "video",
-      status: "completed",
-      custom_instructions: "older prompt",
+      status: "in_progress",
+      custom_instructions: marker,
     },
   ];
   const input = {
     artifacts,
     kind: "public_preview",
-    marker: "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview]",
-    stateArtifactId: "sidecar-video",
+    marker,
+    stateArtifactId: "old-sidecar-video",
     wantedKinds: ["public_preview"],
   };
 
@@ -241,6 +271,11 @@ test("forced NotebookLM regeneration bypasses matching and sidecar artifacts", (
     ...input,
     regeneratedKinds: ["public_preview"],
   }), undefined);
+  assert.equal(reusableNotebookLmArtifact({
+    ...input,
+    stateArtifactId: "current-sidecar-video",
+    regeneratedKinds: ["public_preview"],
+  })?.id, "current-sidecar-video");
 });
 
 function recipe(id) {

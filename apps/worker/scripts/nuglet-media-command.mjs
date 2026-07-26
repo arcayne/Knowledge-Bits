@@ -437,7 +437,10 @@ function executionEvidence(recipe, prompt, options) {
 }
 
 function notebookLmMarker(input, kind) {
-  return `[knowledge-bits:${input.generationInputChecksum.slice(0, 16)}:${kind}]`;
+  const promptVersion = kind === "public_preview"
+    ? `:${compilePublicPreview(input.content).promptTemplateVersion}`
+    : "";
+  return `[knowledge-bits:${input.generationInputChecksum.slice(0, 16)}:${kind}${promptVersion}]`;
 }
 
 function notebookLmPrompt(input, kind) {
@@ -529,15 +532,20 @@ export function reusableNotebookLmArtifact({
   wantedKinds,
   regeneratedKinds = [],
 }) {
-  if (regeneratedKinds.includes(kind)) return undefined;
   const existing = matchingNotebookLmArtifact(artifacts, kind, marker);
   const stateArtifact = stateArtifactId
     ? artifacts.find((artifact) => artifact.id === stateArtifactId && artifact.status !== "failed")
     : undefined;
+  const reusableStateArtifact = kind !== "public_preview"
+    || (typeof stateArtifact?.custom_instructions === "string"
+      && stateArtifact.custom_instructions.includes(marker))
+    ? stateArtifact
+    : undefined;
+  if (regeneratedKinds.includes(kind)) return reusableStateArtifact;
   const unmarkedInfographic = kind === "infographic"
     ? soleUnmarkedInfographic(artifacts, wantedKinds)
     : undefined;
-  return existing ?? stateArtifact ?? unmarkedInfographic;
+  return existing ?? reusableStateArtifact ?? unmarkedInfographic;
 }
 
 async function createNotebookLmArtifact(notebookId, kind, prompt, sourceId) {
