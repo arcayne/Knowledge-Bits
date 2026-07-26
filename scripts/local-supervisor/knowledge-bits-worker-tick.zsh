@@ -36,7 +36,12 @@ if [[ "$ARTIFACT_STORAGE_MODE" == "filesystem" && -z "${ARTIFACT_STORAGE_FILESYS
 fi
 
 if [[ -z "${PRODUCT_RECIPE_ROOTS:-}" ]]; then
-  export PRODUCT_RECIPE_ROOTS='{"nuglet.lesson.v1":"/Users/dearkane/Documents/dev/nuglet/apps/nuglet-lab/recipes/nuglet.lesson.v1"}'
+  export PRODUCT_RECIPE_ROOTS="{\"nuglet.lesson.v1\":\"${root}/recipes/nuglet.lesson.v1\"}"
+fi
+
+if [[ -z "${MEDIA_GENERATION_COMMAND:-}" ]]; then
+  export MEDIA_GENERATION_COMMAND="/opt/homebrew/bin/node"
+  export MEDIA_GENERATION_ARGS="[\"${root}/apps/worker/scripts/nuglet-media-command.mjs\"]"
 fi
 
 cd "$root"

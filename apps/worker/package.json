@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json && rm -rf dist/providers/fixtures && mkdir -p dist/providers/fixtures && cp -R src/providers/fixtures/. dist/providers/fixtures",
+    "test:media-command": "node --test scripts/nuglet-media-command.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test src/*.test.ts src/**/*.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.80.2",
+    "@google/genai": "1.52.0",
     "@knowledge-bits/contracts": "workspace:*",
-    "@knowledge-bits/pipeline": "workspace:*"
+    "@knowledge-bits/pipeline": "workspace:*",
+    "sharp": "0.34.5"
   },
   "devDependencies": {
     "@types/node": "24.1.0",

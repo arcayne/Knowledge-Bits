@@ -1,0 +1,11 @@
+{
+  "id": "nuglet.qa.editorial",
+  "instructions": [
+    "Check clarity, factual grounding, tone, learner safety, and whether the Story and Playbook teach the same useful idea.",
+    "Flag only specific material concerns. Distinguish unsupported claims from editorial preferences.",
+    "Do not demand more content simply because the lesson is concise.",
+    "Return findings in the requested structured format with severity and an actionable explanation."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

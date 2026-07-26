@@ -1,0 +1,11 @@
+{
+  "id": "nuglet.hero",
+  "instructions": [
+    "Create a 4:3 Nuglet hero with one memorable visual metaphor and generous calm space.",
+    "Use the Nuglet warm cream, clay orange, moss olive, and dusty blue editorial illustration language.",
+    "Avoid text, UI, diagram layouts, dense objects, stock-photo realism, and visual clutter.",
+    "Treat this recipe as provenance-only when a published Nuglet hero is explicitly reused."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}
