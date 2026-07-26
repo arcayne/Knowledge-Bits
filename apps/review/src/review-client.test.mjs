@@ -16,6 +16,7 @@ test('review client renders the complete Story Playbook package in review order'
     "renderAsset('infographic'",
     "renderAudio('audio-brief'",
     "renderAudio('audio-discussion'",
+    "renderVideo('public-preview'",
     'renderQuiz',
     'renderEvidence',
     'renderQa',

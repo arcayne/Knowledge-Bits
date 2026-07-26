@@ -42,7 +42,7 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
       .story-block:last-child, .playbook-step:last-child { border-bottom: 0; }
       .story-block p, .playbook-step p { margin-bottom: 0; }
       .asset { border: 1px solid #bcc4c2; min-height: 6rem; padding: .65rem; margin-bottom: .75rem; background: #fff; }
-      .asset :global(img), .asset :global(audio) { display: block; max-width: 100%; width: 100%; }
+      .asset :global(img), .asset :global(audio), .asset :global(video) { display: block; max-width: 100%; width: 100%; }
       .asset :global(img) { height: auto; }
       #hero, #infographic { display: grid; place-items: center; min-height: 0; }
       .asset :global(.full-size-link) { display: grid; place-items: center; width: 100%; max-width: 100%; overflow: hidden; }
@@ -126,6 +126,11 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
         </section>
         <section class="review-section" id="audio-discussion-section">
           <h2>Discussion audio</h2><div class="audio-layout"><div class="asset" id="audio-discussion">Missing Discussion audio.</div><div><h4>Transcript</h4><p class="transcript" id="audio-discussion-transcript"></p></div></div>
+        </section>
+        <section class="review-section" id="public-preview-section">
+          <h2>Public preview Short</h2>
+          <div class="asset" id="public-preview">No public preview Short is queued for this package.</div>
+          <p class="muted">The Short remains inside this review package until the overall human decision is recorded.</p>
         </section>
         <section class="review-section" id="quiz-section"><h2>Quiz</h2><div id="quiz"></div></section>
         <section class="review-section" id="evidence-section">

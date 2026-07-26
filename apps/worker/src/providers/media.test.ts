@@ -127,6 +127,25 @@ test('media regenerates only the explicitly requested review asset', async () =>
   if (result.kind === 'success') assert.deepEqual(result.assets?.map((asset) => asset.kind), ['hero']);
 });
 
+test('media accepts one technically valid public preview and keeps it pending human review', async () => {
+  const provider = providerFor((request) => request.kinds.map((kind) => generated(kind)), generationPlan, {
+    mediaKinds: ['public_preview'],
+    mediaOperation: 'generate',
+  });
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.deepEqual(result.assets?.map((asset) => asset.kind), ['public_preview']);
+  assert.equal(result.assets?.[0]?.provenance?.status, 'needs_review');
+  assert.deepEqual(result.assets?.[0]?.provenance?.review, {
+    decision: 'pending',
+    reviewerId: null,
+    reviewedAt: null,
+  });
+});
+
 test('media preserves measured metadata and recipe support evidence on all four outputs', async () => {
   const provider = providerFor((request) => request.kinds.map((kind) => generated(kind)));
 
@@ -354,17 +373,38 @@ function providerFor(
 function generated(kind: MediaKind, inputChecksum = generationInputChecksum) {
   return {
     kind,
-    mediaType: kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
+    mediaType: kind === 'public_preview' ? 'video/mp4' : kind.startsWith('audio_') ? 'audio/mp4' : 'image/webp',
     bytes: Buffer.from(kind),
     generationInputChecksum: inputChecksum,
     metadata: metadataFor(kind),
-    supportArtifacts: supportFor(kind),
+    supportArtifacts: kind === 'public_preview' ? [] : supportFor(kind),
   };
 }
 
 function metadataFor(kind: MediaKind): Record<string, unknown> {
   const byteSize = Buffer.from(kind).byteLength;
-  return kind.startsWith('audio_')
+  return kind === 'public_preview'
+    ? {
+      byteSize,
+      durationSeconds: 57.5,
+      width: 720,
+      height: 1280,
+      transcript: 'Attention can feel scattered when visible cues keep pulling at it.',
+      transcriptSource: 'vertex_gemini',
+      status: 'needs_review',
+      provider: 'notebooklm',
+      providerFormat: 'short',
+      providerArtifactId: 'preview-artifact',
+      validation: {
+        technicalPassed: true,
+        protectedContentPassed: true,
+        sourceGroundingPassed: null,
+        narrativePassed: null,
+        issues: [],
+      },
+      review: { decision: 'pending', reviewerId: null, reviewedAt: null },
+    }
+    : kind.startsWith('audio_')
     ? {
       byteSize,
       durationSeconds: kind === 'audio_brief' ? 91.25 : 287.5,

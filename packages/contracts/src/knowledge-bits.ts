@@ -355,7 +355,7 @@ export const prepareLegacyRevisionRequestSchema = z.object({
 });
 
 export const regenerateMediaRequestSchema = z.object({
-  kinds: z.array(z.enum(['hero', 'infographic', 'audio_brief', 'audio_discussion']))
+  kinds: z.array(z.enum(['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview']))
     .min(1)
     .refine((kinds) => new Set(kinds).size === kinds.length, 'Media kinds must be distinct'),
   recipeOverrides: z.object({
@@ -1247,6 +1247,7 @@ export const reviewReadModelSchema = z.object({
     infographic: reviewAssetSchema,
     audioBrief: reviewAssetSchema,
     audioDiscussion: reviewAssetSchema,
+    publicPreview: reviewAssetSchema.optional(),
   }).strict(),
   generationExecutions: reviewGenerationExecutionsSchema,
 }).strict();

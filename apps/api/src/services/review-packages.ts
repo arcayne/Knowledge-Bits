@@ -40,8 +40,10 @@ const REVIEW_ASSETS = [
   { kind: 'infographic', key: 'infographic' },
   { kind: 'audio_brief', key: 'audioBrief' },
   { kind: 'audio_discussion', key: 'audioDiscussion' },
+  { kind: 'public_preview', key: 'publicPreview' },
 ] as const;
 const REVIEW_ASSET_KINDS = NUGLET_REVIEW_MEDIA_KINDS;
+const REVIEW_PACKAGE_ASSET_KINDS = [...REVIEW_ASSET_KINDS, 'public_preview'] as const;
 
 export class ReviewPackageService {
   constructor(private readonly dependencies: {
@@ -60,7 +62,10 @@ export class ReviewPackageService {
     )));
     const assets = assetStates(run.id, packageArtifacts);
     const mediaIssues = REVIEW_ASSETS
-      .filter(({ key }) => assets[key].state === 'missing')
+      .filter(({ kind, key }) => (
+        assets[key].state === 'missing'
+        && (kind !== 'public_preview' || publicPreviewPlanned(run.brief))
+      ))
       .map(({ kind }) => `Required review media is missing: ${kind}`);
     let warnings: string[] = [];
 
@@ -86,6 +91,8 @@ export class ReviewPackageService {
         const artifact = latestArtifact(packageArtifacts, kind);
         if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
       }
+      const publicPreview = latestArtifact(packageArtifacts, 'public_preview');
+      if (publicPreview) await readArtifactStorageObject(this.dependencies.storage, publicPreview.storageKey);
       const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
       const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, packageArtifacts, content.target.payload.claims);
       const artifactInventory = packageArtifacts.map(toArtifactReference);
@@ -478,15 +485,15 @@ function latestArtifactForAction(
 }
 
 function canonicalPackageArtifacts(artifacts: readonly WorkflowArtifact[]): WorkflowArtifact[] {
-  const requiredAssets = new Map(REVIEW_ASSET_KINDS.map((kind) => [kind, latestArtifact(artifacts, kind)]));
+  const requiredAssets = new Map(REVIEW_PACKAGE_ASSET_KINDS.map((kind) => [kind, latestArtifact(artifacts, kind)]));
   return artifacts.filter((artifact) => {
     if (!isReviewAssetKind(artifact.kind)) return true;
     return requiredAssets.get(artifact.kind)?.id === artifact.id;
   });
 }
 
-function isReviewAssetKind(kind: string): kind is typeof REVIEW_ASSET_KINDS[number] {
-  return REVIEW_ASSET_KINDS.some((candidate) => candidate === kind);
+function isReviewAssetKind(kind: string): kind is typeof REVIEW_PACKAGE_ASSET_KINDS[number] {
+  return REVIEW_PACKAGE_ASSET_KINDS.some((candidate) => candidate === kind);
 }
 
 function assetStates(runId: string, artifacts: readonly WorkflowArtifact[]) {
@@ -633,7 +640,7 @@ function assetChecksumIssues(
   contentChecksum: string,
   retainedMediaArtifactIds: ReadonlySet<string> = new Set(),
 ): string[] {
-  return REVIEW_ASSET_KINDS.flatMap((kind) => {
+  return REVIEW_PACKAGE_ASSET_KINDS.flatMap((kind) => {
     const artifact = latestArtifact(artifacts, kind);
     return artifact
       && artifact.provenance.mediaSource !== 'legacy_nuglet'
@@ -642,6 +649,12 @@ function assetChecksumIssues(
       ? [`Required ${kind} input checksum does not match learner content`]
       : [];
   });
+}
+
+function publicPreviewPlanned(brief: Record<string, unknown>): boolean {
+  const regeneration = isRecord(brief.mediaRegeneration) ? brief.mediaRegeneration : undefined;
+  return Array.isArray(regeneration?.regeneratedKinds)
+    && regeneration.regeneratedKinds.includes('public_preview');
 }
 
 async function trustedRetainedMediaArtifactIds(

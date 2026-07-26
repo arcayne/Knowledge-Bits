@@ -347,7 +347,7 @@ export interface RetryStageInput {
   stage: Exclude<WorkflowStage, 'human_review' | 'deliver'>;
 }
 
-type RegenerableMediaKind = 'hero' | 'infographic' | 'audio_brief' | 'audio_discussion';
+type RegenerableMediaKind = 'hero' | 'infographic' | 'audio_brief' | 'audio_discussion' | 'public_preview';
 type MediaRecipeOverrides = {
   infographic?: NugletGenerationPlan['recipes']['infographic'];
 };
@@ -3544,7 +3544,7 @@ function legacyAudioReconciliationJobIdempotencyKey(runId: string, revision: num
 }
 
 function assertRegenerableMediaKinds(kinds: readonly RegenerableMediaKind[]): void {
-  const allowed = new Set<RegenerableMediaKind>(['hero', 'infographic', 'audio_brief', 'audio_discussion']);
+  const allowed = new Set<RegenerableMediaKind>(['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview']);
   if (!kinds.length || new Set(kinds).size !== kinds.length || kinds.some((kind) => !allowed.has(kind))) {
     throw new WorkflowValidationError('Media regeneration requires distinct supported media kinds');
   }

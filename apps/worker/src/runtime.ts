@@ -469,7 +469,7 @@ function regeneratedMediaKindsFromJob(input: Record<string, unknown>): readonly 
   const brief = isRecord(input.brief) ? input.brief : undefined;
   const regeneration = isRecord(brief?.mediaRegeneration) ? brief.mediaRegeneration : undefined;
   if (!Array.isArray(regeneration?.regeneratedKinds)) return [];
-  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion'];
+  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview'];
   return [...new Set(regeneration.regeneratedKinds.filter(
     (kind): kind is MediaKind => typeof kind === 'string' && validKinds.includes(kind as MediaKind),
   ))];
@@ -803,7 +803,7 @@ function serializeMediaRecipes(recipes: MediaRecipes): Record<string, unknown> {
 
 function mediaKindsFromJob(input: Record<string, unknown>): readonly MediaKind[] | undefined {
   if (input.mediaKinds === undefined) return undefined;
-  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion'];
+  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview'];
   if (!Array.isArray(input.mediaKinds)
     || input.mediaKinds.length === 0
     || input.mediaKinds.some((kind) => typeof kind !== 'string' || !validKinds.includes(kind as MediaKind))) {

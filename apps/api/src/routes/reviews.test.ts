@@ -164,6 +164,42 @@ test('infographic regeneration supersedes queued delivery and requires approval 
   });
 });
 
+test('public preview regeneration queues exactly one Short and requires approval again', async () => {
+  const { app, repository, storage } = createTestApp();
+  const regenerationBrief = strictLegacyReplacementBrief();
+  const generationPlan = regenerationBrief.generationPlan as Record<string, unknown>;
+  delete generationPlan.mediaBaseline;
+  generationPlan.mediaMode = 'generate';
+  const { runId, packageChecksum } = await reviewReadyRun(repository, storage, checksumA, regenerationBrief);
+
+  const approved = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify({ decision: 'approve', packageChecksum }),
+  });
+  assert.equal(approved.status, 200, await approved.clone().text());
+
+  const regenerated = await app.request(`/runs/${runId}/regenerate-media`, {
+    method: 'POST',
+    headers: { ...reviewHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kinds: ['public_preview'] }),
+  });
+
+  assert.equal(regenerated.status, 202, await regenerated.clone().text());
+  const media = await repository.claimJob({
+    workerId: 'short-worker',
+    capabilities: ['produce_assets'],
+    leaseSeconds: 60,
+  });
+  assert.deepEqual(media?.input.mediaKinds, ['public_preview']);
+  const updatedRun = await repository.getRun(runId);
+  assert.equal(updatedRun?.reviewStatus, 'pending');
+  assert.deepEqual(updatedRun?.brief.mediaRegeneration, {
+    sourcePackageChecksum: packageChecksum,
+    regeneratedKinds: ['public_preview'],
+  });
+});
+
 test('replays an earlier immutable approval after a newer package is pending review', async () => {
   const { app, repository, storage } = createTestApp();
   const packageA = await reviewReadyRun(repository, storage, checksumA);

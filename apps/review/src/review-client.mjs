@@ -256,6 +256,24 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     required(`#${id}-transcript`).textContent = audio?.transcript?.text ?? 'Transcript unavailable.';
   };
 
+  const renderVideo = (id, asset) => {
+    const container = document.querySelector(`#${id}`);
+    if (!container) return;
+    container.replaceChildren();
+    const source = assetSource(asset);
+    if (!source || !asset?.mediaType?.startsWith('video/')) {
+      container.dataset.state = 'pending';
+      container.textContent = 'No public preview Short is queued for this package.';
+      return;
+    }
+    const control = document.createElement('video');
+    control.src = source;
+    control.controls = true;
+    control.preload = 'metadata';
+    control.playsInline = true;
+    container.append(control);
+  };
+
   const load = async () => {
     try {
       if (!runId) throw new Error('A run id is required.');
@@ -279,6 +297,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           fillList('#infographic-text-equivalent', learner.visual.textEquivalent, 'No text equivalent.');
           renderAudio('audio-brief', payload.assets.audioBrief, learner.listen.brief);
           renderAudio('audio-discussion', payload.assets.audioDiscussion, learner.listen.discussion);
+          renderVideo('public-preview', payload.assets.publicPreview);
           renderQuiz(learner);
         } else {
           renderLegacyContent(learner);
@@ -286,6 +305,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           renderAsset('infographic', payload.assets.infographic, 'Infographic preview');
           renderAudio('audio-brief', payload.assets.audioBrief, null);
           renderAudio('audio-discussion', payload.assets.audioDiscussion, null);
+          renderVideo('public-preview', payload.assets.publicPreview);
         }
         renderEvidence(payload.package);
         renderQa(payload.package);

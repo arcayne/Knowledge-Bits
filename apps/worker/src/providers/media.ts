@@ -23,7 +23,8 @@ export type MediaKind =
   | 'hero'
   | 'infographic'
   | 'audio_brief'
-  | 'audio_discussion';
+  | 'audio_discussion'
+  | 'public_preview';
 
 export type MediaOperation = 'attach_existing' | 'generate';
 
@@ -240,9 +241,10 @@ function requiredMediaGenerationContext(
 }
 
 function assertGeneratedMediaKinds(kinds: readonly MediaKind[]): void {
+  const allowedKinds: readonly MediaKind[] = [...REQUIRED_MEDIA_KINDS, 'public_preview'];
   if (!kinds.length
     || new Set(kinds).size !== kinds.length
-    || kinds.some((kind) => !REQUIRED_MEDIA_KINDS.includes(kind))) {
+    || kinds.some((kind) => !allowedKinds.includes(kind))) {
     throw new ProviderNeedsHumanError('media_kinds_invalid');
   }
 }
@@ -251,7 +253,7 @@ function assertLegacyMediaKinds(kinds: readonly MediaKind[], reuse: unknown): vo
   const parsed = legacyMediaReuseSchema.safeParse(reuse);
   if (!kinds.length
     || new Set(kinds).size !== kinds.length
-    || kinds.some((kind) => !REQUIRED_MEDIA_KINDS.includes(kind))
+    || kinds.some((kind) => !(REQUIRED_MEDIA_KINDS as readonly MediaKind[]).includes(kind))
     || !parsed.success) {
     throw new ProviderNeedsHumanError('legacy_media_reuse_invalid');
   }
@@ -260,6 +262,7 @@ function assertLegacyMediaKinds(kinds: readonly MediaKind[], reuse: unknown): vo
     infographic: 'infographic',
     audio_brief: 'audioBrief',
     audio_discussion: 'audioDiscussion',
+    public_preview: 'hero',
   };
   if (kinds.some((kind) => !parsed.data.artifacts[receiptByKind[kind]])) {
     throw new ProviderNeedsHumanError('legacy_media_reuse_invalid');
@@ -277,6 +280,34 @@ function validateGeneratedMedia(
   }
   if (asset.metadata.byteSize !== asset.bytes.byteLength) {
     throw new ProviderNeedsHumanError('media_metadata_invalid');
+  }
+  if (asset.kind === 'public_preview') {
+    const durationSeconds = asset.metadata.durationSeconds;
+    const width = positiveInteger(asset.metadata.width);
+    const height = positiveInteger(asset.metadata.height);
+    const transcript = asset.metadata.transcript;
+    const review = asset.metadata.review;
+    const validation = asset.metadata.validation;
+    if (asset.mediaType !== 'video/mp4'
+      || typeof durationSeconds !== 'number'
+      || !Number.isFinite(durationSeconds)
+      || durationSeconds < 40
+      || durationSeconds > 65
+      || !width
+      || !height
+      || Math.abs(width / height - 9 / 16) > 0.08
+      || typeof transcript !== 'string'
+      || !transcript.trim()
+      || asset.metadata.status !== 'needs_review'
+      || !isRecord(review)
+      || review.decision !== 'pending'
+      || !isRecord(validation)
+      || validation.technicalPassed !== true
+      || validation.protectedContentPassed !== true
+      || asset.supportArtifacts.length !== 0) {
+      throw new ProviderNeedsHumanError('media_public_preview_invalid');
+    }
+    return;
   }
   if (asset.kind === 'hero' || asset.kind === 'infographic') {
     const width = positiveInteger(asset.metadata.width);
@@ -473,6 +504,9 @@ export function recipeForKind(recipes: MediaRecipes, kind: MediaKind): ResolvedR
   if (kind === 'hero') return recipes.hero;
   if (kind === 'infographic') return recipes.infographic;
   if (kind === 'audio_brief') return recipes.audioBrief;
+  if (kind === 'public_preview') {
+    throw new ProviderNeedsHumanError('media_public_preview_recipe_not_applicable');
+  }
   return recipes.audioDiscussion;
 }
 
