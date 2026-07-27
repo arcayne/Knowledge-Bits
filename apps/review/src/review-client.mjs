@@ -13,10 +13,15 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
   const decisionButtons = [...document.querySelectorAll('[data-decision], #change-form button')];
   const csrfToken = required('meta[name="review-csrf-token"]').content;
   let model;
+  let submissionInFlight = false;
 
   const showError = (message) => {
     error.textContent = message;
     error.hidden = false;
+  };
+  const clearError = () => {
+    error.textContent = '';
+    error.hidden = true;
   };
   const setDecisionAllowed = (allowed) => decisionButtons.forEach((button) => { button.disabled = !allowed; });
   const fillList = (selector, values, emptyLabel) => {
@@ -303,6 +308,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
 
   const load = async () => {
     try {
+      clearError();
       if (!runId) throw new Error('A run id is required.');
       const reviewResponse = await fetch(`/api/review?runId=${encodeURIComponent(runId)}`);
       const payload = await reviewResponse.json();
@@ -466,20 +472,50 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
   };
 
   const submit = async (decision, comment) => {
+    if (submissionInFlight) return;
     const packageChecksum = model?.package?.packageChecksum;
     if (!model?.decisionAllowed || !packageChecksum || packageChecksum !== model.currentPackageChecksum) {
       return showError('A complete current package is required.');
     }
-    const response = await fetch('/api/review', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ runId, decision, packageChecksum, ...(comment ? { comment } : {}) }),
-    });
-    const payload = await response.json();
-    if (!response.ok) return showError(payload.error || 'Could not record the review decision.');
-    decisionStatus.textContent = `Recorded: ${payload.reviewStatus}`;
-    changeForm.dataset.open = 'false';
-    return load();
+    submissionInFlight = true;
+    clearError();
+    setDecisionAllowed(false);
+    decisionStatus.textContent = decision === 'approve' ? 'Recording approval...' : 'Sending changes...';
+    let submitted = false;
+    try {
+      const response = await fetch('/api/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ runId, decision, packageChecksum, ...(comment ? { comment } : {}) }),
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+        // Preserve a visible failure state when an upstream proxy returns an empty or non-JSON response.
+      }
+      if (!response.ok) throw new Error(payload.error || 'Could not record the review decision.');
+      submitted = true;
+      decisionStatus.textContent = `Recorded: ${payload.reviewStatus || decision}`;
+      changeForm.dataset.open = 'false';
+      await load();
+    } catch (submitError) {
+      decisionStatus.textContent = 'Decision not recorded';
+      showError(submitError instanceof Error ? submitError.message : 'Could not record the review decision.');
+    } finally {
+      submissionInFlight = false;
+      if (!submitted) {
+        const currentChecksum = model?.package?.packageChecksum;
+        const allowed = Boolean(
+          model?.decisionAllowed
+          && currentChecksum
+          && currentChecksum === model.currentPackageChecksum
+          && model.reviewStatus !== 'approved'
+          && model.reviewStatus !== 'rejected'
+        );
+        setDecisionAllowed(allowed);
+      }
+    }
   };
 
   required('[data-decision="approve"]').addEventListener('click', () => void submit('approve'));
