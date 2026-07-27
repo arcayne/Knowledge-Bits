@@ -70,12 +70,12 @@ test("renderer creates a branded vertical review artifact without provider gener
     ], { timeout: 120_000 });
     const rendered = await renderPublicPreviewVideo(
       await readFile(sourcePath),
-      "Protect Your Attention",
+      "The book that fixed my overthinking wasn't about overthinking at all",
       {
         providerTailSeconds: 1,
         endCardDurationSeconds: 1,
         endCardArtworkBytes: await readFile(
-          new URL("../assets/nuglet-style/personal-finance-101-hero.png", import.meta.url),
+          new URL("../assets/nuglet-style/not-every-thought-is-your-task-hero.png", import.meta.url),
         ),
       },
     );
