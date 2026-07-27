@@ -41,6 +41,20 @@ set +a
 export ENGINE_API_BASE_URL="${KNOWLEDGE_BITS_LOCAL_API_URL:-http://127.0.0.1:3000}"
 export WORKER_PROVIDER_MODE="${WORKER_PROVIDER_MODE:-production}"
 
+api_ready="false"
+for attempt in {1..30}; do
+  if curl --silent --show-error --fail --max-time 2 \
+    "${ENGINE_API_BASE_URL%/}/health" >/dev/null 2>&1; then
+    api_ready="true"
+    break
+  fi
+  sleep 1
+done
+if [[ "$api_ready" != "true" ]]; then
+  print -u2 "Knowledge Bits worker tick could not reach the local API health endpoint."
+  exit 1
+fi
+
 if [[ -z "${ARTIFACT_STORAGE_MODE:-}" ]]; then
   export ARTIFACT_STORAGE_MODE="filesystem"
 fi
