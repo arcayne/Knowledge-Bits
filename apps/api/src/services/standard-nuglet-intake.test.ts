@@ -26,7 +26,9 @@ test('binds the approved Story and Playbook plan to the standard intake marker',
   assert.equal(plan.schemaVersion, '1.1.0');
   assert.equal(plan.mediaMode, 'generate');
   assert.equal(plan.recipes.infographic.version, '1.1.0');
-  assert.match(plan.heroDirection.metaphor, /customer awareness stage/);
+  assert.match(plan.heroDirection.metaphor, /Match the Message to the Customer/);
+  assert.doesNotMatch(plan.heroDirection.metaphor, /clear bridge/i);
+  assert.doesNotMatch(plan.heroDirection.metaphor, /customer awareness stage/i);
 });
 
 test('standard bindings match approved entries in the repository recipe manifest', async () => {

@@ -52,18 +52,17 @@ export function bindStandardNugletIntakePlan(input: {
   if (!isStandardStoryPlaybookIntake(input.brief) || input.brief.generationPlan !== undefined) {
     return input.brief;
   }
-  const objective = stringValue(input.brief.objective) ?? input.title;
   const plan = nugletGenerationPlanSchema.parse({
     contentKind: 'nuglet.lesson.v1',
     schemaVersion: '1.1.0',
     recipes: STANDARD_RECIPE_BINDINGS,
     heroDirection: {
       concept: input.title,
-      metaphor: `A clear bridge from the learner's current understanding to ${objective}`,
+      metaphor: `One physical action that makes ${input.title} immediately understandable`,
       compositionFamily: 'asymmetrical-story',
       mustInclude: [
         `one clear focal metaphor specific to ${input.title}`,
-        'a visible transition from uncertainty to practical understanding',
+        'the final checked lesson hero brief when content generation provides one',
       ],
       mustAvoid: [
         'generic icon grids',

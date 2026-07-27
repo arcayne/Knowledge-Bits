@@ -8,12 +8,16 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
+  authoritativeHeroDirection,
+  checkedHeroDirection,
   heroPrompt,
+  heroVisualReviewPrompt,
   heroReplacementPath,
   isNotebookLmArtifactPropagationDelay,
   normalizeLegacyHero,
   notebookLmPrompt,
   prepareCurrentMediaLanes,
+  parseHeroVisualReview,
   publicPreviewEndCardArtwork,
   reusableNotebookLmArtifact,
   shouldReuseLegacyMedia,
@@ -46,6 +50,104 @@ test("Knowledge Bits hero prompt preserves the Nuglet hero standard", () => {
   assert.match(prompt, /Do not make an infographic/);
   assert.match(prompt, /No text, no words, no letters, no numbers/);
   assert.match(prompt, /no compass markings/);
+});
+
+test("checked nested hero brief overrides the generic intake direction", () => {
+  const content = {
+    kind: "nuglet.lesson.v1",
+    schemaVersion: "1.1.0",
+    payload: {
+      learning: {
+        centralIdea: "Match the message to the customer's state of awareness.",
+        oneLineToKeep: "Channel existing desire instead of manufacturing it.",
+      },
+      read: {
+        story: { title: "Stop Pushing and Start Channeling" },
+      },
+      hero: {
+        mediaBrief: {
+          concept: "Tuning into the customer's exact frequency.",
+          metaphor: "A hand adjusts one radio dial until a single signal becomes clear.",
+          compositionFamily: "single-scene editorial",
+        },
+      },
+    },
+  };
+  const intakeDirection = {
+    concept: "Your Customer Is Not Ready for the Same Message",
+    metaphor: "A clear bridge from uncertainty to practical understanding.",
+    mustInclude: ["a visible transition from uncertainty"],
+  };
+
+  assert.deepEqual(checkedHeroDirection(content), content.payload.hero.mediaBrief);
+  assert.deepEqual(authoritativeHeroDirection(content, intakeDirection), content.payload.hero.mediaBrief);
+  const prompt = heroPrompt(content, intakeDirection);
+  assert.match(prompt, /Stop Pushing and Start Channeling/);
+  assert.match(prompt, /Tuning into the customer's exact frequency/);
+  assert.match(prompt, /hand adjusts one radio dial/);
+  assert.match(prompt, /single-scene editorial/);
+  assert.doesNotMatch(prompt, /Knowledge Bit/);
+  assert.doesNotMatch(prompt, /clear bridge/i);
+  assert.doesNotMatch(prompt, /visible transition from uncertainty/i);
+});
+
+test("checked hero brief also overrides older title-specific scene hacks", () => {
+  const prompt = heroPrompt({
+    payload: {
+      read: { story: { title: "You Logged Off. Your Mind Did Not." } },
+      hero: {
+        mediaBrief: {
+          concept: "Close the loop before leaving work.",
+          metaphor: "One hand places a single unfinished card into a quiet holding tray.",
+          compositionFamily: "single-scene editorial",
+        },
+      },
+    },
+  }, {});
+  assert.match(prompt, /single unfinished card/);
+  assert.doesNotMatch(prompt, /plain closed laptop/);
+  assert.doesNotMatch(prompt, /clay-orange watercolor thought loop/);
+});
+
+test("hero prompt retains intake direction only when checked content has no hero brief", () => {
+  const intakeDirection = {
+    concept: "A specific lesson",
+    metaphor: "One hand places a final stone into a stable arch.",
+    compositionFamily: "asymmetrical-story",
+  };
+  assert.deepEqual(authoritativeHeroDirection({
+    payload: { learning: { centralIdea: "A specific lesson" } },
+  }, intakeDirection), intakeDirection);
+});
+
+test("hero visual review checks semantic, style, clutter, and crop conformance", () => {
+  const content = {
+    payload: {
+      hero: {
+        mediaBrief: {
+          concept: "Tune into the customer's exact frequency.",
+          metaphor: "One hand adjusts a radio dial until a single signal becomes clear.",
+          compositionFamily: "single-scene editorial",
+        },
+      },
+    },
+  };
+  const prompt = heroVisualReviewPrompt(content, {});
+  assert.match(prompt, /Tune into the customer's exact frequency/);
+  assert.match(prompt, /one hand adjusts a radio dial/i);
+  assert.match(prompt, /generic bridge/);
+  assert.match(prompt, /readable icon glyphs/);
+  assert.match(prompt, /centered wide lesson-header crop/);
+});
+
+test("hero visual review requires a strict decision with concrete failed corrections", () => {
+  assert.deepEqual(parseHeroVisualReview('{"passed":true,"issues":[]}'), { passed: true, issues: [] });
+  assert.deepEqual(
+    parseHeroVisualReview('```json\n{"passed":false,"issues":["Remove the icon tiles.","Use one radio."]}\n```'),
+    { passed: false, issues: ["Remove the icon tiles.", "Use one radio."] },
+  );
+  assert.throws(() => parseHeroVisualReview('{"passed":false,"issues":[]}'), /invalid decision/);
+  assert.throws(() => parseHeroVisualReview("not json"), /invalid JSON/);
 });
 
 test("Knowledge Bits hero prompt keeps the work and care story specific", () => {
@@ -85,12 +187,15 @@ test("Knowledge Bits hero prompt gives logged-off work one coherent action", () 
   assert.doesNotMatch(prompt, /usually three to six/);
 });
 
-test("Knowledge Bits hero generation declares multiple Nuglet style references", async () => {
+test("Knowledge Bits hero generation converts narrative references into blurred style swatches", async () => {
   const source = await readFile(new URL("./nuglet-media-command.mjs", import.meta.url), "utf8");
   assert.match(source, /personal-finance-101-hero\.png/);
   assert.match(source, /not-every-thought-is-your-task-hero\.png/);
   assert.match(source, /and-then-what-the-question-behind-every-good-decision-hero\.png/);
   assert.match(source, /styleReferences\.map/);
+  assert.equal(source.includes(".resize(96, 96"), true);
+  assert.equal(source.includes(".blur(10)"), true);
+  assert.match(source, /blurred palette-and-texture swatches only/);
 });
 
 test("operator hero replacement is restricted to one explicit run", () => {
