@@ -136,13 +136,140 @@ function mountNewNugletForm({ document, fetch }) {
   if (!form) return;
   const submit = document.querySelector('#new-nuglet-submit');
   const status = document.querySelector('#new-nuglet-status');
+  const check = document.querySelector('#nuglet-similarity-check');
+  const similarityStatus = document.querySelector('#nuglet-similarity-status');
+  const results = document.querySelector('#nuglet-similarity-results');
+  const resultsHeading = document.querySelector('#nuglet-similarity-heading');
+  const matches = document.querySelector('#nuglet-similarity-matches');
+  const distinctConfirmation = document.querySelector('#nuglet-distinct-confirmation');
+  const distinctCheckbox = form.querySelector('[name="confirmDistinct"]');
   const csrfToken = document.querySelector('meta[name="review-csrf-token"]')?.content ?? '';
+  const value = (name) => form.querySelector(`[name="${name}"]`)?.value.trim() ?? '';
+  const draftFingerprint = () => JSON.stringify({
+    title: value('title'),
+    objective: value('objective'),
+    audience: value('audience'),
+    locale: value('locale'),
+  });
+  let checkedDraft;
+  let similarity;
+  let checking = false;
+  let submitting = false;
+
+  const updateSubmit = () => {
+    const checkIsCurrent = checkedDraft === draftFingerprint();
+    const distinctConfirmed = similarity?.risk === 'none' || distinctCheckbox.checked;
+    submit.disabled = checking
+      || submitting
+      || !checkIsCurrent
+      || !similarity
+      || !distinctConfirmed
+      || !value('notebookLmNotebookId');
+  };
+
+  const invalidateSimilarity = () => {
+    checkedDraft = undefined;
+    similarity = undefined;
+    results.hidden = true;
+    results.dataset.risk = '';
+    matches.replaceChildren();
+    distinctConfirmation.hidden = true;
+    distinctCheckbox.checked = false;
+    similarityStatus.textContent = 'Run this check before creating the notebook.';
+    updateSubmit();
+  };
+
+  const renderSimilarity = (payload) => {
+    similarity = payload;
+    checkedDraft = draftFingerprint();
+    results.hidden = false;
+    results.dataset.risk = payload.risk;
+    matches.replaceChildren();
+    distinctCheckbox.checked = false;
+    if (payload.risk === 'none') {
+      resultsHeading.textContent = 'No close matches found';
+      const item = document.createElement('li');
+      item.textContent = 'No existing Knowledge Bits run crossed the related-content threshold.';
+      matches.append(item);
+      distinctConfirmation.hidden = true;
+      similarityStatus.textContent = 'Similarity check is current. Create a fresh NotebookLM notebook for this Nuglet.';
+    } else {
+      resultsHeading.textContent = payload.risk === 'likely_duplicate'
+        ? 'Likely duplicate found'
+        : 'Related Nuglets found';
+      for (const match of payload.matches) {
+        const item = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = match.reviewPath;
+        link.textContent = match.title;
+        const detail = document.createElement('span');
+        detail.textContent = ` · ${Math.round(match.score * 100)}% · ${match.reasons.join('; ')}`;
+        item.append(link, detail);
+        matches.append(item);
+      }
+      distinctConfirmation.hidden = false;
+      similarityStatus.textContent = 'Review the matches before deciding whether this is a distinct Nuglet.';
+    }
+    updateSubmit();
+  };
+
+  for (const name of ['title', 'objective', 'audience', 'locale']) {
+    form.querySelector(`[name="${name}"]`)?.addEventListener('input', invalidateSimilarity);
+  }
+  form.querySelector('[name="notebookLmNotebookId"]')?.addEventListener('input', updateSubmit);
+  distinctCheckbox.addEventListener('change', updateSubmit);
+  check.addEventListener('click', async () => {
+    if (checking || submitting) return;
+    const input = {
+      title: value('title'),
+      objective: value('objective'),
+      audience: value('audience'),
+      locale: value('locale'),
+    };
+    if (Object.values(input).some((field) => !field)) {
+      similarityStatus.textContent = 'Add the title, objective, audience, and locale before checking.';
+      return;
+    }
+    checking = true;
+    check.disabled = true;
+    similarityStatus.textContent = 'Checking every existing run...';
+    updateSubmit();
+    try {
+      const response = await fetch('/api/similarity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify(input),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not check for similar Nuglets.');
+      renderSimilarity(payload);
+    } catch (error) {
+      invalidateSimilarity();
+      similarityStatus.textContent = error instanceof Error ? error.message : 'Could not check for similar Nuglets.';
+    } finally {
+      checking = false;
+      check.disabled = false;
+      updateSubmit();
+    }
+  });
+
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    submit.disabled = true;
+    if (submitting) return;
+    if (!similarity || checkedDraft !== draftFingerprint()) {
+      status.dataset.tone = 'error';
+      status.textContent = 'Run the similarity check again before starting research.';
+      return;
+    }
+    if (similarity.risk !== 'none' && !distinctCheckbox.checked) {
+      status.dataset.tone = 'error';
+      status.textContent = 'Confirm the distinct learner objective or angle before continuing.';
+      return;
+    }
+    submitting = true;
+    updateSubmit();
     status.dataset.tone = '';
     status.textContent = 'Creating the research run...';
-    const value = (name) => form.querySelector(`[name="${name}"]`)?.value.trim() ?? '';
     const sourceUrls = value('sourceUrls').split(/\r?\n/).map((url) => url.trim()).filter(Boolean);
     const brief = {
       topic: value('title'),
@@ -152,7 +279,14 @@ function mountNewNugletForm({ document, fetch }) {
       locale: value('locale'),
       notebookLmNotebookId: value('notebookLmNotebookId'),
       ...(sourceUrls.length ? { sourceUrls } : {}),
-      intake: { requestedBy: 'review_operator', requestedFormat: 'story_playbook' },
+      intake: {
+        requestedBy: 'review_operator',
+        requestedFormat: 'story_playbook',
+        similarityReview: {
+          fingerprint: similarity.fingerprint,
+          decision: similarity.risk === 'none' ? 'clear' : 'proceed_distinct',
+        },
+      },
     };
     try {
       const response = await fetch('/api/runs', {
@@ -161,7 +295,10 @@ function mountNewNugletForm({ document, fetch }) {
         body: JSON.stringify({ title: value('title'), locale: value('locale'), notebookLmNotebookId: value('notebookLmNotebookId'), brief }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'Could not start the Nuglet.');
+      if (!response.ok) {
+        if (payload.similarity) renderSimilarity(payload.similarity);
+        throw new Error(payload.error || 'Could not start the Nuglet.');
+      }
       status.innerHTML = '';
       status.append(document.createTextNode('Research started. '));
       const link = document.createElement('a');
@@ -171,13 +308,16 @@ function mountNewNugletForm({ document, fetch }) {
       form.reset();
       form.querySelector('[name="audience"]').value = 'general adult learners';
       form.querySelector('[name="locale"]').value = 'en';
+      invalidateSimilarity();
     } catch (error) {
       status.dataset.tone = 'error';
       status.textContent = error instanceof Error ? error.message : 'Could not start the Nuglet.';
     } finally {
-      submit.disabled = false;
+      submitting = false;
+      updateSubmit();
     }
   });
+  invalidateSimilarity();
 }
 
 function runRow(document, run) {

@@ -97,6 +97,80 @@ test('allows an authenticated review operator to start a research run', async ()
   assert.equal(body.brief.contentKind, 'nuglet.lesson.v1');
   assert.equal(body.brief.generationPlan.schemaVersion, '1.1.0');
   assert.equal(body.brief.generationPlan.mediaMode, 'generate');
+  assert.equal(body.brief.intake.similarityReview.decision, 'clear');
+});
+
+test('checks every run for related content and requires an explicit distinct-angle decision', async () => {
+  const app = createTestApp();
+  const headers = {
+    Authorization: 'Bearer engine-review-test',
+    'X-Knowledge-Bits-Reviewer': 'operator@example.test',
+    'Content-Type': 'application/json',
+  };
+  const existing = await app.request('/runs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(standardIntake({
+      title: 'Why do smart people make bad decisions?',
+      objective: 'Understand why intelligence does not prevent predictable decision errors.',
+      notebookId: 'notebook-existing',
+    })),
+  });
+  assert.equal(existing.status, 201, await existing.clone().text());
+
+  const query = {
+    title: "Why You're Predictably Irrational",
+    objective: 'Recognize how framing, free offers, ownership, and expectations distort decisions.',
+    audience: 'general adult learners',
+    locale: 'en',
+  };
+  assert.equal((await app.request('/runs/similarity', {
+    method: 'POST',
+    body: JSON.stringify(query),
+  })).status, 401);
+  const checked = await app.request('/runs/similarity', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(query),
+  });
+  assert.equal(checked.status, 200, await checked.clone().text());
+  const similarity = await checked.json();
+  assert.equal(similarity.risk, 'related');
+  assert.equal(similarity.matches[0].title, 'Why do smart people make bad decisions?');
+
+  const request = standardIntake({
+    title: query.title,
+    objective: query.objective,
+    notebookId: 'notebook-new',
+  });
+  const blocked = await app.request('/runs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(request),
+  });
+  assert.equal(blocked.status, 409);
+  assert.equal((await blocked.json()).error, 'Similar Nuglets require explicit distinct-angle confirmation');
+
+  const confirmedRequest = {
+    ...request,
+    brief: {
+      ...request.brief,
+      intake: {
+        ...request.brief.intake,
+        similarityReview: {
+          fingerprint: similarity.fingerprint,
+          decision: 'proceed_distinct',
+        },
+      },
+    },
+  };
+  const created = await app.request('/runs', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(confirmedRequest),
+  });
+  assert.equal(created.status, 201, await created.clone().text());
+  assert.equal((await created.json()).brief.intake.similarityReview.decision, 'proceed_distinct');
 });
 
 test('rejects malformed run input', async () => {
@@ -173,3 +247,20 @@ test('retrieves the persisted run state', async () => {
   assert.equal(response.status, 200);
   assert.equal((await response.json()).id, run.id);
 });
+
+function standardIntake(input: { title: string; objective: string; notebookId: string }) {
+  return {
+    title: input.title,
+    locale: 'en',
+    notebookLmNotebookId: input.notebookId,
+    brief: {
+      title: input.title,
+      topic: input.title,
+      objective: input.objective,
+      audience: 'general adult learners',
+      locale: 'en',
+      notebookLmNotebookId: input.notebookId,
+      intake: { requestedBy: 'review_operator', requestedFormat: 'story_playbook' },
+    },
+  };
+}

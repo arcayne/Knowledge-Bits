@@ -7,6 +7,9 @@ import {
   knowledgeBitsQaSchema,
   knowledgeBitsSchema,
   knowledgeBitsCreateRunRequestSchema,
+  nugletSimilarityRequestSchema,
+  nugletSimilarityResponseSchema,
+  nugletSimilarityReviewSchema,
   prepareLegacyRevisionRequestSchema,
   prepareLegacyRevisionResponseSchema,
   resumeCreateCandidateRequestSchema,
@@ -30,6 +33,45 @@ const packageId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const sourceId = '0f8fad5b-d9cb-469f-a165-70867728950f';
 const claimId = '0f8fad5b-d9cb-469f-a165-708677289510';
 const snapshotArtifactId = '0f8fad5b-d9cb-469f-a165-708677289512';
+
+test('similarity preflight contracts are bounded and checksum-bound', () => {
+  const request = {
+    title: "Why You're Predictably Irrational",
+    objective: 'Recognize predictable decision errors.',
+    audience: 'general adult learners',
+    locale: 'en',
+  };
+  assert.deepEqual(nugletSimilarityRequestSchema.parse(request), request);
+  const response = {
+    method: 'deterministic_intake_v1',
+    scope: 'all_knowledge_bits_runs',
+    fingerprint: checksum,
+    risk: 'related',
+    matches: [{
+      runId: packageId,
+      title: 'Why do smart people make bad decisions?',
+      objective: null,
+      locale: 'en',
+      currentStage: 'human_review',
+      reviewStatus: 'pending',
+      score: 0.55,
+      reasons: ['shared concepts: decision_bias'],
+      reviewPath: `/runs/${packageId}`,
+    }],
+  };
+  assert.deepEqual(nugletSimilarityResponseSchema.parse(response), response);
+  assert.deepEqual(nugletSimilarityReviewSchema.parse({
+    fingerprint: checksum,
+    decision: 'proceed_distinct',
+  }), {
+    fingerprint: checksum,
+    decision: 'proceed_distinct',
+  });
+  assert.equal(nugletSimilarityResponseSchema.safeParse({
+    ...response,
+    matches: Array.from({ length: 6 }, () => response.matches[0]),
+  }).success, false);
+});
 
 const recipeIds = {
   story: 'nuglet.lesson.story',

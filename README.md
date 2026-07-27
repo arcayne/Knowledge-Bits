@@ -175,12 +175,28 @@ moves the affected stage to `needs_human`; production never falls back to fixtur
 
 Start from ordinary text, screenshots, quotes, or source hints with the
 project-local [`$start-nuglet` skill](./.agents/skills/start-nuglet/SKILL.md).
-It drafts the intake, confirms the proposed run, and returns the review link;
+It drafts the intake, checks every existing run for related content, confirms the proposed run,
+creates a fresh dedicated NotebookLM notebook, and returns the review link;
 it never approves, publishes, or delivers content.
 
-Operators can start a research run from the review dashboard at `/`, or use the matching CLI from
-the terminal. Both paths require a dedicated NotebookLM notebook ID and create the same research
-brief:
+Run the non-billable deterministic preflight before creating the notebook. It compares the proposed
+title, learner objective, and concept signals with all in-progress and completed Knowledge Bits runs:
+
+```bash
+ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
+ENGINE_API_TOKEN="..." \
+pnpm check:nuglet-similarity -- \
+  --title "Why you cannot focus after short videos" \
+  --objective "Explain the mechanism and give one kind action to rebuild focus." \
+  --audience "Adults rebuilding attention"
+```
+
+If the result is clear—or the operator explicitly decides that a related idea has a distinct learner
+objective—create a new NotebookLM notebook named `Nuglet: <title>`. A new Nuglet always gets a new
+notebook; an existing notebook remains bound to its existing run.
+
+Operators can then start the research run from the review dashboard at `/`, or use the matching CLI.
+Both paths require that fresh dedicated NotebookLM notebook ID and create the same research brief:
 
 ```bash
 ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
@@ -194,7 +210,9 @@ pnpm new:nuglet -- \
   --source "https://example.com/credible-source"
 ```
 
-The command prints the review URL immediately. The run starts in Research; the worker uses the
+The CLI repeats the similarity preflight. When related runs exist, it stops and prints them unless the
+operator reruns it with `--confirm-distinct`; the API also rejects a stale preflight or an unconfirmed
+related match. The command then prints the review URL immediately. The run starts in Research; the worker uses the
 NotebookLM notebook and any starting URLs, records the accepted source list, and advances the run as
 each stage becomes ready. The dashboard refreshes automatically and has a manual Refresh button.
 The client submits only the research brief and the `story_playbook` intake marker. The trusted API
