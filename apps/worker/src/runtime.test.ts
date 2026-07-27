@@ -84,7 +84,22 @@ test('legacy provider service URLs do not create production provider dependencie
 test('composes injected production clients and context resolvers without live credentials', async () => {
   const runtime: ProviderRuntime = {
     notebookProcess: {
-      async run() {
+      async run({ args }) {
+        if (args[0] === '--version') {
+          return { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 };
+        }
+        if (args[0] === 'source' && args[1] === 'list') {
+          return {
+            stdout: JSON.stringify([{
+              id: evidence.sources[0]!.sourceId,
+              title: 'Evidence',
+              url: 'https://example.test/evidence',
+              status: 2,
+            }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
         return {
           stdout: JSON.stringify({ conversationId: 'notebook-1', answer: { claims: [], sources: [] } }),
           stderr: '',
