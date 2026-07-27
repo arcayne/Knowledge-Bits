@@ -63,6 +63,16 @@ write_plist() {
   }
 }
 
+bootstrap_service() {
+  local plist=$1
+  if ! launchctl bootstrap "gui/${uid}" "$plist"; then
+    # launchd can briefly retain a just-booted-out label. One bounded retry
+    # avoids leaving the entire local factory offline during reinstall.
+    sleep 1
+    launchctl bootstrap "gui/${uid}" "$plist"
+  fi
+}
+
 write_plist "$api_label" "${script_dir}/knowledge-bits-api.zsh" \
   "${log_dir}/api.log" "${log_dir}/api.error.log" > "$api_plist"
 write_plist "$review_label" "${script_dir}/knowledge-bits-review.zsh" \
@@ -78,9 +88,9 @@ chmod 600 "$api_plist" "$review_plist" "$worker_plist"
 launchctl bootout "gui/${uid}/${api_label}" 2>/dev/null || true
 launchctl bootout "gui/${uid}/${review_label}" 2>/dev/null || true
 launchctl bootout "gui/${uid}/${worker_label}" 2>/dev/null || true
-launchctl bootstrap "gui/${uid}" "$api_plist"
-launchctl bootstrap "gui/${uid}" "$review_plist"
-launchctl bootstrap "gui/${uid}" "$worker_plist"
+bootstrap_service "$api_plist"
+bootstrap_service "$review_plist"
+bootstrap_service "$worker_plist"
 launchctl kickstart -k "gui/${uid}/${api_label}"
 launchctl kickstart -k "gui/${uid}/${review_label}"
 launchctl kickstart -k "gui/${uid}/${worker_label}"

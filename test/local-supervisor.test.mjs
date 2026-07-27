@@ -16,6 +16,7 @@ test('local supervisor keeps API, review UI, and worker clock alive from one sta
   assert.match(installer, /app\.knowledge-bits\.review/);
   assert.match(installer, /app\.knowledge-bits\.worker-tick/);
   assert.match(installer, /knowledge-bits-review\.zsh/);
+  assert.match(installer, /bootstrap_service/);
   assert.match(installer, /StartInterval/);
   assert.match(installer, /KeepAlive/);
 
@@ -26,6 +27,8 @@ test('local supervisor keeps API, review UI, and worker clock alive from one sta
   assert.match(worker, /lock_owner=.*pid/);
   assert.match(worker, /kill -0/);
   assert.match(worker, /trap cleanup_lock EXIT INT TERM/);
+  assert.match(worker, /ENGINE_API_BASE_URL%\/}\/health/);
+  assert.match(worker, /for attempt in \{1\.\.30\}/);
   assert.match(workerEntry, /worker_tick_started/);
   assert.match(workerEntry, /worker_tick_completed/);
 });

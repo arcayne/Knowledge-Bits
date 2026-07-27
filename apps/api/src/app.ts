@@ -21,6 +21,7 @@ export interface CreateAppOptions {
 
 export function createApp(options: CreateAppOptions): Hono {
   const app = new Hono();
+  app.get('/health', (context) => context.json({ status: 'ok' }));
   const dependencies = {
     repository: options.repository,
     auth: createEngineAuthConfig(options.env ?? (process.env as EngineAuthEnv)),

@@ -255,7 +255,8 @@ run, and exits. A recoverable filesystem lock prevents overlapping ticks when a 
 longer than five minutes. Provider cooldowns remain in the Supabase ledger as `waiting` jobs; later
 ticks continue with other eligible work. The worker log records a `worker_tick_started` and
 `worker_tick_completed` JSON line for every real tick, including the run id, job count, duration, and
-stop reason.
+stop reason. On login or reinstall, the worker waits for the local API health probe before claiming
+work, so an API startup race cannot consume the first tick.
 
 The review UI is also restarted automatically and is available at
 `http://127.0.0.1:4323`. Set `REVIEW_LOCAL_OPERATOR_ID` in the supervisor environment file to a stable
