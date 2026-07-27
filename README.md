@@ -261,7 +261,8 @@ work, so an API startup race cannot consume the first tick.
 The review UI is also restarted automatically and is available at
 `http://127.0.0.1:4323`. Set `REVIEW_LOCAL_OPERATOR_ID` in the supervisor environment file to a stable
 local operator name. The local review service always talks to `KNOWLEDGE_BITS_LOCAL_API_URL`; production
-review authentication remains separate.
+review authentication remains separate. The supervisor prefers Homebrew's `node@24` runtime, matching
+the repository and Vercel runtime contract, without changing the machine's default interactive Node.
 
 The supervisor writes only local logs and local filesystem artifacts under the repository:
 

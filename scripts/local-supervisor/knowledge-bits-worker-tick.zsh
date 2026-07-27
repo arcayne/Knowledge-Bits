@@ -33,7 +33,7 @@ cleanup_lock() {
 }
 trap cleanup_lock EXIT INT TERM
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
+export PATH="/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
 set -a
 source "$env_file"
 set +a
@@ -68,7 +68,7 @@ if [[ -z "${PRODUCT_RECIPE_ROOTS:-}" ]]; then
 fi
 
 if [[ -z "${MEDIA_GENERATION_COMMAND:-}" ]]; then
-  export MEDIA_GENERATION_COMMAND="/opt/homebrew/bin/node"
+  export MEDIA_GENERATION_COMMAND="$(command -v node)"
   export MEDIA_GENERATION_ARGS="[\"${root}/apps/worker/scripts/nuglet-media-command.mjs\"]"
 fi
 
