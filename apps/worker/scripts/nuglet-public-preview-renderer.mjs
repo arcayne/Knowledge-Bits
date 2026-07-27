@@ -369,7 +369,10 @@ async function textLayer(text, options) {
     rgba[offset + 2] = blue;
     rgba[offset + 3] = 255 - pixels[index];
   }
-  return sharp(rgba, { raw: { width, height, channels: 4 } }).png().toBuffer();
+  return sharp(rgba, { raw: { width, height, channels: 4 } })
+    .resize({ width: options.width, fit: "inside", withoutEnlargement: true })
+    .png()
+    .toBuffer();
 }
 
 async function videoMetadata(path, ffprobe) {
