@@ -14,7 +14,15 @@ const maxDurationSeconds = positiveInteger(
 
 const client = new HttpEngineClient({ baseUrl, workerToken });
 const executor = new WorkerExecutor({ client, providers: composeWorkerProviders({ env: process.env, engineClient: client }) });
-await runWorkerTick({
+const tickStartedAt = Date.now();
+console.log(JSON.stringify({
+  event: 'worker_tick_started',
+  at: new Date(tickStartedAt).toISOString(),
+  maxJobs,
+  maxDurationSeconds,
+  preferredRunId: optionalUuidEnvironment('ENGINE_WORKER_PREFERRED_RUN_ID') ?? null,
+}));
+const result = await runWorkerTick({
   client,
   executor,
   leaseSeconds,
@@ -22,6 +30,12 @@ await runWorkerTick({
   maxDurationMs: maxDurationSeconds * 1_000,
   preferredRunId: optionalUuidEnvironment('ENGINE_WORKER_PREFERRED_RUN_ID'),
 });
+console.log(JSON.stringify({
+  event: 'worker_tick_completed',
+  at: new Date().toISOString(),
+  durationMs: Date.now() - tickStartedAt,
+  ...result,
+}));
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name]?.trim();

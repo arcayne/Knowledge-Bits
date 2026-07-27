@@ -5,6 +5,7 @@ script_dir=${0:A:h}
 root=${KNOWLEDGE_BITS_ROOT:-${script_dir:h:h}}
 env_file=${KNOWLEDGE_BITS_ENV_FILE:-${root}/.env}
 lock_dir="${TMPDIR:-/tmp}/knowledge-bits-worker-tick.lock"
+lock_owner="${lock_dir}/pid"
 
 if [[ ! -f "$env_file" ]]; then
   print -u2 "Knowledge Bits environment file not found: $env_file"
@@ -12,12 +13,25 @@ if [[ ! -f "$env_file" ]]; then
 fi
 
 # launchd can begin a new interval while a provider call is still in progress.
-# This lock makes each tick single-flight.
+# This lock makes each tick single-flight and recovers after an unclean worker exit.
 if ! mkdir "$lock_dir" 2>/dev/null; then
-  print "Knowledge Bits worker tick skipped: another tick is still running."
-  exit 0
+  lock_pid=""
+  [[ -r "$lock_owner" ]] && read -r lock_pid < "$lock_owner"
+  if [[ "$lock_pid" == <-> ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+    rm -f "$lock_owner"
+    rmdir "$lock_dir" 2>/dev/null || true
+  fi
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    print "Knowledge Bits worker tick skipped: another tick is still running."
+    exit 0
+  fi
 fi
-trap 'rmdir "$lock_dir"' EXIT
+print -r -- "$$" > "$lock_owner"
+cleanup_lock() {
+  rm -f "$lock_owner"
+  rmdir "$lock_dir" 2>/dev/null || true
+}
+trap cleanup_lock EXIT INT TERM
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
 set -a
