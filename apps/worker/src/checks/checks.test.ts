@@ -69,6 +69,22 @@ test('deterministic checks reject placeholders, repeated depths, and ungrounded 
   ]);
 });
 
+test('deterministic checks allow ordinary competitor language in learner content', () => {
+  const report = runDeterministicChecks({
+    candidate: {
+      ...candidate,
+      depths: {
+        ...candidate.depths,
+        core: 'Compare the claim with the competitor messages your audience already sees.',
+      },
+    },
+    evidence,
+  });
+
+  assert.equal(report.passed, true);
+  assert.equal(report.findings.some(({ code }) => code === 'placeholder'), false);
+});
+
 test('deterministic checks reject empty and incomplete learner claim inventories', () => {
   const empty = runDeterministicChecks({
     candidate: { ...candidate, claims: [], claimCoverage: [] },
