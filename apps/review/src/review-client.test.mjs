@@ -42,6 +42,9 @@ test('review client keeps one package decision and requires a change comment', a
   assert.match(source, /submit\('approve'\)/);
   assert.match(source, /submit\('request_changes'/);
   assert.match(source, /A comment is required to request changes/);
+  assert.match(source, /Recording approval\.\.\./);
+  assert.match(source, /Decision not recorded/);
+  assert.match(source, /if \(submissionInFlight\) return/);
   assert.doesNotMatch(source, /artifactId[^\n]+decision/);
 });
 
