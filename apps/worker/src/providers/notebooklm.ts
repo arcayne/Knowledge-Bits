@@ -113,6 +113,12 @@ interface NotebookLmPhaseTiming {
   durationMs: number;
 }
 
+interface NotebookLmListedSource {
+  sourceId: string;
+  title: string;
+  url: string;
+}
+
 export class NotebookLmProvider implements ContentProvider {
   readonly name = 'notebooklm';
   readonly capabilities = ['collect_sources', 'create_content'] as const;
@@ -168,7 +174,9 @@ export class NotebookLmProvider implements ContentProvider {
         ? 'story_parse_or_repair'
         : 'create_parse_or_repair';
     const cliVersion = await this.runPhase('cli_version', phaseTimings, () => this.version(input.signal));
-    await this.runPhase('source_sync', phaseTimings, () => this.importSources(context, input.signal));
+    const notebookSources = await this.runPhase('source_sync', phaseTimings, () => (
+      this.synchronizeSources(context, input.signal, input.action === 'collect_sources')
+    ));
     const response = await this.runPhase(queryPhase, phaseTimings, () => (
       this.query(context.notebookId, prompt, input.signal)
     ));
@@ -270,7 +278,7 @@ export class NotebookLmProvider implements ContentProvider {
     if (!this.options.separateReadQueries) rawResponse = parsed.raw;
     const verified = input.action === 'collect_sources'
       ? await this.runPhase('research_verification', phaseTimings, () => (
-        this.verifyResearch(parsed.answer, context, input.signal)
+        this.verifyResearch(notebookSources, input.signal)
       ))
       : undefined;
     const parsedOutput = verified?.evidence
@@ -339,10 +347,12 @@ export class NotebookLmProvider implements ContentProvider {
     }
   }
 
-  private async verifyResearch(answer: Record<string, unknown>, context: NotebookLmContext, signal: AbortSignal) {
+  private async verifyResearch(
+    notebookSources: readonly NotebookLmListedSource[],
+    signal: AbortSignal,
+  ) {
     if (!this.options.sourceVerifier) throw new ProviderNeedsHumanError('source_verifier_unconfigured');
-    const candidates = researchCandidates(answer, context.sourceUrls);
-    const verified = await this.options.sourceVerifier.verify({ sources: candidates }, signal);
+    const verified = await this.options.sourceVerifier.verify({ sources: notebookSources }, signal);
     if (verified.evidence.acceptedSources.length === 0) {
       throw new ProviderNeedsHumanError('research_no_accepted_sources', 'quality');
     }
@@ -357,26 +367,30 @@ export class NotebookLmProvider implements ContentProvider {
     return version;
   }
 
-  private async importSources(context: NotebookLmContext, signal: AbortSignal): Promise<void> {
-    if (context.sourceUrls.length === 0) return;
-    const existing = await this.listSourceUrls(context.notebookId, signal);
-    const missing = [...new Set(context.sourceUrls)].filter((url) => !existing.has(url));
-    if (missing.length === 0) return;
+  private async synchronizeSources(
+    context: NotebookLmContext,
+    signal: AbortSignal,
+    recordInventory: boolean,
+  ): Promise<NotebookLmListedSource[]> {
+    if (context.sourceUrls.length === 0 && !recordInventory) return [];
+    let existing = await this.listSources(context.notebookId, signal);
+    const existingUrls = new Set(existing.map(({ url }) => url));
+    const missing = [...new Set(context.sourceUrls)].filter((url) => !existingUrls.has(url));
+    if (missing.length === 0) return recordInventory ? existing : [];
     const response = await this.run(['source', 'add', context.notebookId, ...missing.flatMap((url) => ['--url', url]), '--wait'], signal);
     this.assertProcessSuccess(response);
+    if (!recordInventory) return [];
+    existing = await this.listSources(context.notebookId, signal);
+    return existing;
   }
 
-  private async listSourceUrls(notebookId: string, signal: AbortSignal): Promise<Set<string>> {
+  private async listSources(notebookId: string, signal: AbortSignal): Promise<NotebookLmListedSource[]> {
     const response = await this.run(['source', 'list', notebookId, '--json'], signal);
     this.assertProcessSuccess(response);
     try {
       const parsed: unknown = JSON.parse(response.stdout);
       if (!Array.isArray(parsed)) throw new TypeError('source list is not an array');
-      return new Set(parsed.flatMap((source) => (
-        source && typeof source === 'object' && typeof (source as { url?: unknown }).url === 'string'
-          ? [(source as { url: string }).url]
-          : []
-      )));
+      return parsed.flatMap(parseListedSource);
     } catch {
       throw new ProviderNeedsHumanError('notebooklm_source_list_invalid');
     }
@@ -485,24 +499,31 @@ function renderMalformedOutputRepairPrompt(): string {
   return 'The prior answer was not valid JSON. Return the same answer again as one strict JSON object with no markdown fences.';
 }
 
-function researchCandidates(answer: Record<string, unknown>, sourceUrls: readonly string[]) {
-  const directSources = Array.isArray(answer.sources) ? answer.sources : [];
-  const candidates = directSources.flatMap((source) => {
-    if (!source || typeof source !== 'object' || Array.isArray(source)) return [];
-    const value = source as Record<string, unknown>;
-    return typeof value.sourceId === 'string' && typeof value.title === 'string' && typeof value.url === 'string'
-      ? [{ sourceId: value.sourceId, title: value.title, url: value.url }]
-      : [];
-  });
-  if (candidates.length > 0) return candidates;
+function parseListedSource(value: unknown): NotebookLmListedSource[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const source = value as Record<string, unknown>;
+  if (typeof source.url !== 'string' || source.url.length === 0 || !listedSourceReady(source.status ?? source.state)) {
+    return [];
+  }
+  const sourceId = stringField(source.id)
+    ?? stringField(source.sourceId)
+    ?? stringField(source.source_id)
+    ?? `notebook-source-${createHash('sha256').update(source.url).digest('hex').slice(0, 16)}`;
+  return [{
+    sourceId,
+    title: stringField(source.title) ?? sourceTitle(source.url),
+    url: source.url,
+  }];
+}
 
-  // NotebookLM may return grounded numeric citation references without URLs.
-  // In that shape, only URLs already attached to the run are eligible for verification.
-  return [...new Set(sourceUrls)].map((url) => ({
-    sourceId: `run-source-${createHash('sha256').update(url).digest('hex').slice(0, 16)}`,
-    title: sourceTitle(url),
-    url,
-  }));
+function stringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function listedSourceReady(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (value === 2) return true;
+  return typeof value === 'string' && /^(?:2|active|complete|completed|ready|success|succeeded)$/i.test(value.trim());
 }
 
 function sourceTitle(value: string): string {

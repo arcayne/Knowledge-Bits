@@ -38,6 +38,16 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Accepted source',
+          url: 'https://example.edu/research',
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
     ]),
     context: async () => ({
@@ -53,6 +63,7 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
   if (result.kind !== 'success') return;
   const report = result.executionReport as { cliVersion: string; promptVersion: string; renderedPrompt: string };
   assert.deepEqual(calls[0]?.args, ['--version']);
+  assert.deepEqual(calls[1]?.args, ['source', 'list', 'notebook_fixture_01', '--json']);
   assert.equal(report.cliVersion, 'nlm 0.9.4');
   assert.equal(report.promptVersion, 'notebooklm-research.v1');
   assert.match(report.renderedPrompt, /returning to focused work/);
@@ -73,6 +84,16 @@ test('does not activate Story recipe semantics before the Story and Playbook tas
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Accepted source',
+          url: 'https://example.edu/research',
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
     ]),
     context: async () => ({
@@ -88,8 +109,8 @@ test('does not activate Story recipe semantics before the Story and Playbook tas
 
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
-  assert.equal(calls.length, 2);
-  const prompt = String(calls[1]?.args[3]);
+  assert.equal(calls.length, 3);
+  const prompt = String(calls[2]?.args[3]);
   assert.doesNotMatch(prompt, /Keep the research grounded/);
   assert.equal(result.supportArtifacts, undefined);
 });
@@ -913,8 +934,27 @@ test('accepts the NotebookLM CLI snake_case envelope and verifies run sources wh
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
-      { stdout: '[]', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Accepted source',
+          url: 'https://example.edu/research',
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       { stdout: '', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Personal Finance 101',
+          url: sourceUrl,
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       {
         stdout: JSON.stringify({
           answer: JSON.stringify({
@@ -939,7 +979,7 @@ test('accepts the NotebookLM CLI snake_case envelope and verifies run sources wh
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
   assert.equal((result.executionReport as { conversationId: string }).conversationId, 'conversation_snake_case');
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
 });
 
 test('does not re-import URLs that already exist in the NotebookLM notebook', async () => {
@@ -1096,13 +1136,14 @@ test('classifies original-query transport failures without adding a repair query
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: '[]', stderr: '', exitCode: 0 },
       { stdout: '', stderr: 'service unavailable', exitCode: 1 },
     ]),
     context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
   });
 
   await assert.rejects(() => provider.execute(input('collect_sources')), /notebooklm_transport_unavailable/);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
 
 test('classifies semantic-repair transport failures without adding another query', async () => {
@@ -1122,6 +1163,16 @@ test('uses exactly one repair request for malformed structured output', async ()
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Accepted source',
+          url: 'https://example.edu/research',
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       { stdout: malformedAnswerEnvelope('conversation_malformed_answer'), stderr: '', exitCode: 0 },
       { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
     ]),
@@ -1131,13 +1182,13 @@ test('uses exactly one repair request for malformed structured output', async ()
   const result = await provider.execute(input('collect_sources'));
 
   assert.equal(result.kind, 'success');
-  assert.equal(calls.length, 3);
-  assert.equal(calls[1]?.args.at(-1), '--json');
+  assert.equal(calls.length, 4);
   assert.equal(calls[2]?.args.at(-1), '--json');
-  assert.equal(calls[1]?.stdin, undefined);
-  assert.deepEqual(calls[2]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
-  assert.match(String(calls[2]?.args[3]), /strict JSON object/);
-  assert.equal(String(calls[2]?.args[3]).includes(String(calls[1]?.args[3])), false);
+  assert.equal(calls[3]?.args.at(-1), '--json');
+  assert.equal(calls[2]?.stdin, undefined);
+  assert.deepEqual(calls[3]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
+  assert.match(String(calls[3]?.args[3]), /strict JSON object/);
+  assert.equal(String(calls[3]?.args[3]).includes(String(calls[2]?.args[3])), false);
 });
 
 test('rejects a malformed repair response without issuing semantic repair', async () => {
@@ -1146,6 +1197,7 @@ test('rejects a malformed repair response without issuing semantic repair', asyn
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: '[]', stderr: '', exitCode: 0 },
       { stdout: malformedAnswerEnvelope('conversation_malformed_answer'), stderr: '', exitCode: 0 },
       { stdout: malformedAnswerEnvelope('conversation_malformed_repair'), stderr: '', exitCode: 0 },
       { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
@@ -1154,15 +1206,24 @@ test('rejects a malformed repair response without issuing semantic repair', asyn
   });
 
   await assert.rejects(() => provider.execute(input('collect_sources')), /notebooklm_malformed_output/);
-  assert.equal(calls.length, 3);
-  assert.deepEqual(calls[2]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[3]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
 });
 
-test('records the research source list without requiring a second citation mapping', async () => {
+test('records every healthy CLI-listed source even when the research answer selects only one', async () => {
   const provider = new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,
     process: processWith([], [
       { stdout: 'nlm 0.9.4\\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([
+          { id: sourceId, title: 'Accepted source', url: 'https://example.edu/research', status: 2 },
+          { id: secondarySourceId, title: 'Second accepted source', url: 'https://example.org/research', status: 2 },
+          { id: tertiarySourceId, title: 'Failed source', url: 'https://example.net/research', status: 3 },
+        ]),
+        stderr: '',
+        exitCode: 0,
+      },
       {
         stdout: JSON.stringify({
           conversationId: 'conversation_fixture_01',
@@ -1182,7 +1243,7 @@ test('records the research source list without requiring a second citation mappi
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
   const output = result.parsedOutput as { acceptedSources: Array<{ sourceId: string }> };
-  assert.deepEqual(output.acceptedSources.map(({ sourceId: id }) => id), [sourceId]);
+  assert.deepEqual(output.acceptedSources.map(({ sourceId: id }) => id), [sourceId, secondarySourceId]);
 });
 
 test('classifies process timeouts as a typed wait', async () => {

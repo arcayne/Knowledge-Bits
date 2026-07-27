@@ -158,7 +158,9 @@ The control API supplies lease-scoped job inputs and permits reads only for decl
 Each run must carry its own `notebookLmNotebookId`; the engine rejects assigning one NotebookLM notebook
 to multiple runs. Do not configure a global NotebookLM notebook ID. Existing local manifests should be
 reconciled into the run records before they are processed.
-The worker records NotebookLM's accepted HTTPS source list as immutable source receipts, binds
+The worker synchronizes requested URLs, reads the notebook's source inventory directly from the
+NotebookLM CLI, and records every healthy HTTPS source as an immutable receipt. A generative
+NotebookLM answer cannot silently narrow that authoritative inventory. The worker then binds
 learner-facing citations during content generation, and passes content to the local Pi and media adapters. Provider calls and subprocesses use
 bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
 moves the affected stage to `needs_human`; production never falls back to fixture content.
