@@ -2,6 +2,7 @@ import {
   prepareLegacyRevisionRequestSchema,
   prepareLegacyRevisionResponseSchema,
   regenerateMediaRequestSchema,
+  resumeCreateCandidateRequestSchema,
   reviewRunRequestSchema,
   reviewRunResponseSchema,
 } from '@knowledge-bits/contracts';
@@ -93,6 +94,25 @@ export function registerReviewRoutes(
       return context.json(toRunResponse(await dependencies.repository.refreshResearch({
         runId: current.id,
         brief,
+        operatorId: principal,
+      })), 202);
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
+      throw error;
+    }
+  });
+
+  app.post('/runs/:id/resume-create-candidate', async (context) => {
+    const principal = requireReviewPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const input = resumeCreateCandidateRequestSchema.safeParse(await readJson(context.req.raw));
+    if (!input.success) return context.json({ error: 'Invalid Create candidate recovery input' }, 400);
+    try {
+      return context.json(toRunResponse(await dependencies.repository.resumeCreateCandidate({
+        runId: context.req.param('id'),
+        artifactId: input.data.artifactId,
         operatorId: principal,
       })), 202);
     } catch (error) {

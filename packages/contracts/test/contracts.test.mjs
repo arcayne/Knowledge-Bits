@@ -9,6 +9,7 @@ import {
   knowledgeBitsCreateRunRequestSchema,
   prepareLegacyRevisionRequestSchema,
   prepareLegacyRevisionResponseSchema,
+  resumeCreateCandidateRequestSchema,
   regenerateMediaRequestSchema,
   knowledgeBitsRunBriefSchema,
   nugletGenerationPlanSchema,
@@ -660,6 +661,13 @@ test('requires a strictly bound Nuglet replacement brief to prepare a legacy rev
     previousRevision: 1,
     previousPackageChecksum: checksum,
   });
+});
+
+test('validates protected Create candidate recovery requests', () => {
+  const artifactId = '7607b16a-161f-4c9d-9230-f1a594267417';
+  assert.deepEqual(resumeCreateCandidateRequestSchema.parse({ artifactId }), { artifactId });
+  assert.equal(resumeCreateCandidateRequestSchema.safeParse({ artifactId: 'latest' }).success, false);
+  assert.equal(resumeCreateCandidateRequestSchema.safeParse({ artifactId, publish: true }).success, false);
 });
 
 test('validates a four-asset Nuglet migration inventory with bounded target paths', () => {

@@ -354,6 +354,10 @@ export const prepareLegacyRevisionRequestSchema = z.object({
   }
 });
 
+export const resumeCreateCandidateRequestSchema = z.object({
+  artifactId: z.string().uuid(),
+}).strict();
+
 export const regenerateMediaRequestSchema = z.object({
   kinds: z.array(z.enum(['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview']))
     .min(1)
@@ -1135,6 +1139,7 @@ export const knowledgeBitsSchema = z.object({
 
 export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
 export type NugletGenerationPlan = z.infer<typeof nugletGenerationPlanSchema>;
+export type ResumeCreateCandidateRequest = z.infer<typeof resumeCreateCandidateRequestSchema>;
 export type RegenerateMediaRequest = z.infer<typeof regenerateMediaRequestSchema>;
 export type LegacyMediaReuse = z.infer<typeof legacyMediaReuseSchema>;
 export type NugletMigrationInventory = z.infer<typeof nugletMigrationInventorySchema>;

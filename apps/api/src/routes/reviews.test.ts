@@ -518,6 +518,124 @@ test('only the run-level review endpoint is available', async () => {
   assert.equal(untrustedIdentity.status, 400);
 });
 
+test('resumes Check from one explicitly selected failed Create artifact', async () => {
+  const { app, repository, storage } = createTestApp();
+  const run = await repository.bootstrapRun({
+    id: '8da214e8-ef7c-4202-8b41-f762ca1cc080',
+    title: 'Recover one Create candidate',
+    locale: 'en',
+    brief: { objective: 'Recover the preserved candidate without regenerating it.' },
+  });
+  const fixtures = reviewStageFixtures();
+  const research = await requiredClaim(repository, 'collect_sources', 'research-worker');
+  await recordClaimArtifacts(repository, storage, research, 'research-worker', fixtures.collect_sources);
+  await completeClaim(repository, research, 'research-worker');
+
+  const selectedArtifactId = '23c7c542-f70f-41d8-b6fc-d6d4c9723144';
+  const latestArtifactId = 'b67a7d15-caba-43d5-8cae-d6484b463079';
+  const firstCreate = await requiredClaim(repository, 'create_content', 'create-worker-1');
+  await recordClaimArtifacts(repository, storage, firstCreate, 'create-worker-1', [{
+    id: selectedArtifactId,
+    kind: 'parsed_output',
+    mediaType: 'application/json',
+    body: fixtures.create_content[0]!.body,
+    checksum: '1'.repeat(64),
+  }]);
+  await markClaimNeedsHuman(repository, firstCreate, 'create-worker-1', 'false_positive_placeholder');
+
+  const retried = await app.request(`/runs/${run.id}/retry`, {
+    method: 'POST',
+    headers: reviewHeaders,
+  });
+  assert.equal(retried.status, 200, await retried.clone().text());
+  const secondCreate = await requiredClaim(repository, 'create_content', 'create-worker-2');
+  await recordClaimArtifacts(repository, storage, secondCreate, 'create-worker-2', [{
+    id: latestArtifactId,
+    kind: 'parsed_output',
+    mediaType: 'application/json',
+    body: { malformed: true },
+    checksum: '2'.repeat(64),
+  }]);
+  await markClaimNeedsHuman(repository, secondCreate, 'create-worker-2', 'notebooklm_content_invalid');
+
+  const wrongScope = await app.request(`/runs/${run.id}/resume-create-candidate`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifactId: selectedArtifactId }),
+  });
+  assert.equal(wrongScope.status, 403);
+
+  const resumed = await app.request(`/runs/${run.id}/resume-create-candidate`, {
+    method: 'POST',
+    headers: { ...reviewHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifactId: selectedArtifactId }),
+  });
+  assert.equal(resumed.status, 202, await resumed.clone().text());
+  const body = await resumed.json();
+  assert.equal(body.currentStage, 'check');
+  assert.equal(body.stages.create.state, 'done');
+  assert.equal(body.stages.check.state, 'queued');
+  assert.equal(body.packageChecksum, '1'.repeat(64));
+  assert.equal(body.approvedChecksum, null);
+  assert.equal(body.reviewStatus, 'pending');
+
+  const check = await requiredClaim(repository, 'check_content', 'check-worker');
+  const dependencies = check.input.dependencies as Array<Record<string, unknown>>;
+  assert.ok(dependencies.some((dependency) => (
+    dependency.action === 'collect_sources' && dependency.kind === 'parsed_output'
+  )));
+  assert.ok(dependencies.some((dependency) => dependency.artifactId === selectedArtifactId));
+  assert.equal(dependencies.some((dependency) => dependency.artifactId === latestArtifactId), false);
+  assert.deepEqual(check.input.createCandidateRecovery, {
+    artifactId: selectedArtifactId,
+    requestedBy: 'editor-1',
+  });
+
+  const replay = await app.request(`/runs/${run.id}/resume-create-candidate`, {
+    method: 'POST',
+    headers: { ...reviewHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifactId: selectedArtifactId }),
+  });
+  assert.equal(replay.status, 202, await replay.clone().text());
+});
+
+test('rejects Create candidate recovery outside the exact artifact and pipeline boundary', async () => {
+  const { app, repository } = createTestApp();
+  const run = await repository.createRun({
+    id: 'd5017fef-68de-4cc8-8077-110c9c130999',
+    title: 'Reject unsafe recovery',
+    locale: 'en',
+    brief: { objective: 'Reject an unrelated artifact.' },
+    currentStage: 'create',
+    stages: [{ name: 'create', state: 'needs_human' }],
+  });
+  const missing = await app.request(`/runs/${run.id}/resume-create-candidate`, {
+    method: 'POST',
+    headers: { ...reviewHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifactId: '0db49b38-9942-497f-88c0-b5916fb84217' }),
+  });
+  assert.equal(missing.status, 400);
+  assert.match(await missing.text(), /current-revision JSON output/);
+
+  const approved = await repository.createRun({
+    id: '20323ef6-2ae5-436d-aa83-7bd85f2e41b5',
+    title: 'Approved run',
+    locale: 'en',
+    brief: { objective: 'Remain approved.' },
+    currentStage: 'create',
+    approvedChecksum: checksumA,
+    reviewStatus: 'approved',
+    stages: [{ name: 'create', state: 'needs_human' }],
+  });
+  const blocked = await app.request(`/runs/${approved.id}/resume-create-candidate`, {
+    method: 'POST',
+    headers: { ...reviewHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifactId: '0db49b38-9942-497f-88c0-b5916fb84217' }),
+  });
+  assert.equal(blocked.status, 409);
+  assert.match(await blocked.text(), /before approval/);
+});
+
 test('refreshes research for an unapproved failed standard intake and binds its generation plan', async () => {
   const { app, repository } = createTestApp();
   const run = await repository.createRun({
@@ -945,5 +1063,36 @@ async function completeClaim(
       approvedChecksum: context.approvedChecksum as `${string}` | null,
       reason: context.stage.reason ?? undefined,
     }, { type: 'stage_completed', packageChecksum: 'e'.repeat(64) as `${string}` }),
+  });
+}
+
+async function markClaimNeedsHuman(
+  repository: WorkflowRepository,
+  claim: JobClaim,
+  workerId: string,
+  reason: string,
+): Promise<void> {
+  const context = await repository.getJobContext(claim.jobId);
+  assert.ok(context);
+  await repository.applyJobResult({
+    workerId,
+    result: {
+      jobId: claim.jobId,
+      packageId: claim.packageId,
+      stage: claim.stage,
+      state: 'needs_human',
+      completedAt: '2026-07-13T10:09:00.000Z',
+      outputChecksum: null,
+      error: reason,
+      needsHumanKind: 'quality',
+    },
+    transition: nextTransition({
+      stage: context.stage.name,
+      state: context.stage.state,
+      revisionAttempts: context.stage.revisionAttempts,
+      packageChecksum: context.packageChecksum as `${string}` | null,
+      approvedChecksum: context.approvedChecksum as `${string}` | null,
+      reason: context.stage.reason ?? undefined,
+    }, { type: 'job_needs_human', reason }),
   });
 }
