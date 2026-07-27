@@ -51,7 +51,7 @@ export interface DeterministicCheckReport {
   findings: readonly DeterministicFinding[];
 }
 
-const PLACEHOLDER = /\b(?:todo|tbd|placeholder|opportunity score|competitor)\b/i;
+const PLACEHOLDER = /\b(?:todo|tbd|placeholder|opportunity score)\b/i;
 const LEGACY_LEARNER_PATHS = ['title', 'takeaway', 'action', 'depths.quick', 'depths.core', 'depths.deep'] as const;
 
 export function runDeterministicChecks(input: {
