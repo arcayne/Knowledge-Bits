@@ -86,9 +86,11 @@ test("checked nested hero brief overrides the generic intake direction", () => {
   assert.match(prompt, /Tuning into the customer's exact frequency/);
   assert.match(prompt, /hand adjusts one radio dial/);
   assert.match(prompt, /single-scene editorial/);
+  assert.match(prompt, /Every visible object must be explicitly required/);
   assert.doesNotMatch(prompt, /Knowledge Bit/);
   assert.doesNotMatch(prompt, /clear bridge/i);
   assert.doesNotMatch(prompt, /visible transition from uncertainty/i);
+  assert.doesNotMatch(prompt, /generic bridge, path, notebook/);
 });
 
 test("checked hero brief also overrides older title-specific scene hacks", () => {

@@ -129,7 +129,7 @@ function visualDirection(content, heroDirection) {
       `Create one physical scene for this exact concept: ${concept}.`,
       `Use this exact metaphor as the sole narrative idea: ${metaphor}.`,
       compositionFamily ? `Composition guidance: ${compositionFamily}.` : "",
-      "Do not substitute a generic bridge, path, notebook, tile sequence, or before-and-after transition.",
+      "Do not substitute any other metaphor, object system, or multi-step transition.",
       "Use one focal action and at most two supporting object types.",
     ].filter(Boolean).join(" ");
   }
@@ -161,7 +161,7 @@ function visualDirection(content, heroDirection) {
       `Create one physical scene for this exact concept: ${concept}.`,
       `Use this exact metaphor as the sole narrative idea: ${metaphor}.`,
       compositionFamily ? `Composition guidance: ${compositionFamily}.` : "",
-      "Do not substitute a generic bridge, path, notebook, tile sequence, or before-and-after transition.",
+      "Do not substitute any other metaphor, object system, or multi-step transition.",
       "Use one focal action and at most two supporting object types.",
     ].filter(Boolean).join(" ");
   }
@@ -194,6 +194,7 @@ function heroDirectionPrompt(content, heroDirection) {
 function heroPrompt(content, heroDirection) {
   const { title, hook, takeaway } = contentText(content);
   const usesCuratedScene = /you logged off.*your mind did not/i.test(title);
+  const usesCheckedBrief = Boolean(checkedHeroDirection(content));
   return [
     "Create one single-scene editorial web hero illustration for a calm, source-backed learning lesson.",
     usesCuratedScene ? "" : `Visual subject guidance only: ${title}.`,
@@ -204,7 +205,9 @@ function heroPrompt(content, heroDirection) {
     "Match the supplied Nuglet palette-and-texture swatches: warm cream paper, pale watercolor or gouache washes, muted clay orange, moss olive, dusty blue, delicate linework, soft painted edges, quiet editorial illustration, tactile and human.",
     "Keep the image airy and low contrast with one clear visual metaphor, one focal composition, and generous open cream space. Use only the objects needed for one readable action, normally two or three object types and never more than four.",
     "Favor the light, whimsical, gently imperfect Explore-page art direction over realism. Avoid dense foliage, full landscapes, dramatic lighting, heavy shadows, saturated colors, dark high-contrast areas, and intricate realistic detail.",
-    "Blank notebooks, closed laptops, and simple human figures are allowed when the approved metaphor needs them. Keep them tactile, simplified, and free of text, interface details, keyboard detail, labels, lists, charts, or readable marks.",
+    usesCheckedBrief
+      ? "Every visible object must be explicitly required by the checked metaphor. Do not add symbolic props, process stages, or decorative storytelling devices."
+      : "Blank notebooks, closed laptops, and simple human figures are allowed when the approved metaphor needs them. Keep them tactile, simplified, and free of text, interface details, keyboard detail, labels, lists, charts, or readable marks.",
     "Build one small narrative moment with asymmetry and foreground-to-background depth. Do not reduce a lesson-specific relationship to unrelated decorative objects.",
     "Translate the guidance into imagery only. Never render any word, phrase, label, title, caption, letter, number, icon glyph, currency symbol, or readable mark from the guidance.",
     "The supplied images are blurred palette-and-texture swatches only. They contain no approved subject or layout.",
