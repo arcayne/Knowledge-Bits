@@ -61,7 +61,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     container.append(note);
   };
 
-  const renderProgressiveMedia = (media = []) => {
+  const renderProgressiveMedia = (media = [], candidate = null) => {
     const byKind = new Map(media.filter((item) => item.state !== 'missing').map((item) => [item.kind, item]));
     const hero = byKind.get('hero');
     const heroSource = renderAsset('hero', hero, 'Verified legacy hero');
@@ -74,9 +74,22 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
       image.alt = 'Verified legacy hero crop preview';
       container.append(image);
     }
-    required('#hero-alt').textContent = hero ? 'Verified production hero, pending package attachment.' : '';
+    required('#hero-alt').textContent = candidate?.hero?.altText
+      ? `Draft brief: ${candidate.hero.altText}`
+      : hero
+        ? 'Verified production hero, pending package attachment.'
+        : '';
     renderAsset('infographic', byKind.get('infographic'), 'Verified legacy infographic');
-    required('#infographic-alt').textContent = byKind.has('infographic') ? 'Verified production infographic, pending package attachment.' : '';
+    required('#infographic-alt').textContent = candidate?.visual?.altText
+      ? `Draft brief: ${candidate.visual.altText}`
+      : byKind.has('infographic')
+        ? 'Verified production infographic, pending package attachment.'
+        : '';
+    fillList(
+      '#infographic-text-equivalent',
+      Array.isArray(candidate?.visual?.textEquivalent) ? candidate.visual.textEquivalent : [],
+      'Infographic text will appear after the visual brief is generated.',
+    );
 
     renderProgressiveAudio('audio-brief', byKind.get('audio_brief'));
     renderProgressiveAudio('audio-discussion', byKind.get('audio_discussion'));
@@ -100,16 +113,22 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     container.append(control);
   };
 
-  const renderProgressiveEvidence = (documentModel) => {
+  const renderProgressiveEvidence = (documentModel, candidate = null) => {
     const evidence = documentModel?.state === 'available' ? documentModel.data : null;
     const accepted = Array.isArray(evidence?.acceptedSources) ? evidence.acceptedSources : [];
     const rejected = Array.isArray(evidence?.rejectedSources) ? evidence.rejectedSources : [];
     const gaps = Array.isArray(evidence?.coverageGaps) ? evidence.coverageGaps : [];
+    const claims = Array.isArray(candidate?.claims) ? candidate.claims : [];
+    const coverage = Array.isArray(candidate?.claimCoverage) ? candidate.claimCoverage : [];
     fillList('#accepted-sources', accepted.map((source) => `${source.title} - ${source.url}`), 'Research has not produced accepted sources yet.');
     fillList('#rejected-sources', rejected.map((source) => `${source.title}: ${source.readability?.reason || source.credibility?.reason || 'rejected'}`), 'No rejected sources.');
     fillList('#coverage-gaps', gaps.map((gap) => `${gap.topic}: ${gap.reason}`), 'No recorded coverage gaps.');
-    fillList('#claims', [], 'Claims will appear after Story and Playbook generation.');
-    fillList('#claim-coverage', [], 'Claim coverage will appear after content generation.');
+    fillList('#claims', claims.map((claim) => claim.statement), 'Claims will appear after Story and Playbook generation.');
+    fillList(
+      '#claim-coverage',
+      coverage.map((entry) => `${entry.path}: ${entry.claimIds.length} claim${entry.claimIds.length === 1 ? '' : 's'}`),
+      'Claim coverage will appear after content generation.',
+    );
   };
 
   const renderProgressive = (payload) => {
@@ -117,25 +136,33 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     const candidate = payload.documents.content.state === 'available'
       ? payload.documents.content.data?.payload
       : null;
-    if (candidate?.read?.story && candidate?.read?.playbook) {
+    if (candidate?.read?.story) {
       renderStory(candidate);
-      renderPlaybook(candidate);
     } else {
       renderPendingDocument('#story-blocks', payload.documents.content.state === 'unavailable'
         ? `Story generation exists but cannot be read: ${payload.documents.content.issue}`
         : 'Story has not been generated yet. It is scheduled in the Create stage.');
+    }
+    if (candidate?.read?.playbook) {
+      renderPlaybook(candidate);
+    } else {
       renderPendingDocument('#playbook-steps', payload.documents.content.state === 'unavailable'
         ? `Playbook generation exists but cannot be read: ${payload.documents.content.issue}`
         : 'Playbook has not been generated yet. It is scheduled as a separate Create request.');
     }
-    renderProgressiveMedia(payload.media);
-    renderProgressiveEvidence(payload.documents.evidence);
+    if (candidate?.quiz?.questions) renderQuiz(candidate);
+    renderProgressiveMedia(payload.media, candidate);
+    renderProgressiveEvidence(payload.documents.evidence, candidate);
     required('#qa').textContent = payload.documents.qa.state === 'available'
       ? 'QA evidence is available and will be shown with the completed package.'
       : 'QA is pending until Story and Playbook are generated.';
     fillList('#qa-findings', [], 'No QA findings yet.');
     required('#checksum').textContent = 'Package pending';
-    decisionStatus.textContent = `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}.`;
+    decisionStatus.textContent = payload.run.currentState === 'needs_human' && payload.run.currentStage !== 'human_review'
+      ? `Automated ${payload.run.currentStage.replaceAll('_', ' ')} is blocked: ${payload.run.reason || 'operator attention required'}. Human review comes after generation and QA.`
+      : payload.run.currentStage !== 'human_review'
+        ? `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}. Human review comes after generation and QA.`
+        : `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}.`;
     setDecisionAllowed(false);
     required('#review').hidden = false;
   };

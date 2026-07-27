@@ -72,6 +72,152 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
   assert.equal(result.assets?.[0]?.kind, 'source_snapshot');
 });
 
+test('verifies Pi-discovered sources before importing only the accepted corpus into NotebookLM', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const discovered = [
+    {
+      sourceId: 'pi-source-one',
+      title: 'Primary source',
+      url: 'https://primary.example.org/source',
+      sourceType: 'primary',
+      rationale: 'Direct source material.',
+    },
+    {
+      sourceId: 'pi-source-two',
+      title: 'Independent analysis',
+      url: 'https://analysis.example.org/source',
+      sourceType: 'independent-analysis',
+      rationale: 'Independent interpretation.',
+    },
+    {
+      sourceId: 'pi-source-rejected',
+      title: 'Unreadable candidate',
+      url: 'https://blocked.example.org/source',
+      sourceType: 'independent-analysis',
+      rationale: 'Candidate that retrieval will reject.',
+    },
+  ];
+  const provider = new NotebookLmProvider({
+    minimumAcceptedSources: 2,
+    sourceDiscoverer: {
+      async discoverSources(request) {
+        assert.equal(request.maxCandidates, 8);
+        assert.equal(request.topic, '$100M Offers');
+        return {
+          candidates: discovered,
+          report: {
+            schemaVersion: 'research-source-discovery.v1',
+            provider: 'google-vertex',
+            model: 'gemini-fixture',
+            topic: request.topic,
+            seedSourceCount: request.seedUrls.length,
+            requestedCandidateCount: request.maxCandidates,
+            returnedCandidateCount: discovered.length,
+          },
+        };
+      },
+    },
+    sourceVerifier: {
+      async verify(value) {
+        const sources = (value as { sources: typeof discovered }).sources;
+        const accepted = sources.slice(0, 2);
+        const rejected = sources[2];
+        return {
+          evidence: {
+            acceptedSources: accepted.map((source) => ({
+              ...source,
+              retrievedAt: '2026-07-27T10:00:00.000Z',
+              snapshotChecksum: 'a'.repeat(64),
+              readability: { passed: true, reason: null },
+              credibility: { passed: true, policy: 'public-readable-source.v1', reason: null },
+            })),
+            rejectedSources: rejected ? [{
+              ...rejected,
+              readability: { passed: false, reason: 'http_403' },
+              credibility: { passed: true, policy: 'deterministic-source-policy.v2', reason: null },
+            }] : [],
+            coverageGaps: rejected ? [{ topic: rejected.title, reason: 'http_403' }] : [],
+          },
+          snapshots: accepted.map((source) => ({
+            kind: 'source_snapshot' as const,
+            mediaType: 'text/plain',
+            body: Buffer.from(`Snapshot for ${source.url}`),
+            inputChecksum: null,
+            provenance: { sourceId: source.sourceId, sourceUrl: source.url },
+          })),
+        };
+      },
+    },
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: '[]', stderr: '', exitCode: 0 },
+      { stdout: '', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([
+          { id: 'nlm-primary', title: 'Primary source', url: discovered[0]!.url, status: 'ready' },
+          { id: 'nlm-analysis', title: 'Independent analysis', url: discovered[1]!.url, status: 'ready' },
+        ]),
+        stderr: '',
+        exitCode: 0,
+      },
+      {
+        stdout: JSON.stringify({
+          conversationId: 'deep-research-fixture',
+          answer: {
+            claims: [],
+            sources: [
+              { sourceId: 'nlm-primary', title: 'Primary source', url: discovered[0]!.url },
+              { sourceId: 'nlm-analysis', title: 'Independent analysis', url: discovered[1]!.url },
+            ],
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]),
+    context: async () => ({
+      notebookId: 'notebook_fixture_01',
+      sourceUrls: [],
+      topic: '$100M Offers',
+      audience: 'business owners',
+      objective: 'understand and apply the offer framework',
+    }),
+  });
+
+  const result = await provider.execute(input('collect_sources'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  assert.deepEqual(calls[1]?.args, ['source', 'list', 'notebook_fixture_01', '--json']);
+  assert.deepEqual(calls[2]?.args, [
+    'source', 'add', 'notebook_fixture_01',
+    '--url', discovered[0]!.url,
+    '--url', discovered[1]!.url,
+    '--wait',
+  ]);
+  assert.equal(calls[2]?.args.includes(discovered[2]!.url), false);
+  assert.deepEqual(
+    (result.parsedOutput as { acceptedSources: Array<{ sourceId: string }> }).acceptedSources.map(({ sourceId: id }) => id),
+    ['nlm-primary', 'nlm-analysis'],
+  );
+  assert.deepEqual(result.assets?.map((asset) => asset.provenance?.sourceId), ['nlm-primary', 'nlm-analysis']);
+  const report = result.executionReport as {
+    sourceDiscovery: { returnedCandidateCount: number; candidates: typeof discovered };
+    phaseTimings: Array<{ phase: string }>;
+  };
+  assert.equal(report.sourceDiscovery.returnedCandidateCount, 3);
+  assert.equal(report.sourceDiscovery.candidates.length, 3);
+  assert.deepEqual(report.phaseTimings.map(({ phase }) => phase), [
+    'cli_version',
+    'source_discovery',
+    'research_verification',
+    'source_sync',
+    'research_query',
+    'research_parse_or_repair',
+    'research_verification',
+  ]);
+});
+
 test('does not activate Story recipe semantics before the Story and Playbook task', async () => {
   const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const storyRecipe = resolvedRecipe('nuglet.lesson.story', {
@@ -314,6 +460,60 @@ test('drops unsupported citations and dangling claim references before semantic 
   assert.equal(calls.length, 3);
 });
 
+test('adds valid nested claim references to their learner-path coverage', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const fixtureResponse = JSON.parse(await fixture('notebooklm-story-playbook.json')) as {
+    conversationId: string;
+    answer: {
+      payload: {
+        claims: Array<Record<string, unknown>>;
+        claimCoverage: Array<{ path: string; claimIds: string[] }>;
+        read: {
+          story: { blocks: Array<{ claimRefs: string[] }> };
+          playbook: Record<string, unknown>;
+        };
+        visual: { claimRefs: string[] };
+        quiz: { questions: Array<{ claimRefs: string[] }> };
+      };
+    };
+  };
+  const storyPayload = structuredClone(fixtureResponse.answer.payload);
+  const playbook = storyPayload.read.playbook;
+  delete (storyPayload.read as { playbook?: unknown }).playbook;
+  const extraClaimId = '99999999-9999-4999-8999-999999999999';
+  storyPayload.claims.push({
+    ...storyPayload.claims[0],
+    claimId: extraClaimId,
+    statement: 'A second supported claim.',
+  });
+  storyPayload.read.story.blocks[1]?.claimRefs.push(extraClaimId);
+  storyPayload.visual.claimRefs.push(extraClaimId);
+  storyPayload.quiz.questions[0]?.claimRefs.push(extraClaimId);
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: storyPayload }),
+      stderr: '',
+      exitCode: 0,
+    },
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: { playbook } }),
+      stderr: '',
+      exitCode: 0,
+    },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const output = result.parsedOutput as {
+    payload: { claimCoverage: Array<{ path: string; claimIds: string[] }> };
+  };
+  for (const path of ['read.story', 'visual', 'quiz']) {
+    assert.ok(output.payload.claimCoverage.find((entry) => entry.path === path)?.claimIds.includes(extraClaimId));
+  }
+});
+
 test('reports phase-level progress for separate Story and Playbook generation', async () => {
   const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
   const events: Array<{ phase: string; status: string }> = [];
@@ -475,6 +675,82 @@ test('preserves a valid Playbook when semantic repair omits it and normalizes kn
   assert.equal(output.payload.identity.topic.label, topic.label);
   assert.equal(output.payload.identity.topic.categoryId, topic.categoryId);
   assert.equal(output.payload.claimCoverage.every(({ claimIds }) => claimIds.length > 0), true);
+  assert.equal(calls.length, 4);
+});
+
+test('preserves the Story foundation when semantic repair returns only corrected Playbook fields', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const fixtureResponse = JSON.parse(await fixture('notebooklm-story-playbook.json')) as {
+    conversationId: string;
+    answer: {
+      kind: string;
+      schemaVersion: string;
+      payload: Record<string, unknown> & {
+        contentModel: string;
+        materialization: string;
+        read: { story: unknown; playbook: Record<string, unknown> };
+        claims: unknown;
+        claimCoverage: unknown;
+      };
+    };
+  };
+  const storyPayload = structuredClone(fixtureResponse.answer.payload);
+  const playbook = storyPayload.read.playbook;
+  delete (storyPayload.read as { playbook?: unknown }).playbook;
+  storyPayload.contentModel = 'invalid-before-repair';
+  const partialRepair = {
+    kind: fixtureResponse.answer.kind,
+    schemaVersion: fixtureResponse.answer.schemaVersion,
+    payload: {
+      contentModel: 'story-playbook.v1',
+      materialization: storyPayload.materialization,
+      read: { playbook },
+      claims: storyPayload.claims,
+      claimCoverage: storyPayload.claimCoverage,
+    },
+  };
+
+  const provider = storyPlaybookProvider(calls, generationRecipes(), [
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: storyPayload }),
+      stderr: '',
+      exitCode: 0,
+    },
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: { playbook } }),
+      stderr: '',
+      exitCode: 0,
+    },
+    {
+      stdout: JSON.stringify({ conversationId: fixtureResponse.conversationId, answer: partialRepair }),
+      stderr: '',
+      exitCode: 0,
+    },
+  ], true);
+
+  const result = await provider.execute(input('create_content'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const output = result.parsedOutput as {
+    payload: {
+      identity?: unknown;
+      learning?: unknown;
+      read?: { story?: unknown; playbook?: unknown };
+      quiz?: unknown;
+      hero?: unknown;
+      visual?: unknown;
+      listen?: unknown;
+    };
+  };
+  assert.ok(output.payload.identity);
+  assert.ok(output.payload.learning);
+  assert.ok(output.payload.read?.story);
+  assert.ok(output.payload.read?.playbook);
+  assert.ok(output.payload.quiz);
+  assert.ok(output.payload.hero);
+  assert.ok(output.payload.visual);
+  assert.ok(output.payload.listen);
   assert.equal(calls.length, 4);
 });
 
@@ -980,6 +1256,42 @@ test('accepts the NotebookLM CLI snake_case envelope and verifies run sources wh
   if (result.kind !== 'success') return;
   assert.equal((result.executionReport as { conversationId: string }).conversationId, 'conversation_snake_case');
   assert.equal(calls.length, 5);
+});
+
+test('accepts a NotebookLM answer with the CLI dollar-sign escape defect', async () => {
+  const sourceUrl = 'https://example.test/offers';
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith([], [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: '1',
+          title: '$100M Offers Bundle',
+          url: sourceUrl,
+          status: 'ready',
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
+      {
+        stdout: JSON.stringify({
+          answer: `{"sources":[{"sourceId":"1","title":"\\$100M Offers Bundle","url":"${sourceUrl}"}]}`,
+          conversation_id: 'conversation_dollar_escape',
+        }),
+        stderr: '',
+        exitCode: 0,
+      },
+    ]),
+    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [sourceUrl], topic: '$100M Offers' }),
+  });
+
+  const result = await provider.execute(input('collect_sources'));
+
+  assert.equal(result.kind, 'success');
+  if (result.kind !== 'success') return;
+  const output = result.parsedOutput as { acceptedSources: Array<{ title: string }> };
+  assert.equal(output.acceptedSources[0]?.title, '$100M Offers Bundle');
 });
 
 test('does not re-import URLs that already exist in the NotebookLM notebook', async () => {

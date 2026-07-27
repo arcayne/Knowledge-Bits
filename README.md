@@ -158,11 +158,17 @@ The control API supplies lease-scoped job inputs and permits reads only for decl
 Each run must carry its own `notebookLmNotebookId`; the engine rejects assigning one NotebookLM notebook
 to multiple runs. Do not configure a global NotebookLM notebook ID. Existing local manifests should be
 reconciled into the run records before they are processed.
-The worker synchronizes requested URLs, reads the notebook's source inventory directly from the
-NotebookLM CLI, and records every healthy HTTPS source as an immutable receipt. A generative
-NotebookLM answer cannot silently narrow that authoritative inventory. The worker then binds
-learner-facing citations during content generation, and passes content to the local Pi and media adapters. Provider calls and subprocesses use
-bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
+When Pi is configured for Google Vertex, the Research task reuses that model and ADC configuration with
+Vertex Google Search grounding to propose a bounded independent source set. The grounding metadata is
+read at the provider boundary because Pi's normalized assistant response does not expose source URLs.
+Candidate URLs are untrusted: the worker permits only public HTTPS targets, resolves and rejects private
+network addresses, retrieves bounded HTML, text, or PDF bytes, and imports only accepted sources into
+NotebookLM. Exact retrieved bytes become immutable source snapshots. The worker then reads the notebook's
+source inventory directly from the NotebookLM CLI and records every healthy HTTPS source as an immutable
+receipt. A generative NotebookLM answer cannot silently narrow that authoritative inventory. Later content
+citations bind back to those snapshots before content passes to the local Pi and media adapters. Provider
+calls and subprocesses use bounded execution deadlines and propagated abort signals. Missing or invalid
+provider configuration
 moves the affected stage to `needs_human`; production never falls back to fixture content.
 
 ### Starting a new Nuglet

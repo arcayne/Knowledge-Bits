@@ -8,6 +8,7 @@ import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
 
 import {
   composeWorkerProviders,
+  GoogleGroundedSourceDiscoveryClient,
   LeaseScopedJobContextResolver,
   LocalMediaCommandClient,
   LocalPiSdkClient,
@@ -573,6 +574,48 @@ test('executes editorial inference through the local Pi SDK adapter with an abor
   assert.equal(observed?.sessionId, 'stable-key');
   assert.equal(observed?.userPrompt, 'Rendered editorial prompt.');
   assert.ok(observed?.signal instanceof AbortSignal);
+});
+
+test('extracts and ranks Google grounding sources without trusting generated prose', async () => {
+  let observedQuery = '';
+  const client = new GoogleGroundedSourceDiscoveryClient({
+    model: 'gemini-fixture',
+    project: 'project-fixture',
+    location: 'global',
+    search: {
+      async search(request) {
+        observedQuery = request.query;
+        return {
+          queries: ['official framework', 'independent analysis'],
+          sources: [
+            { title: 'reddit.com', url: 'https://vertexaisearch.cloud.google.com/redirect/reddit' },
+            { title: 'analysis.example.org', url: 'https://vertexaisearch.cloud.google.com/redirect/analysis' },
+            { title: 'acquisition.com', url: 'https://vertexaisearch.cloud.google.com/redirect/official' },
+          ],
+        };
+      },
+    },
+  });
+
+  const result = await client.discoverSources({
+    topic: '$100M Offers',
+    audience: 'business owners',
+    objective: 'apply the offer framework',
+    seedUrls: ['https://acquisition.com/books'],
+    maxCandidates: 3,
+    idempotencyKey: 'grounded-search',
+    signal: new AbortController().signal,
+  });
+
+  assert.match(observedQuery, /\$100M Offers/);
+  assert.deepEqual(result.candidates.map(({ title }) => title), [
+    'acquisition.com',
+    'analysis.example.org',
+    'reddit.com',
+  ]);
+  assert.equal(result.candidates[0]?.sourceType, 'official');
+  assert.deepEqual(result.report.searchQueries, ['official framework', 'independent analysis']);
+  assert.equal(result.report.provider, 'google-vertex-grounding');
 });
 
 test('reports expired Google ADC as explicit human reauthentication work', async () => {
