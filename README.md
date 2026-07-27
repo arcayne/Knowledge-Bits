@@ -235,7 +235,7 @@ same migration-bundle root when running the worker so the local media adapter ca
 
 Supabase is the durable workflow ledger. It does not run NotebookLM, Vertex, or local provider tools.
 On the Mac that has those provider sessions and credentials, install the local supervisor to keep the
-API available and run one worker claim every five minutes:
+API and review UI available and start a bounded worker tick every five minutes:
 
 ```bash
 git clone git@github.com:arcayne/Knowledge-Bits.git ~/Developer/knowledge-bits
@@ -250,14 +250,23 @@ can still run a temporary clock from an interactive terminal, but that temporary
 after a Mac restart.
 
 The API is restarted automatically if it exits. The worker is a one-shot process: each five-minute tick
-claims at most one eligible job and exits. A filesystem lock prevents overlapping ticks when a provider
-call takes longer than five minutes. Provider cooldowns remain in the Supabase ledger as `waiting` jobs;
-later ticks continue with other eligible work.
+selects one eligible run, advances up to `ENGINE_WORKER_MAX_JOBS_PER_TICK` consecutive stages for that
+run, and exits. A recoverable filesystem lock prevents overlapping ticks when a provider call takes
+longer than five minutes. Provider cooldowns remain in the Supabase ledger as `waiting` jobs; later
+ticks continue with other eligible work. The worker log records a `worker_tick_started` and
+`worker_tick_completed` JSON line for every real tick, including the run id, job count, duration, and
+stop reason.
+
+The review UI is also restarted automatically and is available at
+`http://127.0.0.1:4323`. Set `REVIEW_LOCAL_OPERATOR_ID` in the supervisor environment file to a stable
+local operator name. The local review service always talks to `KNOWLEDGE_BITS_LOCAL_API_URL`; production
+review authentication remains separate.
 
 The supervisor writes only local logs and local filesystem artifacts under the repository:
 
 ```text
 .local-supervisor/api.log
+.local-supervisor/review.log
 .local-supervisor/worker.log
 .local-artifacts/
 ```
@@ -266,6 +275,7 @@ To stop it later:
 
 ```bash
 launchctl bootout "gui/$(id -u)/app.knowledge-bits.api"
+launchctl bootout "gui/$(id -u)/app.knowledge-bits.review"
 launchctl bootout "gui/$(id -u)/app.knowledge-bits.worker-tick"
 ```
 
