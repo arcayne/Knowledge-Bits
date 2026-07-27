@@ -189,7 +189,15 @@ pnpm new:nuglet -- \
 The command prints the review URL immediately. The run starts in Research; the worker uses the
 NotebookLM notebook and any starting URLs, records the accepted source list, and advances the run as
 each stage becomes ready. The dashboard refreshes automatically and has a manual Refresh button.
-The final signed Nuglet generation recipe is bound by the worker, not guessed during intake.
+The client submits only the research brief and the `story_playbook` intake marker. The trusted API
+binds that marker to the repository's approved Story, Playbook, challenge, QA, and media recipes before
+the Research job is persisted. Clients never construct or sign generation plans.
+
+If an unapproved Create run needs human intervention because its notebook evidence was incomplete, a
+review-authenticated operator may add sources to that same notebook and call
+`POST /runs/{runId}/refresh-research`. The API atomically clears the stale package checksum, requeues
+Research in a new revision, and makes the refreshed evidence the only research dependency of the next Create job. It
+rejects approved runs, active jobs, and any attempt to change the run's NotebookLM notebook.
 
 ### Reusing approved Nuglet media
 

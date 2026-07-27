@@ -65,7 +65,7 @@ Add optional values when known:
 
 The CLI needs `ENGINE_API_BASE_URL` and `ENGINE_API_TOKEN`. It prints the created run ID and review URL. The local review app normally runs at `http://127.0.0.1:4325/` when started with `REVIEW_LOCAL_OPERATOR_ID`.
 
-The intake must remain a research brief. Do not set a final content kind or fabricate a signed generation plan. The worker binds the final generation recipe later.
+The intake must remain a research brief. Do not set a final content kind or fabricate a signed generation plan. The trusted API binds the standard `story_playbook` marker to the approved generation recipes before it persists the Research job.
 
 ### 5. Report the handoff
 

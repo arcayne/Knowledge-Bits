@@ -26,6 +26,7 @@ import {
   ReviewPackageNotFoundError,
   ReviewPackageService,
 } from '../services/review-packages.js';
+import { bindStandardNugletIntakePlan } from '../services/standard-nuglet-intake.js';
 
 export function registerReviewRoutes(
   app: Hono,
@@ -71,6 +72,29 @@ export function registerReviewRoutes(
         runId: context.req.param('id'),
         stage: await currentRetryableStage(dependencies.repository, context.req.param('id')),
       }));
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
+      throw error;
+    }
+  });
+
+  app.post('/runs/:id/refresh-research', async (context) => {
+    const principal = requireReviewPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    try {
+      const current = await dependencies.repository.getRun(context.req.param('id'));
+      if (!current) throw new WorkflowNotFoundError('Run not found');
+      const brief = bindStandardNugletIntakePlan({
+        title: current.title,
+        brief: current.brief,
+      });
+      return context.json(toRunResponse(await dependencies.repository.refreshResearch({
+        runId: current.id,
+        brief,
+        operatorId: principal,
+      })), 202);
     } catch (error) {
       if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
       if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
