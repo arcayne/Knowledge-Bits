@@ -5,6 +5,7 @@ import type { Hono } from 'hono';
 import type { EngineAuthConfig } from '../auth.js';
 import { requireApiOrReviewPrincipal, requireEngineScope } from '../auth.js';
 import { WorkflowConflictError, type WorkflowRepository, type WorkflowRun } from '../repositories/workflow-repository.js';
+import { bindStandardNugletIntakePlan } from '../services/standard-nuglet-intake.js';
 
 export function registerRunRoutes(
   app: Hono,
@@ -17,10 +18,19 @@ export function registerRunRoutes(
     if (!input.success) return context.json({ error: 'Invalid run input' }, 400);
 
     try {
-      const run = await dependencies.repository.bootstrapRun({
+      const brief = bindStandardNugletIntakePlan({
+        title: input.data.title,
+        brief: input.data.brief,
+      });
+      const boundInput = knowledgeBitsCreateRunRequestSchema.safeParse({
         ...input.data,
-        notebookLmNotebookId: input.data.notebookLmNotebookId
-          ?? notebookIdFromBrief(input.data.brief),
+        brief,
+      });
+      if (!boundInput.success) return context.json({ error: 'Invalid run input' }, 400);
+      const run = await dependencies.repository.bootstrapRun({
+        ...boundInput.data,
+        notebookLmNotebookId: boundInput.data.notebookLmNotebookId
+          ?? notebookIdFromBrief(brief),
       });
       return context.json(workflowRunResponseSchema.parse(toRunResponse(run)), 201);
     } catch (error) {

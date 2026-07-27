@@ -86,12 +86,17 @@ test('allows an authenticated review operator to start a research run', async ()
         audience: 'general adult learners',
         locale: 'en',
         notebookLmNotebookId: 'notebook-new',
+        intake: { requestedBy: 'review_operator', requestedFormat: 'story_playbook' },
       },
     }),
   });
 
   assert.equal(response.status, 201);
-  assert.equal((await response.json()).notebookLmNotebookId, 'notebook-new');
+  const body = await response.json();
+  assert.equal(body.notebookLmNotebookId, 'notebook-new');
+  assert.equal(body.brief.contentKind, 'nuglet.lesson.v1');
+  assert.equal(body.brief.generationPlan.schemaVersion, '1.1.0');
+  assert.equal(body.brief.generationPlan.mediaMode, 'generate');
 });
 
 test('rejects malformed run input', async () => {
@@ -103,6 +108,27 @@ test('rejects malformed run input', async () => {
   });
 
   assert.equal(response.status, 400);
+});
+
+test('rejects notebook identity drift after binding a standard intake plan', async () => {
+  const app = createTestApp();
+  const response = await app.request('/runs', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: 'Identity must stay stable',
+      locale: 'en',
+      notebookLmNotebookId: 'request-notebook',
+      brief: {
+        title: 'Identity must stay stable',
+        objective: 'Keep one notebook bound to one run.',
+        notebookLmNotebookId: 'brief-notebook',
+        intake: { requestedBy: 'cli', requestedFormat: 'story_playbook' },
+      },
+    }),
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'Invalid run input' });
 });
 
 test('rejects malformed JSON and maps repository bootstrap conflicts', async () => {

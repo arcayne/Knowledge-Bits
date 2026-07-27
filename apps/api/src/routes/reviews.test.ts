@@ -518,6 +518,122 @@ test('only the run-level review endpoint is available', async () => {
   assert.equal(untrustedIdentity.status, 400);
 });
 
+test('refreshes research for an unapproved failed standard intake and binds its generation plan', async () => {
+  const { app, repository } = createTestApp();
+  const run = await repository.createRun({
+    id: '7607b16a-161f-4c9d-9230-f1a594267417',
+    title: 'Match the message',
+    locale: 'en',
+    brief: {
+      title: 'Match the message',
+      objective: 'Match the message to what the customer is ready to understand.',
+      notebookLmNotebookId: 'notebook-refresh',
+      intake: { requestedBy: 'cli', requestedFormat: 'story_playbook' },
+    },
+    notebookLmNotebookId: 'notebook-refresh',
+    currentStage: 'create',
+    packageChecksum: checksumA,
+    stages: [
+      { name: 'research', state: 'done' },
+      { name: 'create', state: 'needs_human', reason: 'notebooklm_content_invalid' },
+      { name: 'check', state: 'queued' },
+      { name: 'produce_assets', state: 'queued' },
+      { name: 'deliver', state: 'queued' },
+    ],
+  });
+
+  const wrongScope = await app.request(`/runs/${run.id}/refresh-research`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test' },
+  });
+  assert.equal(wrongScope.status, 403);
+
+  const refreshed = await app.request(`/runs/${run.id}/refresh-research`, {
+    method: 'POST',
+    headers: reviewHeaders,
+  });
+  assert.equal(refreshed.status, 202, await refreshed.clone().text());
+  const body = await refreshed.json();
+  assert.equal(body.currentStage, 'research');
+  assert.equal(body.stages.research.state, 'queued');
+  assert.equal(body.stages.create.state, 'queued');
+  assert.equal(body.currentRevision, 2);
+  assert.equal(body.packageChecksum, null);
+  assert.equal(body.reviewStatus, 'pending');
+  assert.equal(body.brief.generationPlan.schemaVersion, '1.1.0');
+  assert.equal(body.brief.generationPlan.mediaMode, 'generate');
+
+  const claim = await repository.claimJob({
+    workerId: 'research-refresh-worker',
+    capabilities: ['collect_sources'],
+    leaseSeconds: 60,
+    preferredRunId: run.id,
+  });
+  assert.equal(claim?.stage, 'research');
+  assert.equal(claim?.revision, 2);
+  assert.equal(claim?.input.notebookLmNotebookId, 'notebook-refresh');
+  assert.deepEqual(claim?.input.researchRefresh, { requestedBy: 'editor-1' });
+  assert.equal(
+    ((claim?.input.brief as Record<string, any>).generationPlan as Record<string, unknown>).schemaVersion,
+    '1.1.0',
+  );
+  const context = await repository.getJobContext(claim!.jobId);
+  await repository.applyJobResult({
+    workerId: 'research-refresh-worker',
+    result: {
+      jobId: claim!.jobId,
+      packageId: run.id,
+      stage: 'research',
+      state: 'done',
+      completedAt: new Date().toISOString(),
+      outputChecksum: 'b'.repeat(64),
+      error: null,
+    },
+    transition: nextTransition({
+      stage: 'research',
+      state: 'running',
+      revisionAttempts: context!.stage.revisionAttempts,
+      packageChecksum: null,
+      approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: 'b'.repeat(64) }),
+  });
+  const create = await repository.claimJob({
+    workerId: 'refreshed-create-worker',
+    capabilities: ['create_content'],
+    leaseSeconds: 60,
+    preferredRunId: run.id,
+  });
+  assert.equal(create?.stage, 'create');
+  assert.equal(create?.revision, 2);
+});
+
+test('research refresh rejects a run outside the unapproved failed Create boundary', async () => {
+  const { app, repository } = createTestApp();
+  const run = await repository.createRun({
+    id: 'a6f148f7-d907-498b-84d8-56792f549009',
+    title: 'Still researching',
+    locale: 'en',
+    brief: {
+      objective: 'Keep researching',
+      notebookLmNotebookId: 'notebook-not-refreshable',
+      intake: { requestedFormat: 'story_playbook' },
+    },
+    notebookLmNotebookId: 'notebook-not-refreshable',
+    currentStage: 'research',
+    stages: [
+      { name: 'research', state: 'waiting', reason: 'provider_cooldown' },
+      { name: 'create', state: 'queued' },
+    ],
+  });
+
+  const response = await app.request(`/runs/${run.id}/refresh-research`, {
+    method: 'POST',
+    headers: reviewHeaders,
+  });
+  assert.equal(response.status, 409);
+  assert.match(await response.text(), /Create to need human intervention/);
+});
+
 test('prepares a legacy revision only for an authenticated review principal', async () => {
   const { app, repository } = createTestApp();
   const legacyPackage = strictPackageVersionInput('0f8fad5b-d9cb-469f-a165-70867728950e', 'legacy');

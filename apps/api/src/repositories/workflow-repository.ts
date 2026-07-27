@@ -347,6 +347,12 @@ export interface RetryStageInput {
   stage: Exclude<WorkflowStage, 'human_review' | 'deliver'>;
 }
 
+export interface RefreshResearchInput {
+  runId: string;
+  brief: JsonObject;
+  operatorId: string;
+}
+
 type RegenerableMediaKind = 'hero' | 'infographic' | 'audio_brief' | 'audio_discussion' | 'public_preview';
 type MediaRecipeOverrides = {
   infographic?: NugletGenerationPlan['recipes']['infographic'];
@@ -398,6 +404,7 @@ export interface WorkflowStore {
   transitionDeliveryForActiveLease(input: TransitionDeliveryInput): Promise<WorkflowDelivery>;
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
   retryStage(input: RetryStageInput): Promise<WorkflowRun>;
+  refreshResearch(input: RefreshResearchInput): Promise<WorkflowRun>;
   queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun>;
   queueMediaRegeneration(
     runId: string,
@@ -531,6 +538,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   retryStage(input: RetryStageInput): Promise<WorkflowRun> {
     return this.store.retryStage(input);
+  }
+
+  refreshResearch(input: RefreshResearchInput): Promise<WorkflowRun> {
+    return this.store.refreshResearch(input);
   }
 
   queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun> {
@@ -866,6 +877,73 @@ export class PrismaWorkflowStore implements WorkflowStore {
       return toWorkflowRun(await transaction.run.findUniqueOrThrow({
         where: { id: input.runId },
         include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      }));
+    });
+  }
+
+  async refreshResearch(input: RefreshResearchInput): Promise<WorkflowRun> {
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
+      const run = await transaction.run.findUnique({
+        where: { id: input.runId },
+        include: { stages: true },
+      });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      assertResearchRefreshAllowed({
+        currentStage: run.currentStage,
+        reviewStatus: run.reviewStatus,
+        approvedChecksum: run.approvedChecksum,
+        createState: run.stages.find((stage) => stage.name === 'create')?.state,
+      });
+      const notebookLmNotebookId = run.notebookLmNotebookId ?? notebookIdFromBrief(input.brief);
+      assertResearchRefreshBrief(input.brief, notebookLmNotebookId);
+      const activeJobs = await transaction.job.count({
+        where: { runId: input.runId, state: { in: ['queued', 'running'] } },
+      });
+      if (activeJobs > 0) {
+        throw new WorkflowConflictError('Research refresh requires no active worker jobs');
+      }
+      const now = new Date();
+      await transaction.run.update({
+        where: { id: input.runId },
+        data: {
+          brief: toPrismaJson(input.brief),
+          currentStage: 'research',
+          currentRevision: { increment: 1 },
+          packageChecksum: null,
+          updatedAt: now,
+        },
+      });
+      await transaction.stage.update({
+        where: { runId_name: { runId: input.runId, name: 'research' } },
+        data: { state: 'queued', reason: null },
+      });
+      await transaction.stage.update({
+        where: { runId_name: { runId: input.runId, name: 'create' } },
+        data: { state: 'queued', reason: null },
+      });
+      await transaction.job.create({
+        data: {
+          id: randomUUID(),
+          runId: input.runId,
+          stage: 'research',
+          action: ACTION_BY_STAGE.research,
+          state: 'queued',
+          idempotencyKey: `workflow:${input.runId}:research:refresh:${randomUUID()}`,
+          availableAt: now,
+          input: toPrismaJson({
+            brief: input.brief,
+            ...(notebookLmNotebookId ? { notebookLmNotebookId } : {}),
+            researchRefresh: { requestedBy: input.operatorId },
+          }),
+        },
+      });
+      return toWorkflowRun(await transaction.run.findUniqueOrThrow({
+        where: { id: input.runId },
+        include: {
+          stages: true,
+          jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 },
+        },
       }));
     });
   }
@@ -2440,6 +2518,61 @@ class InMemoryWorkflowStore implements WorkflowStore {
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
   }
 
+  async refreshResearch(input: RefreshResearchInput): Promise<WorkflowRun> {
+    const run = this.requireRun(input.runId);
+    assertResearchRefreshAllowed({
+      currentStage: run.currentStage,
+      reviewStatus: run.reviewStatus,
+      approvedChecksum: run.approvedChecksum,
+      createState: run.stages.create?.state,
+    });
+    const notebookLmNotebookId = run.notebookLmNotebookId ?? notebookIdFromBrief(input.brief);
+    assertResearchRefreshBrief(input.brief, notebookLmNotebookId);
+    if ([...this.jobs.values()].some((job) => (
+      job.runId === input.runId && (job.state === 'queued' || job.state === 'running')
+    ))) {
+      throw new WorkflowConflictError('Research refresh requires no active worker jobs');
+    }
+    const now = this.clock();
+    const research = run.stages.research;
+    const create = run.stages.create;
+    if (!research || !create) throw new WorkflowConflictError('Research refresh requires Research and Create stages');
+    run.brief = input.brief;
+    run.currentStage = 'research';
+    run.currentRevision += 1;
+    run.packageChecksum = null;
+    run.updatedAt = now;
+    research.state = 'queued';
+    research.reason = null;
+    create.state = 'queued';
+    create.reason = null;
+    const job: WorkflowJob = {
+      id: this.idGenerator(),
+      runId: input.runId,
+      stage: 'research',
+      action: ACTION_BY_STAGE.research,
+      state: 'queued',
+      idempotencyKey: `workflow:${input.runId}:research:refresh:${this.idGenerator()}`,
+      availableAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      executionDeadlineAt: null,
+      attempt: 0,
+      input: {
+        brief: input.brief,
+        ...(notebookLmNotebookId ? { notebookLmNotebookId } : {}),
+        researchRefresh: { requestedBy: input.operatorId },
+      },
+      result: null,
+      completionReceipt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.jobs.set(job.id, job);
+    this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
+    return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
   async queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun> {
     const run = this.requireRun(runId);
     const reviewStage = run.stages.human_review;
@@ -3421,6 +3554,33 @@ function assertLeaseSeconds(leaseSeconds: number): void {
   if (!Number.isInteger(leaseSeconds) || leaseSeconds <= 0) {
     throw new TypeError('Lease seconds must be a positive integer');
   }
+}
+
+function assertResearchRefreshAllowed(input: {
+  currentStage: string;
+  reviewStatus: string;
+  approvedChecksum: string | null;
+  createState: string | undefined;
+}): void {
+  if (input.currentStage !== 'create' || input.createState !== 'needs_human') {
+    throw new WorkflowConflictError('Research refresh requires Create to need human intervention');
+  }
+  if (input.reviewStatus !== 'pending' || input.approvedChecksum !== null) {
+    throw new WorkflowConflictError('Research refresh requires an unapproved pending run');
+  }
+}
+
+function assertResearchRefreshBrief(brief: JsonObject, notebookLmNotebookId: string | undefined): void {
+  const parsed = knowledgeBitsRunBriefSchema.safeParse(brief);
+  if (!parsed.success) throw new WorkflowValidationError('Research refresh requires a valid run brief');
+  if (!notebookLmNotebookId || notebookIdFromBrief(brief) !== notebookLmNotebookId) {
+    throw new WorkflowValidationError('Research refresh cannot change the NotebookLM notebook');
+  }
+}
+
+function notebookIdFromBrief(brief: JsonObject): string | undefined {
+  const value = brief.notebookLmNotebookId;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function assertExecutionSeconds(executionSeconds: number | undefined): void {
