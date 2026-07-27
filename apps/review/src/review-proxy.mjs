@@ -9,7 +9,9 @@ export async function forwardReviewRequest({ apiUrl, token, reviewerId, path, in
   try {
     const timeout = AbortSignal.timeout(15_000);
     const callerSignal = init.signal instanceof AbortSignal ? init.signal : undefined;
-    const response = await fetch(new URL(path, baseUrl), {
+    const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+    const normalizedPath = path.replace(/^\/+/, '');
+    const response = await fetch(new URL(normalizedPath, normalizedBaseUrl), {
       ...init,
       signal: callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout,
       headers: {
