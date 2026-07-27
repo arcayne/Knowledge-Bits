@@ -10,6 +10,25 @@ const locale = args.locale ?? 'en';
 const audience = args.audience ?? 'general adult learners';
 const sourceUrls = (args.source ?? []).map((value) => value.trim()).filter(Boolean);
 
+const similarityResponse = await fetch(new URL('/runs/similarity', apiUrl), {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ title, objective, audience, locale }),
+});
+const similarity = await similarityResponse.json().catch(() => ({}));
+if (!similarityResponse.ok) {
+  console.error(similarity.error ?? `Knowledge Bits similarity API returned ${similarityResponse.status}`);
+  process.exit(1);
+}
+if (similarity.risk !== 'none' && args['confirm-distinct'] !== true) {
+  console.error(`Similar Nuglets found (${similarity.risk}). Review them before creating this run:`);
+  for (const match of similarity.matches ?? []) {
+    console.error(`- ${match.title} (${Math.round(match.score * 100)}%): ${match.reviewPath}`);
+  }
+  console.error('If the learner objective or angle is deliberately distinct, rerun with --confirm-distinct.');
+  process.exit(2);
+}
+
 const brief = {
   topic: title,
   title,
@@ -18,7 +37,14 @@ const brief = {
   locale,
   notebookLmNotebookId,
   ...(sourceUrls.length ? { sourceUrls } : {}),
-  intake: { requestedBy: 'cli', requestedFormat: 'story_playbook' },
+  intake: {
+    requestedBy: 'cli',
+    requestedFormat: 'story_playbook',
+    similarityReview: {
+      fingerprint: similarity.fingerprint,
+      decision: similarity.risk === 'none' ? 'clear' : 'proceed_distinct',
+    },
+  },
 };
 
 const response = await fetch(new URL('/runs', apiUrl), {
@@ -59,6 +85,10 @@ function parseArgs(values) {
       if (!next || next.startsWith('--')) throw new Error('--source requires a URL');
       result.source.push(next);
       index += 1;
+      continue;
+    }
+    if (name === 'confirm-distinct') {
+      result[name] = true;
       continue;
     }
     if (!next || next.startsWith('--')) throw new Error(`--${name} requires a value`);

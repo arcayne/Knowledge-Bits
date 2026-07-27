@@ -42,12 +42,20 @@ if (runId) return Astro.redirect(`/runs/${encodeURIComponent(runId)}`);
       .intake-field label { color: #315247; font-size: .82rem; font-weight: 700; }
       .intake-field input, .intake-field textarea { box-sizing: border-box; width: 100%; border: 1px solid #a9b9ad; border-radius: .3rem; padding: .55rem .65rem; color: #18211e; background: #fbfdfb; font: inherit; }
       .intake-field textarea { min-height: 4.2rem; resize: vertical; }
+      .intake-field small { color: #52655d; font-size: .78rem; }
       .intake-actions { display: flex; align-items: center; gap: .75rem; margin-top: .85rem; }
       #new-nuglet-submit { background: #174c3d; border-color: #174c3d; color: #fff; font-weight: 700; }
       #new-nuglet-submit:disabled { cursor: wait; opacity: .65; }
-      #new-nuglet-status { margin: 0; color: #315247; font-size: .88rem; }
+      #new-nuglet-status, #nuglet-similarity-status { margin: 0; color: #315247; font-size: .88rem; }
       #new-nuglet-status[data-tone="error"] { color: #8e271d; }
       #new-nuglet-status a { color: #124f8d; font-weight: 700; }
+      #nuglet-similarity-results { margin-top: .85rem; border: 1px solid #c8d1c8; border-radius: .4rem; background: #f8fbf8; padding: .75rem; }
+      #nuglet-similarity-results[data-risk="related"], #nuglet-similarity-results[data-risk="likely_duplicate"] { border-color: #d77d59; background: #fff7f2; }
+      #nuglet-similarity-results h3 { margin-bottom: .45rem; }
+      #nuglet-similarity-matches { margin: 0; padding-left: 1.25rem; }
+      #nuglet-similarity-matches li + li { margin-top: .45rem; }
+      #nuglet-similarity-matches a { color: #124f8d; font-weight: 700; }
+      #nuglet-distinct-confirmation { display: flex; align-items: start; gap: .5rem; margin-top: .7rem; color: #6d3b28; font-size: .85rem; }
       .daily-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; }
       .daily-heading h2 { margin: 0; font-size: 1.15rem; color: #173c31; }
       .daily-heading p { margin: 0; color: #52655d; font-size: .85rem; }
@@ -110,17 +118,23 @@ if (runId) return Astro.redirect(`/runs/${encodeURIComponent(runId)}`);
       </header>
       <section id="new-nuglet" aria-labelledby="new-nuglet-heading">
         <h2 id="new-nuglet-heading">Start a new Nuglet</h2>
-        <p>Give the worker a clear brief and the NotebookLM notebook to use. It will begin in Research and appear in this dashboard.</p>
+        <p>Check the idea against every existing run first. If it is distinct, create a fresh NotebookLM notebook and start Research.</p>
         <form id="new-nuglet-form">
           <div class="intake-grid">
             <div class="intake-field full"><label for="nuglet-title">Title</label><input id="nuglet-title" name="title" required placeholder="Why you can't focus after short videos" /></div>
             <div class="intake-field"><label for="nuglet-objective">What should it help someone understand or do?</label><textarea id="nuglet-objective" name="objective" required placeholder="Explain the idea and give one practical action."></textarea></div>
             <div class="intake-field"><label for="nuglet-audience">Audience</label><input id="nuglet-audience" name="audience" required value="general adult learners" /></div>
-            <div class="intake-field"><label for="nuglet-notebook">NotebookLM notebook ID</label><input id="nuglet-notebook" name="notebookLmNotebookId" required placeholder="NotebookLM UUID" /></div>
+            <div class="intake-field"><label for="nuglet-notebook">Fresh NotebookLM notebook ID</label><input id="nuglet-notebook" name="notebookLmNotebookId" required placeholder="Create Nuglet: &lt;title&gt; after the similarity check" /><small>A new Nuglet always gets a new notebook. Existing notebooks belong to their existing runs.</small></div>
             <div class="intake-field"><label for="nuglet-locale">Locale</label><input id="nuglet-locale" name="locale" required value="en" /></div>
             <div class="intake-field full"><label for="nuglet-sources">Starting source URLs <span>(optional, one per line)</span></label><textarea id="nuglet-sources" name="sourceUrls" placeholder="https://...\nhttps://..."></textarea></div>
           </div>
-          <div class="intake-actions"><button id="new-nuglet-submit" type="submit">Start research</button><p id="new-nuglet-status" role="status" aria-live="polite"></p></div>
+          <div class="intake-actions"><button id="nuglet-similarity-check" type="button">Check for similar Nuglets</button><p id="nuglet-similarity-status" role="status" aria-live="polite">Run this check before creating the notebook.</p></div>
+          <section id="nuglet-similarity-results" aria-live="polite" hidden>
+            <h3 id="nuglet-similarity-heading"></h3>
+            <ul id="nuglet-similarity-matches"></ul>
+            <label id="nuglet-distinct-confirmation" hidden><input type="checkbox" name="confirmDistinct" />I reviewed these matches and this Nuglet has a deliberately distinct learner objective or angle.</label>
+          </section>
+          <div class="intake-actions"><button id="new-nuglet-submit" type="submit" disabled>Start research</button><p id="new-nuglet-status" role="status" aria-live="polite"></p></div>
         </form>
       </section>
       <section id="daily-progress" aria-label="Daily delivery target"></section>
