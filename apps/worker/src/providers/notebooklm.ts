@@ -117,6 +117,13 @@ interface NotebookLmListedSource {
   sourceId: string;
   title: string;
   url: string;
+  ready: boolean;
+}
+
+interface NotebookLmResearchSource {
+  sourceId: string;
+  title: string;
+  url: string;
 }
 
 export class NotebookLmProvider implements ContentProvider {
@@ -348,7 +355,7 @@ export class NotebookLmProvider implements ContentProvider {
   }
 
   private async verifyResearch(
-    notebookSources: readonly NotebookLmListedSource[],
+    notebookSources: readonly NotebookLmResearchSource[],
     signal: AbortSignal,
   ) {
     if (!this.options.sourceVerifier) throw new ProviderNeedsHumanError('source_verifier_unconfigured');
@@ -371,17 +378,17 @@ export class NotebookLmProvider implements ContentProvider {
     context: NotebookLmContext,
     signal: AbortSignal,
     recordInventory: boolean,
-  ): Promise<NotebookLmListedSource[]> {
+  ): Promise<NotebookLmResearchSource[]> {
     if (context.sourceUrls.length === 0 && !recordInventory) return [];
     let existing = await this.listSources(context.notebookId, signal);
     const existingUrls = new Set(existing.map(({ url }) => url));
     const missing = [...new Set(context.sourceUrls)].filter((url) => !existingUrls.has(url));
-    if (missing.length === 0) return recordInventory ? existing : [];
+    if (missing.length === 0) return recordInventory ? readyResearchSources(existing) : [];
     const response = await this.run(['source', 'add', context.notebookId, ...missing.flatMap((url) => ['--url', url]), '--wait'], signal);
     this.assertProcessSuccess(response);
     if (!recordInventory) return [];
     existing = await this.listSources(context.notebookId, signal);
-    return existing;
+    return readyResearchSources(existing);
   }
 
   private async listSources(notebookId: string, signal: AbortSignal): Promise<NotebookLmListedSource[]> {
@@ -502,9 +509,7 @@ function renderMalformedOutputRepairPrompt(): string {
 function parseListedSource(value: unknown): NotebookLmListedSource[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
   const source = value as Record<string, unknown>;
-  if (typeof source.url !== 'string' || source.url.length === 0 || !listedSourceReady(source.status ?? source.state)) {
-    return [];
-  }
+  if (typeof source.url !== 'string' || source.url.length === 0) return [];
   const sourceId = stringField(source.id)
     ?? stringField(source.sourceId)
     ?? stringField(source.source_id)
@@ -513,7 +518,14 @@ function parseListedSource(value: unknown): NotebookLmListedSource[] {
     sourceId,
     title: stringField(source.title) ?? sourceTitle(source.url),
     url: source.url,
+    ready: listedSourceReady(source.status ?? source.state),
   }];
+}
+
+function readyResearchSources(sources: readonly NotebookLmListedSource[]): NotebookLmResearchSource[] {
+  return sources.flatMap(({ ready, sourceId, title, url }) => (
+    ready ? [{ sourceId, title, url }] : []
+  ));
 }
 
 function stringField(value: unknown): string | undefined {

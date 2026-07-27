@@ -1210,16 +1210,18 @@ test('rejects a malformed repair response without issuing semantic repair', asyn
   assert.deepEqual(calls[3]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
 });
 
-test('records every healthy CLI-listed source even when the research answer selects only one', async () => {
+test('records every healthy CLI-listed source without re-adding an attached failed source', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const failedUrl = 'https://example.net/research';
   const provider = new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,
-    process: processWith([], [
+    process: processWith(calls, [
       { stdout: 'nlm 0.9.4\\n', stderr: '', exitCode: 0 },
       {
         stdout: JSON.stringify([
           { id: sourceId, title: 'Accepted source', url: 'https://example.edu/research', status: 2 },
           { id: secondarySourceId, title: 'Second accepted source', url: 'https://example.org/research', status: 2 },
-          { id: tertiarySourceId, title: 'Failed source', url: 'https://example.net/research', status: 3 },
+          { id: tertiarySourceId, title: 'Failed source', url: failedUrl, status: 3 },
         ]),
         stderr: '',
         exitCode: 0,
@@ -1236,7 +1238,7 @@ test('records every healthy CLI-listed source even when the research answer sele
         exitCode: 0,
       },
     ]),
-    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
+    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [failedUrl], topic: 'focus' }),
   });
 
   const result = await provider.execute(input('collect_sources'));
@@ -1244,6 +1246,7 @@ test('records every healthy CLI-listed source even when the research answer sele
   if (result.kind !== 'success') return;
   const output = result.parsedOutput as { acceptedSources: Array<{ sourceId: string }> };
   assert.deepEqual(output.acceptedSources.map(({ sourceId: id }) => id), [sourceId, secondarySourceId]);
+  assert.equal(calls.some(({ args }) => args.includes('add')), false);
 });
 
 test('classifies process timeouts as a typed wait', async () => {
