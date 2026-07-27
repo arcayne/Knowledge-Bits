@@ -22,6 +22,7 @@ import {
 import { renderPromptSections } from '../recipes/file-registry.js';
 import { generationSupportArtifacts } from '../recipes/support-artifacts.js';
 import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
+import type { ResearchSourceDiscoveryClient, ResearchSourceDiscoveryResult } from './source-discovery.js';
 
 import {
   ProviderNeedsHumanError,
@@ -88,6 +89,7 @@ export interface ResearchSourceVerifier {
 
 export type NotebookLmPhase =
   | 'cli_version'
+  | 'source_discovery'
   | 'source_sync'
   | 'research_query'
   | 'research_parse_or_repair'
@@ -135,6 +137,9 @@ export class NotebookLmProvider implements ContentProvider {
     process: NotebookLmProcess;
     context: (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
     sourceVerifier?: ResearchSourceVerifier;
+    sourceDiscoverer?: ResearchSourceDiscoveryClient;
+    maxResearchCandidates?: number;
+    minimumAcceptedSources?: number;
     separateReadQueries?: boolean;
     phaseReporter?: (event: NotebookLmPhaseEvent) => void;
     now?: () => Date;
@@ -181,14 +186,20 @@ export class NotebookLmProvider implements ContentProvider {
         ? 'story_parse_or_repair'
         : 'create_parse_or_repair';
     const cliVersion = await this.runPhase('cli_version', phaseTimings, () => this.version(input.signal));
+    const researchPreparation = input.action === 'collect_sources' && this.options.sourceDiscoverer
+      ? await this.prepareResearch(context, input, phaseTimings)
+      : undefined;
+    const executionContext = researchPreparation
+      ? { ...context, sourceUrls: researchPreparation.verified.evidence.acceptedSources.map(({ url }) => url) }
+      : context;
     const notebookSources = await this.runPhase('source_sync', phaseTimings, () => (
-      this.synchronizeSources(context, input.signal, input.action === 'collect_sources')
+      this.synchronizeSources(executionContext, input.signal, input.action === 'collect_sources')
     ));
     const response = await this.runPhase(queryPhase, phaseTimings, () => (
-      this.query(context.notebookId, prompt, input.signal)
+      this.query(executionContext.notebookId, prompt, input.signal)
     ));
     let parsed = await this.runPhase(parsePhase, phaseTimings, () => (
-      this.parseOrRepair(context.notebookId, prompt, response, input.signal)
+      this.parseOrRepair(executionContext.notebookId, prompt, response, input.signal)
     ));
     let rawResponse = parsed.raw;
     if (recipeExecution && this.options.separateReadQueries) {
@@ -303,6 +314,12 @@ export class NotebookLmProvider implements ContentProvider {
         renderedPrompt: prompt,
         renderedPrompts: parsed.prompts,
         sourceIds: sourceIds(parsed.answer),
+        ...(researchPreparation ? {
+          sourceDiscovery: {
+            ...researchPreparation.discovery.report,
+            candidates: researchPreparation.discovery.candidates,
+          },
+        } : {}),
         phaseTimings,
       },
       ...(recipeExecution ? {
@@ -364,6 +381,44 @@ export class NotebookLmProvider implements ContentProvider {
       throw new ProviderNeedsHumanError('research_no_accepted_sources', 'quality');
     }
     return verified;
+  }
+
+  private async prepareResearch(
+    context: NotebookLmContext,
+    input: ProviderExecutionInput,
+    phaseTimings: NotebookLmPhaseTiming[],
+  ): Promise<{
+    discovery: ResearchSourceDiscoveryResult;
+    verified: Awaited<ReturnType<ResearchSourceVerifier['verify']>>;
+  }> {
+    if (!this.options.sourceDiscoverer || !this.options.sourceVerifier) {
+      throw new ProviderNeedsHumanError('source_discovery_unconfigured');
+    }
+    const maxCandidates = Math.max(3, Math.min(12, this.options.maxResearchCandidates ?? 8));
+    const seedCandidates = seedResearchCandidates(context.sourceUrls).slice(0, Math.max(0, maxCandidates - 3));
+    const discovery = await this.runPhase('source_discovery', phaseTimings, () => (
+      this.options.sourceDiscoverer!.discoverSources({
+        topic: context.topic,
+        audience: context.audience ?? 'general adult learners',
+        objective: context.objective ?? context.topic,
+        seedUrls: context.sourceUrls,
+        maxCandidates: maxCandidates - seedCandidates.length,
+        idempotencyKey: input.idempotencyKey,
+        signal: input.signal,
+      })
+    ));
+    const candidates = uniqueResearchCandidates([
+      ...seedCandidates,
+      ...discovery.candidates,
+    ]).slice(0, maxCandidates);
+    const verified = await this.runPhase('research_verification', phaseTimings, () => (
+      this.options.sourceVerifier!.verify({ sources: candidates }, input.signal)
+    ));
+    const minimumAcceptedSources = Math.max(1, this.options.minimumAcceptedSources ?? 3);
+    if (verified.evidence.acceptedSources.length < minimumAcceptedSources) {
+      throw new ProviderNeedsHumanError('research_insufficient_accepted_sources', 'quality');
+    }
+    return { discovery, verified };
   }
 
   private async version(signal: AbortSignal): Promise<string> {
@@ -494,7 +549,7 @@ function parseStructuredResponse(raw: string): { raw: string; conversationId: st
   const envelope = parseResponseEnvelope(raw);
   if (!envelope) return null;
   try {
-    const answer = typeof envelope.answer === 'string' ? JSON.parse(envelope.answer) : envelope.answer;
+    const answer = typeof envelope.answer === 'string' ? parseNotebookLmAnswer(envelope.answer) : envelope.answer;
     if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
     return { raw, conversationId: envelope.conversationId, answer: answer as Record<string, unknown> };
   } catch {
@@ -502,8 +557,25 @@ function parseStructuredResponse(raw: string): { raw: string; conversationId: st
   }
 }
 
+function parseNotebookLmAnswer(answer: string): unknown {
+  try {
+    return JSON.parse(answer);
+  } catch {
+    // The CLI can serialize dollar-prefixed titles (for example "$100M Offers")
+    // with a non-JSON `\$` escape. Treat that provider-specific defect as a
+    // literal dollar sign, while leaving every other invalid JSON escape strict.
+    return JSON.parse(answer.replace(/\\\$/g, '$'));
+  }
+}
+
 function renderMalformedOutputRepairPrompt(): string {
   return 'The prior answer was not valid JSON. Return the same answer again as one strict JSON object with no markdown fences.';
+}
+
+interface ResearchCandidate {
+  sourceId: string;
+  title: string;
+  url: string;
 }
 
 function parseListedSource(value: unknown): NotebookLmListedSource[] {
@@ -536,6 +608,34 @@ function listedSourceReady(value: unknown): boolean {
   if (value === undefined || value === null) return true;
   if (value === 2) return true;
   return typeof value === 'string' && /^(?:2|active|complete|completed|ready|success|succeeded)$/i.test(value.trim());
+}
+
+function seedResearchCandidates(sourceUrls: readonly string[]): ResearchCandidate[] {
+  return [...new Set(sourceUrls)].map((url) => ({
+    sourceId: `run-source-${createHash('sha256').update(url).digest('hex').slice(0, 16)}`,
+    title: sourceTitle(url),
+    url,
+  }));
+}
+
+function uniqueResearchCandidates(candidates: readonly ResearchCandidate[]): ResearchCandidate[] {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const normalized = normalizedSourceUrl(candidate.url);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function normalizedSourceUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function sourceTitle(value: string): string {
@@ -682,26 +782,40 @@ function mergeSemanticRepairAnswer(
 ): Record<string, unknown> {
   const previous = normalizeStoryPlaybookAnswer(previousAnswer);
   const repaired = normalizeStoryPlaybookAnswer(repairedAnswer);
-  const previousPayload = objectValue(previous.payload);
-  const repairedPayload = objectValue(repaired.payload);
-  if (!previousPayload || !repairedPayload) return repaired;
-
-  const previousRead = objectValue(previousPayload.read);
-  const repairedRead = objectValue(repairedPayload.read);
-  const previousPlaybook = objectValue(previousRead?.playbook);
-  if (!previousPlaybook || objectValue(repairedRead?.playbook)) return repaired;
-
-  return {
-    ...repaired,
-    payload: {
-      ...repairedPayload,
-      read: {
-        ...repairedRead,
-        playbook: previousPlaybook,
-      },
-    },
-  };
+  return mergeMissingSemanticFields(previous, repaired, '$');
 }
+
+function mergeMissingSemanticFields(
+  previous: Record<string, unknown>,
+  repaired: Record<string, unknown>,
+  path: string,
+): Record<string, unknown> {
+  const merged = { ...repaired };
+  for (const [key, previousValue] of Object.entries(previous)) {
+    const repairedValue = repaired[key];
+    if (objectValue(previousValue) && objectValue(repairedValue)) {
+      merged[key] = mergeMissingSemanticFields(
+        previousValue as Record<string, unknown>,
+        repairedValue as Record<string, unknown>,
+        `${path}.${key}`,
+      );
+      continue;
+    }
+    if (!(key in repaired) && SEMANTIC_REPAIR_PRESERVABLE_FIELDS[path]?.has(key)) {
+      merged[key] = previousValue;
+    }
+  }
+  return merged;
+}
+
+const SEMANTIC_REPAIR_PRESERVABLE_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  '$': new Set(['kind', 'schemaVersion', 'payload']),
+  '$.payload': new Set([
+    'contentModel', 'materialization', 'identity', 'learning', 'hero', 'read',
+    'visual', 'listen', 'quiz', 'publicSources', 'claims', 'claimCoverage',
+  ]),
+  '$.payload.read': new Set(['story', 'playbook']),
+};
 
 function normalizeStoryPlaybookAnswer(answer: Record<string, unknown>): Record<string, unknown> {
   const payload = objectValue(answer.payload);
@@ -762,8 +876,11 @@ function normalizeGroundedStoryPlaybookAnswer(
     const claim = objectValue(value);
     return claim && typeof claim.claimId === 'string' ? [claim.claimId] : [];
   }));
-  const filterClaimRefs = (value: unknown): unknown => Array.isArray(value)
+  const validClaimRefs = (value: unknown): string[] => Array.isArray(value)
     ? value.filter((claimId): claimId is string => typeof claimId === 'string' && claimIds.has(claimId))
+    : [];
+  const filterClaimRefs = (value: unknown): unknown => Array.isArray(value)
+    ? validClaimRefs(value)
     : value;
   const normalizeClaimRefList = (values: unknown): unknown => Array.isArray(values)
     ? values.map((value) => {
@@ -778,11 +895,28 @@ function normalizeGroundedStoryPlaybookAnswer(
   const example = objectValue(playbook?.example);
   const visual = objectValue(payload.visual);
   const quiz = objectValue(payload.quiz);
+  const nestedClaimRefsByPath = new Map<string, string[]>([
+    ['read.story', Array.isArray(story?.blocks)
+      ? story.blocks.flatMap((value) => validClaimRefs(objectValue(value)?.claimRefs))
+      : []],
+    ['read.playbook', [
+      ...(Array.isArray(playbook?.steps)
+        ? playbook.steps.flatMap((value) => validClaimRefs(objectValue(value)?.claimRefs))
+        : []),
+      ...validClaimRefs(example?.claimRefs),
+    ]],
+    ['visual', validClaimRefs(visual?.claimRefs)],
+    ['quiz', Array.isArray(quiz?.questions)
+      ? quiz.questions.flatMap((value) => validClaimRefs(objectValue(value)?.claimRefs))
+      : []],
+  ]);
   const claimCoverage = Array.isArray(payload.claimCoverage) ? payload.claimCoverage.flatMap((value) => {
     const coverage = objectValue(value);
     if (!coverage) return [];
-    const filtered = filterClaimRefs(coverage.claimIds);
-    return Array.isArray(filtered) && filtered.length > 0 ? [{ ...coverage, claimIds: filtered }] : [];
+    const filtered = validClaimRefs(coverage.claimIds);
+    const nested = typeof coverage.path === 'string' ? nestedClaimRefsByPath.get(coverage.path) ?? [] : [];
+    const normalized = [...new Set([...filtered, ...nested])];
+    return normalized.length > 0 ? [{ ...coverage, claimIds: normalized }] : [];
   }) : payload.claimCoverage;
 
   return {

@@ -101,6 +101,21 @@ test('deterministic checks reject empty and incomplete learner claim inventories
   assert.ok(incomplete.findings.some(({ code }) => code === 'claim-coverage'));
 });
 
+test('deterministic checks allow ordinary discussion of competitors', () => {
+  const report = runDeterministicChecks({
+    candidate: {
+      ...candidate,
+      depths: {
+        ...candidate.depths,
+        deep: 'Compare the offer with a competitor before choosing the clearest next step.',
+      },
+    },
+    evidence,
+  });
+
+  assert.equal(report.findings.some(({ code }) => code === 'placeholder'), false);
+});
+
 test('editorial parsing uses only critical, major, and minor severities', () => {
   const report = parseEditorialCheck({
     findings: [{ code: 'unsupported-claim', severity: 'major', message: 'No source supports this.' }],
