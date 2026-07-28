@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.3.0";
+export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.4.0";
 
 export function compilePublicPreview(content) {
   const lesson = lessonPayload(content);
@@ -35,7 +35,7 @@ export function compilePublicPreview(content) {
       "see that the full Nuglet contains a practical next step",
     ],
     emotionalShiftDirection: "Move from thoughtful surprise or puzzlement toward calm curiosity, clarity, and gentle relief.",
-    visualDirection: "When useful, show an inviting metaphor such as untangling a knot, making sense of a mess, or discovering a path. Expressions should convey surprise, curiosity, concentration, and gentle relief, never anger or hostility.",
+    visualDirection: "Show challenge or tension through objects and environments, not through an upset face: a difficult book, tangled threads, layered pages, a maze, a path, or an unfinished diagram. Human figures may appear only with relaxed features, open curiosity, gentle concentration, recognition, or relief.",
     finalInvitation: "Learn the practical next step in the full Nuglet.",
     protectedContent: {
       exactPractice: takeaway,
@@ -93,8 +93,11 @@ export function renderPublicPreviewPrompt(brief, marker) {
     "Open immediately inside the recognition moment. Build gentle intellectual intrigue, explain why it matters, then promise what the full Nuglet helps the viewer understand without giving the answer.",
     "Use one calm narrative arc.",
     "Visual casting should generally reflect working adults aged roughly 25-40, with women represented most often. Younger men and people from varied backgrounds should appear naturally too. This is a flexible direction, not an exclusive rule or rigid quota. Avoid repeatedly defaulting to middle-aged or older men, and avoid stereotypes or tokenistic casting.",
-    "Use thoughtful surprise, curiosity, concentration, and gentle relief. When useful, visualize a tangled idea becoming understandable through an inviting knot, mess, maze, or path metaphor.",
-    "Avoid angry, hostile, scowling, accusatory, distressed, panicked, or defeated expressions, and avoid confrontational body language. The challenge should feel intellectually intriguing, never emotionally threatening.",
+    "Make every challenge, tension, or problem beat object-first: show a difficult book, tangled threads, layered pages, a maze, a path, an unfinished diagram, or another calm visual metaphor. Do not use a human face to communicate friction, struggle, confusion, difficulty, failure, or conflict.",
+    "Human figures may appear only during recognition, curiosity, insight, or relief. Every visible person must have a relaxed forehead, relaxed eyes and mouth, open curiosity, gentle concentration, or a soft smile.",
+    "Never show furrowed or knitted brows, narrowed eyes, downturned mouths, clenched jaws, clenched fists, tense shoulders, glaring, scowling, hostile, accusatory, distressed, panicked, defeated, or confrontational expressions or posture.",
+    "Do not turn words such as friction, struggle, fight, failure, challenge, hard, difficult, or tangled into anger or emotional distress. Avoid close-up, front-facing portraits during tension or problem beats.",
+    "The emotional arc is thoughtful surprise, curiosity, calm recognition, clarity, and gentle relief. The challenge should feel intellectually intriguing, never emotionally threatening.",
     "Tone: warm, hopeful, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises.",
   ].join(" ");
 }

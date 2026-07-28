@@ -257,7 +257,7 @@ test("public preview marker binds the prompt contract version", () => {
 
   assert.match(
     prompt,
-    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.3\.0\]/,
+    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.4\.0\]/,
   );
 });
 
@@ -376,7 +376,7 @@ test("public preview end card uses the immutable Nuglet hero receipt", async () 
 });
 
 test("forced NotebookLM regeneration creates once, then reuses its current-prompt sidecar", () => {
-  const marker = "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet.public-preview@1.3.0]";
+  const marker = "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet.public-preview@1.4.0]";
   const artifacts = [
     {
       id: "matching-video",
