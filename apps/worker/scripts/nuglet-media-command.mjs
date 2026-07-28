@@ -19,10 +19,20 @@ import {
   PUBLIC_PREVIEW_MAX_SECONDS,
   renderPublicPreviewVideo,
 } from "./nuglet-public-preview-renderer.mjs";
+import {
+  infographicPlanningPrompt,
+  infographicSource,
+  NUGLET_INFOGRAPHIC_RENDERER_VERSION,
+  parseInfographicArtDirection,
+  renderNugletInfographic,
+} from "./nuglet-infographic.mjs";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_VISUAL_REVIEW_MODEL = "gemini-2.5-flash";
+const DEFAULT_INFOGRAPHIC_PLANNER_MODEL = "gemini-2.5-flash";
 const MAX_HERO_GENERATION_ATTEMPTS = 2;
+const MAX_INFOGRAPHIC_PLANNING_ATTEMPTS = 2;
+const BRANDED_INFOGRAPHIC_RECIPE_VERSION = "2.0.0";
 const DEFAULT_STYLE_REFERENCES = [
   new URL("../assets/nuglet-style/personal-finance-101-hero.png", import.meta.url).pathname,
   new URL("../assets/nuglet-style/not-every-thought-is-your-task-hero.png", import.meta.url).pathname,
@@ -472,6 +482,105 @@ async function generateHero(content, heroDirection, expectedReferenceChecksums) 
   throw new Error(`hero visual conformance failed: ${priorIssues.join("; ")}`);
 }
 
+function usesBrandedInfographic(input) {
+  return recipeSnapshot(input, "infographic").version === BRANDED_INFOGRAPHIC_RECIPE_VERSION;
+}
+
+function modelResponseText(response) {
+  return typeof response.text === "string"
+    ? response.text.trim()
+    : response.candidates?.[0]?.content?.parts
+      ?.flatMap((part) => part.text ? [part.text] : [])
+      .join("\n")
+      .trim();
+}
+
+async function generateCurrentInfographicAsset(input) {
+  const recipe = recipeSnapshot(input, "infographic");
+  if (recipe.version !== BRANDED_INFOGRAPHIC_RECIPE_VERSION) {
+    throw new Error(`unsupported branded infographic recipe: ${recipe.version}`);
+  }
+  const project = required(
+    process.env.GOOGLE_CLOUD_PROJECT_IMAGE || process.env.GOOGLE_CLOUD_PROJECT,
+    "GOOGLE_CLOUD_PROJECT_IMAGE or GOOGLE_CLOUD_PROJECT",
+  );
+  const location = (
+    process.env.GOOGLE_CLOUD_LOCATION_IMAGE
+      || process.env.GOOGLE_CLOUD_LOCATION
+      || "global"
+  ).trim();
+  const model = (
+    process.env.VERTEX_INFOGRAPHIC_MODEL
+      || process.env.GEMINI_VERTEX_MODEL
+      || DEFAULT_INFOGRAPHIC_PLANNER_MODEL
+  ).trim();
+  const canonicalRecipe = Buffer.from(
+    String(recipe.canonicalBase64 ?? ""),
+    "base64",
+  ).toString("utf8");
+  const prompt = infographicPlanningPrompt(input.content, canonicalRecipe);
+  const source = infographicSource(input.content);
+  delete process.env.GEMINI_API_KEY;
+  const ai = new GoogleGenAI({ vertexai: true, project, location });
+  let artDirection;
+  let lastIssue = "";
+  for (let attempt = 1; attempt <= MAX_INFOGRAPHIC_PLANNING_ATTEMPTS; attempt += 1) {
+    const response = await ai.models.generateContent({
+      model,
+      contents: [
+        {
+          text: [
+            prompt,
+            lastIssue
+              ? `The previous response was invalid. Correct only this problem: ${lastIssue}.`
+              : "",
+          ].filter(Boolean).join("\n"),
+        },
+      ],
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.1,
+      },
+    });
+    try {
+      artDirection = parseInfographicArtDirection(
+        modelResponseText(response),
+        source.steps.length,
+      );
+      break;
+    } catch (error) {
+      lastIssue = error instanceof Error ? error.message : String(error);
+    }
+  }
+  if (!artDirection) {
+    throw new Error(`infographic art direction failed: ${lastIssue}`);
+  }
+  const rendered = await renderNugletInfographic(input.content, artDirection);
+  const planChecksum = checksum(Buffer.from(JSON.stringify(artDirection)));
+  return {
+    kind: "infographic",
+    mediaType: "image/png",
+    bytesBase64: rendered.bytes.toString("base64"),
+    generationInputChecksum: input.generationInputChecksum,
+    metadata: {
+      byteSize: rendered.bytes.byteLength,
+      ...await imageDimensions(rendered.bytes, "image/png"),
+      provider: "vertex",
+      plannerModel: model,
+      rendererVersion: NUGLET_INFOGRAPHIC_RENDERER_VERSION,
+      planChecksum,
+      checkedTextEquivalent: rendered.source.steps,
+      altText: rendered.source.altText,
+      status: "needs_review",
+    },
+    support: {
+      executions: [
+        executionEvidence(recipe, prompt, { provider: "vertex", model }),
+      ],
+    },
+  };
+}
+
 async function transcribeAudio(bytes, label) {
   const project = required(process.env.GOOGLE_CLOUD_PROJECT, "GOOGLE_CLOUD_PROJECT");
   const location = (process.env.GOOGLE_CLOUD_LOCATION || "global").trim();
@@ -917,29 +1026,37 @@ async function generateCurrentHeroAsset(input) {
 
 async function prepareCurrentMediaLanes(input, kinds, dependencies = {}) {
   const makeHero = dependencies.generateHeroAsset ?? generateCurrentHeroAsset;
+  const makeInfographic = dependencies.generateInfographicAsset ?? generateCurrentInfographicAsset;
   const prepareNotebookLm = dependencies.ensureNotebookLm ?? ensureNotebookLmArtifacts;
-  return Promise.all([
+  const brandedInfographicRequested = kinds.includes("infographic") && usesBrandedInfographic(input);
+  const notebookLmKinds = kinds.filter((kind) => (
+    kind !== "hero" && !(kind === "infographic" && brandedInfographicRequested)
+  ));
+  const [heroAsset, infographicAsset, notebookLm] = await Promise.all([
     kinds.includes("hero") ? makeHero(input) : Promise.resolve(undefined),
-    kinds.some((kind) => kind !== "hero")
-      ? prepareNotebookLm(input, kinds)
+    brandedInfographicRequested ? makeInfographic(input) : Promise.resolve(undefined),
+    notebookLmKinds.length
+      ? prepareNotebookLm(input, notebookLmKinds)
       : Promise.resolve(undefined),
   ]);
+  return { heroAsset, infographicAsset, notebookLm };
 }
 
 async function generateCurrentMedia(input) {
   const kinds = [...new Set(input.kinds)];
   const directory = await mkdtemp(join(tmpdir(), "knowledge-bits-media-"));
   try {
-    const [heroAsset, notebookLm] = await prepareCurrentMediaLanes(input, kinds);
+    const { heroAsset, infographicAsset, notebookLm } = await prepareCurrentMediaLanes(input, kinds);
     const endCardArtwork = kinds.includes("public_preview")
       ? await publicPreviewEndCardArtwork(input, heroAsset)
       : undefined;
     const assetsByKind = new Map();
     if (heroAsset) assetsByKind.set("hero", heroAsset);
+    if (infographicAsset) assetsByKind.set("infographic", infographicAsset);
     for (const kind of kinds) {
       const role = kind === "hero" ? "hero" : kind === "infographic" ? "infographic" : kind === "audio_brief" ? "audioBrief" : "audioDiscussion";
       const recipe = kind === "public_preview" ? undefined : recipeSnapshot(input, role);
-      if (kind === "hero") continue;
+      if (kind === "hero" || assetsByKind.has(kind)) continue;
 
       if (!notebookLm) throw new Error(`NotebookLM preparation missing for ${kind}`);
       const tracked = notebookLm.tracked.get(kind);
@@ -1077,6 +1194,7 @@ export {
   notebookLmPrompt,
   prepareCurrentMediaLanes,
   shouldReuseLegacyMedia,
+  usesBrandedInfographic,
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

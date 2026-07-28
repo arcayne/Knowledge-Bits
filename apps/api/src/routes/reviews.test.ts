@@ -122,8 +122,8 @@ test('infographic regeneration supersedes queued delivery and requires approval 
       recipeOverrides: {
         infographic: {
           id: 'nuglet.visual.infographic',
-          version: '1.1.0',
-          checksum: `sha256:${'b'.repeat(64)}`,
+          version: '2.0.0',
+          checksum: 'sha256:f48e77547bf0d1b1890bc4118902fbcae185d6b55ec21c929410adab02677206',
         },
       },
     }),
@@ -149,14 +149,14 @@ test('infographic regeneration supersedes queued delivery and requires approval 
     ((media?.input.brief as Record<string, unknown>).generationPlan as Record<string, any>).recipes.infographic,
     {
       id: 'nuglet.visual.infographic',
-      version: '1.1.0',
-      checksum: `sha256:${'b'.repeat(64)}`,
+      version: '2.0.0',
+      checksum: 'sha256:f48e77547bf0d1b1890bc4118902fbcae185d6b55ec21c929410adab02677206',
     },
   );
   const updatedRun = await repository.getRun(runId);
   assert.equal(
     (((updatedRun?.brief.generationPlan as Record<string, any>).recipes as Record<string, any>).infographic).version,
-    '1.1.0',
+    '2.0.0',
   );
   assert.deepEqual(updatedRun?.brief.mediaRegeneration, {
     sourcePackageChecksum: packageChecksum,

@@ -316,7 +316,7 @@ function browserFixtureHtml() {
       <section id="story-section"><h3 id="story-title"></h3><p id="story-meta"></p><div id="story-blocks"></div></section>
       <section id="playbook-section"><h3 id="playbook-title"></h3><p id="playbook-principle"></p><p id="playbook-why"></p><div id="playbook-steps"></div><div id="playbook-example"></div><ul id="playbook-watch-outs"></ul><p id="playbook-action"></p></section>
       <div id="hero"></div><p id="hero-alt"></p><p id="hero-metadata"></p><div class="crop-frame" id="hero-lesson-header"></div><div class="crop-frame" id="hero-card"></div><div class="crop-frame" id="hero-thumbnail"></div>
-      <div id="infographic"></div><p id="infographic-alt"></p><ul id="infographic-text-equivalent"></ul>
+      <div id="infographic"></div><p id="infographic-alt"></p><ul id="infographic-text-equivalent"></ul><button id="regenerate-infographic" disabled>Replace with Nuglet infographic</button><p id="regenerate-infographic-status"></p>
       <div id="audio-brief"></div><p id="audio-brief-transcript"></p><div id="audio-discussion"></div><p id="audio-discussion-transcript"></p>
       <div id="quiz"></div><ul id="claim-coverage"></ul><ul id="accepted-sources"></ul><ul id="rejected-sources"></ul><ul id="coverage-gaps"></ul><ul id="claims"></ul>
       <p id="qa"></p><ul id="qa-findings"></ul><details id="generation-provenance"><summary>Generation provenance</summary><div id="generation-executions"></div></details>
