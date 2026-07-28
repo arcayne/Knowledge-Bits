@@ -20,8 +20,8 @@ const STANDARD_RECIPE_BINDINGS: NugletGenerationPlan['recipes'] = {
   },
   infographic: {
     id: 'nuglet.visual.infographic',
-    version: '1.1.0',
-    checksum: 'sha256:759dccde9da000a17644a3eb7a46a1e3cbeac76caaf7530b0676b19465b0e5b3',
+    version: '2.0.0',
+    checksum: 'sha256:f48e77547bf0d1b1890bc4118902fbcae185d6b55ec21c929410adab02677206',
   },
   audioBrief: {
     id: 'nuglet.audio.brief',

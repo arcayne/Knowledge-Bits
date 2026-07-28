@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const page = new URL('./pages/runs/[runId].astro', import.meta.url);
 const proxy = new URL('./pages/api/review.ts', import.meta.url);
+const infographicProxy = new URL('./pages/api/regenerate-infographic.ts', import.meta.url);
 const previewProxy = new URL('./pages/api/preview.ts', import.meta.url);
 const client = new URL('./review-client.mjs', import.meta.url);
 const middleware = new URL('./middleware.ts', import.meta.url);
@@ -43,6 +44,7 @@ test('review page has one fixed overall decision bar and the required review sur
   assert.match(clientSource, /findings/);
   assert.match(clientSource, /api\/preview/);
   assert.match(clientSource, /renderProgressive/);
+  assert.match(source, /Replace with Nuglet infographic/);
   assert.doesNotMatch(source, /data-artifact-decision/i);
 });
 
@@ -70,6 +72,17 @@ test('review submits the checksum displayed by the review surface', async () => 
   assert.match(source, /payload\.package\.packageChecksum\s*===\s*payload\.currentPackageChecksum/);
   assert.match(source, /packageChecksum\s*=\s*model\?\.package\?\.packageChecksum/);
   assert.match(source, /'X-CSRF-Token':\s*csrfToken/);
+});
+
+test('infographic replacement proxy pins the approved Nuglet recipe and remains CSRF protected', async () => {
+  const source = await readFile(infographicProxy, 'utf8');
+
+  assert.match(source, /validateReviewMutation/);
+  assert.match(source, /\/regenerate-media/);
+  assert.match(source, /kinds:\s*\['infographic'\]/);
+  assert.match(source, /version:\s*'2\.0\.0'/);
+  assert.match(source, /sha256:f48e77547bf0d1b1890bc4118902fbcae185d6b55ec21c929410adab02677206/);
+  assert.doesNotMatch(source, /body\.recipeOverrides/);
 });
 
 test('documented review API environment matches the server proxy', async () => {

@@ -276,7 +276,7 @@ test("NotebookLM artifact propagation 404s remain retryable", () => {
   assert.equal(isNotebookLmArtifactPropagationDelay("Source URL returned 404"), false);
 });
 
-test("Nuglet infographic recipe reserves a disposable footer and rejects dense poster styling", async () => {
+test("historical NotebookLM infographic recipe keeps its disposable footer contract", async () => {
   const recipePath = new URL(
     "../../../recipes/nuglet.lesson.v1/nuglet.visual.infographic-1.1.0.json",
     import.meta.url,
@@ -298,32 +298,59 @@ test("Nuglet infographic recipe reserves a disposable footer and rejects dense p
   assert.match(adapter, /"--detail", "concise", "--style", "editorial"/);
 });
 
-test("hero and NotebookLM media preparation start concurrently", async () => {
+test("new Nuglet infographic recipe binds Vertex planning to deterministic rendering", async () => {
+  const recipePath = new URL(
+    "../../../recipes/nuglet.lesson.v1/nuglet.visual.infographic-2.0.0.json",
+    import.meta.url,
+  );
+  const visualRecipe = JSON.parse(await readFile(recipePath, "utf8"));
+  const prompt = visualRecipe.instructions.join(" ");
+
+  assert.equal(visualRecipe.version, "2.0.0");
+  assert.match(prompt, /Vertex AI only to choose a bounded art direction/);
+  assert.match(prompt, /deterministic editorial SVG renderer/);
+  assert.match(prompt, /must not rewrite, summarize, spell, or typeset/);
+  assert.match(prompt, /pending human review/);
+  assert.match(prompt, /Recipes before version 2\.0\.0 remain pinned.+footer-crop behavior/);
+});
+
+test("hero and branded infographic generation start concurrently without NotebookLM", async () => {
   let releaseHero;
-  let releaseNotebookLm;
+  let releaseInfographic;
   const started = [];
   const hero = new Promise((resolve) => { releaseHero = resolve; });
-  const notebookLm = new Promise((resolve) => { releaseNotebookLm = resolve; });
+  const infographic = new Promise((resolve) => { releaseInfographic = resolve; });
 
-  const pending = prepareCurrentMediaLanes({}, ["hero", "infographic"], {
+  const pending = prepareCurrentMediaLanes({
+    recipeSnapshots: {
+      infographic: {
+        ...recipe("nuglet.visual.infographic"),
+        version: "2.0.0",
+      },
+    },
+  }, ["hero", "infographic"], {
     generateHeroAsset: async () => {
       started.push("hero");
       return hero;
     },
+    generateInfographicAsset: async () => {
+      started.push("infographic");
+      return infographic;
+    },
     ensureNotebookLm: async () => {
-      started.push("notebooklm");
-      return notebookLm;
+      throw new Error("NotebookLM must not run for a branded infographic");
     },
   });
 
   await Promise.resolve();
-  assert.deepEqual(started.sort(), ["hero", "notebooklm"]);
+  assert.deepEqual(started.sort(), ["hero", "infographic"]);
   releaseHero({ kind: "hero" });
-  releaseNotebookLm({ notebookId: "notebook", tracked: new Map() });
-  assert.deepEqual(await pending, [
-    { kind: "hero" },
-    { notebookId: "notebook", tracked: new Map() },
-  ]);
+  releaseInfographic({ kind: "infographic" });
+  assert.deepEqual(await pending, {
+    heroAsset: { kind: "hero" },
+    infographicAsset: { kind: "infographic" },
+    notebookLm: undefined,
+  });
 });
 
 test("public preview regeneration bypasses retained legacy media", () => {

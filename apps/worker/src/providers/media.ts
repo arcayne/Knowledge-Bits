@@ -143,7 +143,7 @@ export class MediaProviderAdapter implements MediaProvider {
     }
     const processed = await Promise.all(generated.map(async (asset) => {
       if (asset.kind !== 'infographic') return asset;
-      return (this.options.transformInfographic ?? prepareNotebookLmInfographicForStorage)(asset);
+      return (this.options.transformInfographic ?? prepareInfographicForStorage)(asset);
     }));
     const boundGenerated = processed.map(bindGeneratedOutput);
 
@@ -213,6 +213,29 @@ export async function prepareNotebookLmInfographicForStorage(asset: GeneratedMed
       width: metadata.width,
     },
   };
+}
+
+export async function prepareInfographicForStorage(asset: GeneratedMedia): Promise<GeneratedMedia> {
+  if (asset.metadata.provider !== 'vertex') {
+    return prepareNotebookLmInfographicForStorage(asset);
+  }
+  try {
+    const metadata = await sharp(asset.bytes).metadata();
+    if (!metadata.width || !metadata.height || metadata.height <= metadata.width) {
+      throw new TypeError('portrait image dimensions unavailable');
+    }
+    return {
+      ...asset,
+      metadata: {
+        ...asset.metadata,
+        byteSize: asset.bytes.byteLength,
+        height: metadata.height,
+        width: metadata.width,
+      },
+    };
+  } catch {
+    throw new ProviderNeedsHumanError('media_infographic_dimensions_invalid');
+  }
 }
 
 function assertDistinctAudioBytes(generated: readonly GeneratedMedia[]): void {

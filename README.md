@@ -149,6 +149,9 @@ pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker.
 The Nuglet recipe registry, media command, and approved visual style references live in this repository.
 The worker does not depend on `apps/nuglet-lab` or any other Nuglet source checkout.
+Infographic recipe `2.0.0` uses Vertex AI only for a bounded art-direction JSON decision. Nuglet's
+deterministic SVG renderer then typesets the checked lesson copy with bundled fonts and draws the final
+9:16 visual summary. Older recipe versions remain pinned to their historical NotebookLM generation path.
 NotebookLM Shorts are post-processed locally with `ffmpeg`, `ffprobe`, and `pango-view`: the provider
 tail is removed, the real Nuglet footer and Focus Aperture end card are added, and the exact title and
 CTA use bundled Nuglet fonts. The result remains `needs_review` until a human approves it.

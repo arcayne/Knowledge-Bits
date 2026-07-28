@@ -12,6 +12,7 @@ import {
   cropNotebookLmInfographicFooter,
   type GeneratedMedia,
   MediaProviderAdapter,
+  prepareInfographicForStorage,
   prepareNotebookLmInfographicForStorage,
   type MediaClient,
   type MediaKind,
@@ -70,6 +71,31 @@ test('stores cropped infographic bytes and corrected metadata after validating t
   assert.equal((await sharp(output?.body).metadata()).height, 798);
   assert.equal(output?.provenance?.height, 798);
   assert.equal(output?.provenance?.byteSize, output?.body.byteLength);
+});
+
+test('keeps Vertex-rendered Nuglet infographics intact without a NotebookLM footer crop', async () => {
+  const bytes = await sharp({
+    create: { width: 1_080, height: 1_920, channels: 4, background: '#f4efe4' },
+  }).png().toBuffer();
+  const asset: GeneratedMedia = {
+    kind: 'infographic',
+    mediaType: 'image/png',
+    bytes,
+    generationInputChecksum,
+    metadata: {
+      provider: 'vertex',
+      byteSize: bytes.byteLength,
+      width: 1_080,
+      height: 1_920,
+    },
+    supportArtifacts: [],
+  };
+
+  const prepared = await prepareInfographicForStorage(asset);
+
+  assert.equal(prepared.bytes.byteLength, bytes.byteLength);
+  assert.equal(prepared.metadata.width, 1_080);
+  assert.equal(prepared.metadata.height, 1_920);
 });
 
 test('media fails closed unless exactly one current-checksum asset exists for every required kind', async () => {
