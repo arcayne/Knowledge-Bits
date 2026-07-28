@@ -204,6 +204,16 @@ test("worker precondition blocks queueing while another tick owns the lock", asy
   }
 });
 
+test("JSON mode remains machine-readable without trailing status text", async () => {
+  const source = await readFile(
+    new URL("./infographic-replacement-round.mjs", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /if \(!args\.json\) console\.log\(`State:/);
+  assert.match(source, /if \(!args\.json\) \{\s+console\.log\(`Completed this round:/);
+});
+
 function pipelineRow(id, title, currentStage, currentState, reviewStatus) {
   return {
     id,

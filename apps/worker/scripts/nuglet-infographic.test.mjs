@@ -119,14 +119,61 @@ test("keeps authoritative Feynman copy intact when it needs the long-copy layout
   }
 });
 
+test("uses checked playbook copy when a legacy visual text equivalent is production direction", async () => {
+  const content = await fixtureContent();
+  content.payload.visual.textEquivalent = [
+    "An infographic showing a dense production description that is intentionally much too long to serve as learner-facing stage copy in the branded visual summary layout.",
+    "A second panel description with implementation language that remains checked content but is not the clearest available learner-facing sequence for this visual.",
+  ];
+  content.payload.read.playbook.steps = [
+    {
+      title: "Notice the fragments",
+      body: "This checked body is intentionally far too long for the five-line stage layout because the concise checked title is the safer learner-facing source for the deterministic visual summary without any rewriting.",
+    },
+    {
+      title: "Protect real rest",
+      body: "This second checked body is also intentionally far too long for the five-line stage layout so the renderer must select the concise checked title instead of truncating or asking the planner to rewrite it.",
+    },
+  ];
+
+  const source = infographicSource(content);
+
+  assert.deepEqual(source.steps, ["Notice the fragments", "Protect real rest"]);
+});
+
+test("supports a three-line checked closing across the full footer width", async () => {
+  const content = await fixtureContent();
+  content.payload.learning.oneLineToKeep = "Because our intuition is calibrated for linear change, early exponential growth feels unremarkable until explosive acceleration arrives as a surprise.";
+
+  const rendered = await renderNugletInfographic(content, {
+    stageLabels: ["Pause clearly", "Leave a marker", "Begin again"],
+    symbols: ["book", "thread", "steps"],
+    accent: "sage",
+    path: "loop",
+  });
+
+  assert.match(rendered.svg, /BECAUSE OUR INTUITION IS CALIBRATED FOR LINEAR CHANGE/);
+  assert.match(rendered.svg, /EXPLOSIVE/);
+  assert.match(rendered.svg, /ACCELERATION/);
+  assert.match(rendered.svg, /SURPRISE/);
+});
+
 test("fails closed instead of truncating checked learner copy", async () => {
   const content = await fixtureContent();
-  content.payload.visual.textEquivalent[0] = "This checked teaching step is intentionally far too long for the five-line phone layout and must remain intact rather than being silently shortened with an ellipsis or rewritten by the rendering layer.";
+  const tooLongA = "This first checked teaching step is intentionally far too long for the five-line phone layout and must remain intact rather than being silently shortened with an ellipsis or rewritten by the rendering layer. It remains deliberately verbose so no available checked sequence can fit.";
+  const tooLongB = "This second checked teaching step is intentionally far too long for the five-line phone layout and must remain intact rather than being silently shortened with an ellipsis or rewritten by the rendering layer. It remains deliberately verbose so no available checked sequence can fit.";
+  content.payload.visual.textEquivalent = [tooLongA, tooLongB];
+  content.payload.read.playbook.steps = [
+    { title: tooLongA, body: tooLongA },
+    { title: tooLongB, body: tooLongB },
+  ];
+  content.payload.learning.whyItMatters = tooLongA;
+  content.payload.learning.action.instruction = tooLongB;
 
   await assert.rejects(
     () => renderNugletInfographic(content, {
-      stageLabels: ["Pause clearly", "Leave a marker", "Begin again"],
-      symbols: ["book", "thread", "steps"],
+      stageLabels: ["First step", "Second step"],
+      symbols: ["book", "thread"],
       accent: "sage",
       path: "loop",
     }),

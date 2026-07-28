@@ -58,14 +58,23 @@ export function infographicSource(content) {
   const visualSteps = Array.isArray(visual.textEquivalent)
     ? visual.textEquivalent.map(string).filter(Boolean)
     : [];
-  const fallbackSteps = playbookSteps
-    .map((step) => string(step.body) ?? string(step.title))
+  const playbookSequence = playbookSteps
+    .map((step) => {
+      const body = string(step.body);
+      const title = string(step.title);
+      return body && copyFits(body, 32, 5) ? body : title ?? body;
+    })
     .filter(Boolean);
-  const steps = dedupe([
-    ...visualSteps,
-    ...(visualSteps.length >= 2 ? [] : fallbackSteps),
-    ...(visualSteps.length >= 2 ? [] : [string(learning.whyItMatters), string(action.instruction)]),
-  ]).slice(0, 4);
+  const learningSequence = [
+    string(learning.whyItMatters),
+    string(action.instruction),
+  ].filter(Boolean);
+  const candidates = [visualSteps, playbookSequence, learningSequence]
+    .map((candidate) => dedupe(candidate).slice(0, 4))
+    .filter((candidate) => candidate.length >= 2);
+  const steps = candidates.find((candidate) => candidate.every((step) => copyFits(step, 32, 5)))
+    ?? candidates[0]
+    ?? [];
   if (steps.length < 2) throw new Error("infographic source requires at least two checked teaching steps");
 
   return {
@@ -209,7 +218,7 @@ export function renderInfographicSvg(source, artDirection, fonts = {}) {
         </text>
       </g>`;
   }).join("");
-  const closingLines = wrapText(source.closing, 42, 3);
+  const closingLines = wrapText(source.closing, 60, 3);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${NUGLET_INFOGRAPHIC_WIDTH}" height="${NUGLET_INFOGRAPHIC_HEIGHT}" viewBox="0 0 ${NUGLET_INFOGRAPHIC_WIDTH} ${NUGLET_INFOGRAPHIC_HEIGHT}" role="img" aria-labelledby="title description">
   <title id="title">${escapeXml(source.title)}</title>
@@ -310,6 +319,15 @@ function wrapText(value, maxCharacters, maxLines) {
     throw new Error(`infographic checked copy exceeds the ${maxLines}-line layout limit`);
   }
   return lines;
+}
+
+function copyFits(value, maxCharacters, maxLines) {
+  try {
+    wrapText(value, maxCharacters, maxLines);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function tspans(lines, x, lineHeight) {
