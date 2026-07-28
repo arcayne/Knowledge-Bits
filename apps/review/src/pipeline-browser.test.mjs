@@ -69,6 +69,7 @@ test('new Nuglet UI checks similarity, invalidates changed drafts, and submits a
 
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${address.port}`);
+  assert.match(await page.locator('#daily-progress').textContent() ?? '', /2026-07-27 · CEST · 5 remaining/);
   const start = page.getByRole('button', { name: 'Start research' });
   assert.equal(await start.isDisabled(), true);
 
@@ -103,7 +104,7 @@ function emptyPipeline() {
   return {
     daily: {
       day: '2026-07-27',
-      timezone: 'UTC',
+      timezone: 'Europe/Madrid',
       target: 5,
       started: 0,
       readyForReview: 0,

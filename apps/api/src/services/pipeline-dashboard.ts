@@ -4,6 +4,11 @@ import {
 } from '@knowledge-bits/contracts';
 
 import type { WorkflowRepository, WorkflowRun } from '../repositories/workflow-repository.js';
+import {
+  isOnOperatorDay,
+  OPERATOR_TIME_ZONE,
+  operatorDay,
+} from './operator-time.js';
 
 const DAILY_DELIVERY_TARGET = 5;
 
@@ -20,7 +25,7 @@ export class PipelineDashboardService {
 
   async load(): Promise<PipelineReadModel> {
     const runs = classifyRuns(await this.repository.listRuns());
-    const today = startOfUtcDay(new Date());
+    const today = operatorDay(new Date());
     const counts = {
       research: 0,
       create: 0,
@@ -78,13 +83,13 @@ export class PipelineDashboardService {
     }));
     const canonical = summaries.filter((run) => run.classification !== 'duplicate');
     const delivered = canonical.filter((run) => (
-      run.delivery?.state === 'succeeded' && new Date(run.delivery.updatedAt) >= today
+      run.delivery?.state === 'succeeded' && isOnOperatorDay(run.delivery.updatedAt, today)
     )).length;
     const daily = {
-      day: today.toISOString().slice(0, 10),
-      timezone: 'UTC' as const,
+      day: today,
+      timezone: OPERATOR_TIME_ZONE,
       target: DAILY_DELIVERY_TARGET,
-      started: canonical.filter((run) => new Date(run.createdAt) >= today).length,
+      started: canonical.filter((run) => isOnOperatorDay(run.createdAt, today)).length,
       readyForReview: canonical.filter((run) => (
         run.currentStage === 'human_review' && run.currentState === 'needs_human'
       )).length,
@@ -98,10 +103,6 @@ export class PipelineDashboardService {
     };
     return pipelineReadModelSchema.parse({ daily, counts, runs: summaries });
   }
-}
-
-function startOfUtcDay(value: Date): Date {
-  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
 }
 
 function isBlocked(stageState: string | undefined, deliveryState: string | undefined): boolean {

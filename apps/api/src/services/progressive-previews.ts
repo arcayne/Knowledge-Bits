@@ -14,6 +14,11 @@ import {
   readArtifactStorageObject,
   type ArtifactStorageAdapter,
 } from './artifacts.js';
+import {
+  isOnOperatorDay,
+  OPERATOR_TIME_ZONE,
+  operatorDay,
+} from './operator-time.js';
 import { ReviewPackageService } from './review-packages.js';
 
 const DOCUMENT_ACTIONS = {
@@ -45,7 +50,7 @@ export class ProgressivePreviewService {
 
   async list(): Promise<PipelineReadModel> {
     const runs = classifyRuns(await this.dependencies.repository.listRuns());
-    const today = startOfUtcDay(new Date());
+    const today = operatorDay(new Date());
     const counts = {
       research: 0,
       create: 0,
@@ -105,13 +110,13 @@ export class ProgressivePreviewService {
     }));
     const canonical = summaries.filter((run) => !['duplicate', 'rejected'].includes(run.classification));
     const delivered = canonical.filter((run) => (
-      run.delivery?.state === 'succeeded' && new Date(run.delivery.updatedAt) >= today
+      run.delivery?.state === 'succeeded' && isOnOperatorDay(run.delivery.updatedAt, today)
     )).length;
     const daily = {
-      day: today.toISOString().slice(0, 10),
-      timezone: 'UTC' as const,
+      day: today,
+      timezone: OPERATOR_TIME_ZONE,
       target: DAILY_DELIVERY_TARGET,
-      started: canonical.filter((run) => new Date(run.createdAt) >= today).length,
+      started: canonical.filter((run) => isOnOperatorDay(run.createdAt, today)).length,
       readyForReview: canonical.filter((run) => (
         run.currentStage === 'human_review' && run.currentState === 'needs_human'
       )).length,
@@ -277,10 +282,6 @@ export class ProgressivePreviewService {
       packageChecksum: review.package?.packageChecksum ?? null,
     };
   }
-}
-
-function startOfUtcDay(value: Date): Date {
-  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
 }
 
 function isBlocked(stageState: string | undefined, deliveryState: string | undefined): boolean {

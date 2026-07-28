@@ -37,6 +37,8 @@ test('pipeline page exposes daily throughput, operations, filters, and preview l
   assert.match(clientSource, /Active pipeline/);
   assert.match(clientSource, /Superseded by/);
   assert.match(clientSource, /delivered today/);
+  assert.match(clientSource, /Europe\/Madrid/);
+  assert.match(clientSource, /timeZoneName: 'short'/);
   assert.match(clientSource, /Retries scheduled/);
   assert.match(clientSource, /Delivery attempts/);
   assert.match(clientSource, /fetch\('\/api\/runs'/);
