@@ -66,6 +66,10 @@ if (runId) return Astro.redirect(`/runs/${encodeURIComponent(runId)}`);
       .daily-metrics strong, .daily-metrics span { display: block; }
       .daily-metrics strong { font-size: 1.35rem; color: #173c31; }
       .daily-metrics span { margin-top: .15rem; color: #52655d; font-size: .8rem; }
+      .latest-run { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .2rem .65rem; align-items: baseline; border-top: 1px solid #d9e0da; margin-top: 1rem; padding-top: .85rem; }
+      .latest-run strong { color: #315247; font-size: .8rem; text-transform: uppercase; }
+      .latest-run a { color: #124f8d; font-weight: 700; }
+      .latest-run p { grid-column: 2; margin: 0; color: #52655d; font-size: .8rem; }
       #operations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin: 1.25rem 0; }
       #operations article { border: 1px solid #c8d1c8; border-radius: .45rem; background: #fff; padding: .85rem; }
       #operations article[data-operation="blockers"] { border-color: #d77d59; background: #fff7f2; }
@@ -96,7 +100,7 @@ if (runId) return Astro.redirect(`/runs/${encodeURIComponent(runId)}`);
       [data-run-row] .run-duplicate { grid-column: 1 / -1; color: #6d5a32; }
       [data-run-row] a { color: #124f8d; font-weight: 700; }
       #pipeline-error { color: #8e271d; }
-      @media (max-width: 720px) { header { display: block; } header [aria-label] { margin-top: 1rem; } .daily-heading { display: block; } .daily-heading p { margin-top: .35rem; } .daily-metrics, #status-counts, #stage-counts, #operations { grid-template-columns: repeat(2, minmax(0, 1fr)); } [data-run-row] { grid-template-columns: 1fr; } [data-run-row] a { margin-top: .75rem; } }
+      @media (max-width: 720px) { header { display: block; } header [aria-label] { margin-top: 1rem; } .daily-heading { display: block; } .daily-heading p { margin-top: .35rem; } .daily-metrics, #status-counts, #stage-counts, #operations { grid-template-columns: repeat(2, minmax(0, 1fr)); } .latest-run { grid-template-columns: 1fr; } .latest-run p { grid-column: 1; } [data-run-row] { grid-template-columns: 1fr; } [data-run-row] a { margin-top: .75rem; } }
       @media (max-width: 620px) { .intake-grid { grid-template-columns: 1fr; } .intake-field.full { grid-column: auto; } .intake-actions { align-items: start; flex-direction: column; } }
     </style>
   </head>

@@ -9,9 +9,7 @@ export async function forwardReviewRequest({ apiUrl, token, reviewerId, path, in
   try {
     const timeout = AbortSignal.timeout(15_000);
     const callerSignal = init.signal instanceof AbortSignal ? init.signal : undefined;
-    const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    const normalizedPath = path.replace(/^\/+/, '');
-    const response = await fetch(new URL(normalizedPath, normalizedBaseUrl), {
+    const response = await fetch(resolveEngineUrl(baseUrl, path), {
       ...init,
       signal: callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout,
       headers: {
@@ -27,6 +25,12 @@ export async function forwardReviewRequest({ apiUrl, token, reviewerId, path, in
   } catch {
     return Response.json({ error: 'The review service is unavailable' }, { status: 503 });
   }
+}
+
+export function resolveEngineUrl(apiUrl, path) {
+  const normalizedBaseUrl = apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`;
+  const normalizedPath = path.replace(/^\/+/, '');
+  return new URL(normalizedPath, normalizedBaseUrl);
 }
 
 export function runtimeEnvironment(importMetaEnv, key) {

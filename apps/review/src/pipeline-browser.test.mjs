@@ -6,6 +6,7 @@ import test from 'node:test';
 import { chromium } from 'playwright';
 
 const fingerprint = 'a'.repeat(64);
+const olderRunId = '0f8fad5b-d9cb-469f-a165-70867728950d';
 const existingRunId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const createdRunId = '0f8fad5b-d9cb-469f-a165-70867728950f';
 
@@ -21,7 +22,7 @@ test('new Nuglet UI checks similarity, invalidates changed drafts, and submits a
     }
     if (request.url === '/api/pipeline') {
       response.setHeader('Content-Type', 'application/json');
-      response.end(JSON.stringify(emptyPipeline()));
+      response.end(JSON.stringify(pipelineFixture()));
       return;
     }
     if (request.url === '/api/similarity' && request.method === 'POST') {
@@ -70,6 +71,10 @@ test('new Nuglet UI checks similarity, invalidates changed drafts, and submits a
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${address.port}`);
   assert.match(await page.locator('#daily-progress').textContent() ?? '', /2026-07-27 · CEST · 5 remaining/);
+  const latestRun = page.locator('#daily-progress').getByRole('link', { name: 'Newest pipeline run' });
+  assert.equal(await latestRun.count(), 1);
+  assert.equal(await latestRun.getAttribute('href'), `/runs/${existingRunId}`);
+  assert.match(await page.locator('#daily-progress').textContent() ?? '', /research · running · started 27\/07\/2026, 12:30:00 CEST/);
   const start = page.getByRole('button', { name: 'Start research' });
   assert.equal(await start.isDisabled(), true);
 
@@ -100,7 +105,7 @@ test('new Nuglet UI checks similarity, invalidates changed drafts, and submits a
   });
 });
 
-function emptyPipeline() {
+function pipelineFixture() {
   return {
     daily: {
       day: '2026-07-27',
@@ -113,7 +118,7 @@ function emptyPipeline() {
       remaining: 5,
     },
     counts: {
-      research: 0,
+      research: 2,
       create: 0,
       check: 0,
       produce_assets: 0,
@@ -121,14 +126,45 @@ function emptyPipeline() {
       deliver: 0,
       delivering: 0,
       needsHuman: 0,
-      active: 0,
+      active: 2,
       completed: 0,
       rejected: 0,
       duplicates: 0,
       blocked: 0,
       retrying: 0,
     },
-    runs: [],
+    runs: [
+      pipelineRun({
+        id: olderRunId,
+        title: 'Older pipeline run',
+        createdAt: '2026-07-27T09:00:00.000Z',
+      }),
+      pipelineRun({
+        id: existingRunId,
+        title: 'Newest pipeline run',
+        createdAt: '2026-07-27T10:30:00.000Z',
+      }),
+    ],
+  };
+}
+
+function pipelineRun({ id, title, createdAt }) {
+  return {
+    id,
+    title,
+    locale: 'en',
+    classification: 'active',
+    duplicateOf: null,
+    currentStage: 'research',
+    currentState: 'running',
+    reason: null,
+    currentRevision: 1,
+    currentAttempt: 1,
+    nextRetryAt: null,
+    reviewStatus: 'pending',
+    delivery: null,
+    createdAt,
+    updatedAt: createdAt,
   };
 }
 
