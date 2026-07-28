@@ -2,9 +2,10 @@ import { readFile } from "node:fs/promises";
 
 import sharp from "sharp";
 
-export const NUGLET_INFOGRAPHIC_RENDERER_VERSION = "nuglet-editorial-svg@1.0.1";
+export const NUGLET_INFOGRAPHIC_RENDERER_VERSION = "nuglet-editorial-svg@1.1.0";
 export const NUGLET_INFOGRAPHIC_WIDTH = 1080;
 export const NUGLET_INFOGRAPHIC_HEIGHT = 1920;
+export const NUGLET_INFOGRAPHIC_COMPOSITIONS = ["journey", "stack", "grid"];
 
 const SYMBOLS = new Set([
   "book",
@@ -168,36 +169,46 @@ export async function renderNugletInfographic(content, artDirection) {
     readFile(new URL("../assets/nuglet-short/BricolageGrotesqueRegular.ttf", import.meta.url)),
     readFile(new URL("../assets/nuglet-short/BricolageGrotesqueSemibold.ttf", import.meta.url)),
   ]);
+  const composition = selectInfographicComposition(source);
   const svg = renderInfographicSvg(source, artDirection, {
     fraunces: fraunces.toString("base64"),
     bricolageRegular: bricolageRegular.toString("base64"),
     bricolageSemibold: bricolageSemibold.toString("base64"),
-  });
+  }, composition);
   const bytes = await sharp(Buffer.from(svg))
     .png({ compressionLevel: 9, adaptiveFiltering: true })
     .toBuffer();
-  return { bytes, source, svg };
+  return { bytes, source, svg, composition };
 }
 
-export function renderInfographicSvg(source, artDirection, fonts = {}) {
+export function selectInfographicComposition(source) {
+  // Stable content-based selection prevents provider clustering while keeping retries reproducible.
+  const identity = `${source.title}\n${source.deck}`.normalize("NFKC").toLowerCase();
+  let hash = 2166136261;
+  for (const character of identity) {
+    hash ^= character.codePointAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return NUGLET_INFOGRAPHIC_COMPOSITIONS[(hash >>> 0) % NUGLET_INFOGRAPHIC_COMPOSITIONS.length];
+}
+
+export function renderInfographicSvg(
+  source,
+  artDirection,
+  fonts = {},
+  composition = selectInfographicComposition(source),
+) {
   const stageCount = source.steps.length;
   const headlineLines = wrapText(source.title, 19, 4);
   const deckLines = wrapText(source.deck, 43, 4);
   const headlineTop = 190;
   const deckTop = headlineTop + (headlineLines.length * 104) + 26;
   const contentTop = Math.max(680, deckTop + (deckLines.length * 42) + 100);
-  const contentBottom = 1540;
-  const gap = stageCount === 1 ? 0 : (contentBottom - contentTop) / (stageCount - 1);
-  const positions = source.steps.map((_, index) => {
-    const left = index % 2 === 0;
-    return {
-      y: Math.round(contentTop + (gap * index)),
-      textX: left ? 92 : 592,
-      iconX: left ? 770 : 310,
-      left,
-    };
-  });
-  const path = flowPath(positions, artDirection.path);
+  if (!NUGLET_INFOGRAPHIC_COMPOSITIONS.includes(composition)) {
+    throw new Error(`unsupported infographic composition: ${composition}`);
+  }
+  const contentBottom = composition === "grid" ? 1660 : 1540;
+  const layout = compositionLayout(composition, stageCount, contentTop, contentBottom);
   const paleAccent = PALE_ACCENTS[artDirection.accent];
   const grain = Array.from({ length: 80 }, (_, index) => {
     const x = (index * 137) % NUGLET_INFOGRAPHIC_WIDTH;
@@ -205,22 +216,23 @@ export function renderInfographicSvg(source, artDirection, fonts = {}) {
     const radius = index % 3 === 0 ? 1.2 : 0.7;
     return `<circle cx="${x}" cy="${y}" r="${radius}" fill="#6E665C" opacity="0.07"/>`;
   }).join("");
-  const stages = positions.map((position, index) => {
+  const stages = layout.positions.map((position, index) => {
     const label = `${String(index + 1).padStart(2, "0")}  ${artDirection.stageLabels[index].toUpperCase()}`;
     const bodyLines = wrapText(source.steps[index], 32, 5);
     return `
       <g aria-label="${escapeXml(`${label}. ${source.steps[index]}`)}">
-        <circle cx="${position.iconX}" cy="${position.y}" r="104" fill="${paleAccent}" opacity="0.62"/>
-        ${symbolSvg(artDirection.symbols[index], position.iconX, position.y)}
-        <text x="${position.textX}" y="${position.y - 24}" class="stage-label">${escapeXml(label)}</text>
-        <text x="${position.textX}" y="${position.y + 28}" class="stage-copy">
+        ${position.rule ? `<line x1="${position.rule.x1}" y1="${position.rule.y}" x2="${position.rule.x2}" y2="${position.rule.y}" stroke="#817A70" stroke-width="2" opacity="0.42"/>` : ""}
+        <circle cx="${position.iconX}" cy="${position.iconY}" r="${position.iconRadius}" fill="${paleAccent}" opacity="0.62"/>
+        ${symbolSvg(artDirection.symbols[index], position.iconX, position.iconY)}
+        <text x="${position.textX}" y="${position.labelY}" class="stage-label">${escapeXml(label)}</text>
+        <text x="${position.textX}" y="${position.copyY}" class="stage-copy">
           ${tspans(bodyLines, position.textX, 36)}
         </text>
       </g>`;
   }).join("");
-  const closingLines = wrapText(source.closing, 52, 3);
+  const closingLines = wrapText(source.closing, 42, 4);
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${NUGLET_INFOGRAPHIC_WIDTH}" height="${NUGLET_INFOGRAPHIC_HEIGHT}" viewBox="0 0 ${NUGLET_INFOGRAPHIC_WIDTH} ${NUGLET_INFOGRAPHIC_HEIGHT}" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="${NUGLET_INFOGRAPHIC_WIDTH}" height="${NUGLET_INFOGRAPHIC_HEIGHT}" viewBox="0 0 ${NUGLET_INFOGRAPHIC_WIDTH} ${NUGLET_INFOGRAPHIC_HEIGHT}" role="img" aria-labelledby="title description" data-composition="${composition}">
   <title id="title">${escapeXml(source.title)}</title>
   <desc id="description">${escapeXml(source.altText)}</desc>
   <style>
@@ -242,16 +254,87 @@ export function renderInfographicSvg(source, artDirection, fonts = {}) {
   <text x="92" y="${headlineTop}" class="headline">${tspans(headlineLines, 92, 104)}</text>
   <line x1="92" y1="${deckTop - 30}" x2="190" y2="${deckTop - 30}" stroke="#E87817" stroke-width="5"/>
   <text x="92" y="${deckTop}" class="deck">${tspans(deckLines, 92, 42)}</text>
-  <path d="${path}" fill="none" stroke="#817A70" stroke-width="3" stroke-linecap="round" opacity="0.58"/>
+  ${layout.connector(artDirection.path)}
   ${stages}
-  <circle cx="92" cy="1760" r="8" fill="#E87817"/>
-  <line x1="112" y1="1760" x2="286" y2="1760" stroke="#171512" stroke-width="3"/>
-  <text x="92" y="1812" class="closing">${tspans(closingLines.map((line) => line.toUpperCase()), 92, 36)}</text>
+  <circle cx="92" cy="1738" r="8" fill="#E87817"/>
+  <line x1="112" y1="1738" x2="286" y2="1738" stroke="#171512" stroke-width="3"/>
+  <text x="92" y="1786" class="closing">${tspans(closingLines.map((line) => line.toUpperCase()), 92, 34)}</text>
 </svg>`;
 }
 
+function compositionLayout(composition, stageCount, contentTop, contentBottom) {
+  if (composition === "stack") {
+    const start = contentTop + 70;
+    const end = contentBottom - 70;
+    const gap = stageCount === 1 ? 0 : (end - start) / (stageCount - 1);
+    const positions = Array.from({ length: stageCount }, (_, index) => {
+      const y = Math.round(start + (gap * index));
+      return {
+        iconX: 180,
+        iconY: y,
+        iconRadius: 86,
+        textX: 340,
+        labelY: y - 24,
+        copyY: y + 28,
+      };
+    });
+    return {
+      positions,
+      connector: () => `<line x1="180" y1="${start}" x2="180" y2="${end}" stroke="#817A70" stroke-width="3" opacity="0.58"/>`,
+    };
+  }
+
+  if (composition === "grid") {
+    const rows = Math.ceil(stageCount / 2);
+    const rowHeight = (contentBottom - contentTop) / rows;
+    const positions = Array.from({ length: stageCount }, (_, index) => {
+      const row = Math.floor(index / 2);
+      const rowTop = contentTop + (row * rowHeight);
+      const centeredLast = stageCount % 2 === 1 && index === stageCount - 1;
+      const textX = centeredLast ? 342 : index % 2 === 0 ? 92 : 592;
+      const iconX = centeredLast ? 540 : textX + 92;
+      const iconY = Math.round(rowTop + Math.min(100, rowHeight * 0.24));
+      return {
+        iconX,
+        iconY,
+        iconRadius: 82,
+        textX,
+        labelY: iconY + 96,
+        copyY: iconY + 138,
+        rule: {
+          x1: textX,
+          x2: textX + 396,
+          y: Math.round(rowTop),
+        },
+      };
+    });
+    return {
+      positions,
+      connector: () => "",
+    };
+  }
+
+  const gap = stageCount === 1 ? 0 : (contentBottom - contentTop) / (stageCount - 1);
+  const positions = Array.from({ length: stageCount }, (_, index) => {
+    const left = index % 2 === 0;
+    const y = Math.round(contentTop + (gap * index));
+    return {
+      iconX: left ? 770 : 310,
+      iconY: y,
+      iconRadius: 104,
+      textX: left ? 92 : 592,
+      labelY: y - 24,
+      copyY: y + 28,
+    };
+  });
+  return {
+    positions,
+    connector: (pathKind) => `<path d="${flowPath(positions, pathKind)}" fill="none" stroke="#817A70" stroke-width="3" stroke-linecap="round" opacity="0.58"/>`,
+  };
+}
+
 function flowPath(positions, pathKind) {
-  const points = positions.map(({ iconX, y }) => [iconX, y]);
+  const points = positions.map(({ iconX, iconY }) => [iconX, iconY]);
   if (points.length < 2) return "";
   let value = `M ${points[0][0]} ${points[0][1]}`;
   for (let index = 1; index < points.length; index += 1) {
@@ -263,7 +346,7 @@ function flowPath(positions, pathKind) {
   }
   if (pathKind === "loop") {
     const [lastX, lastY] = points.at(-1);
-    value += ` C ${lastX - 12} ${lastY + 90}, 170 1710, 92 1760`;
+    value += ` C ${lastX - 12} ${lastY + 90}, 170 1690, 92 1738`;
   }
   return value;
 }

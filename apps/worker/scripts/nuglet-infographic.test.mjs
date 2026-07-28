@@ -8,10 +8,13 @@ import {
   infographicPlanningPrompt,
   infographicSource,
   NUGLET_INFOGRAPHIC_HEIGHT,
+  NUGLET_INFOGRAPHIC_COMPOSITIONS,
   NUGLET_INFOGRAPHIC_RENDERER_VERSION,
   NUGLET_INFOGRAPHIC_WIDTH,
   parseInfographicArtDirection,
+  renderInfographicSvg,
   renderNugletInfographic,
+  selectInfographicComposition,
 } from "./nuglet-infographic.mjs";
 
 async function fixtureContent() {
@@ -89,7 +92,54 @@ test("renders a full-size portrait PNG with bundled Nuglet typography", async ()
   assert.match(rendered.svg, /Nuglet Fraunces/);
   assert.match(rendered.svg, /The restart marker/);
   assert.match(rendered.svg, /Write the next visible step/);
-  assert.equal(NUGLET_INFOGRAPHIC_RENDERER_VERSION, "nuglet-editorial-svg@1.0.1");
+  assert.equal(NUGLET_INFOGRAPHIC_RENDERER_VERSION, "nuglet-editorial-svg@1.1.0");
+});
+
+test("selects one stable composition from the checked title and deck", () => {
+  const source = {
+    title: "The Doubling Effect",
+    deck: "Exponential growth hides before it surprises you.",
+  };
+  const first = selectInfographicComposition(source);
+
+  assert.equal(selectInfographicComposition(source), first);
+  assert.equal(NUGLET_INFOGRAPHIC_COMPOSITIONS.includes(first), true);
+});
+
+test("content-based selection distributes representative lessons across all composition families", () => {
+  const compositions = [
+    {
+      title: "The Doubling Effect",
+      deck: "Discover why human intuition fails at grasping exponential change, the real-world costs of this bias, and how to outsmart it.",
+    },
+    {
+      title: "The Cycle of Confirmation Bias",
+      deck: "Discover how your brain filters information to protect your beliefs, and learn how to break the cycle.",
+    },
+    {
+      title: "Interrupting the Forgetting Curve",
+      deck: "Discover why your brain naturally deletes new information and how active retrieval can interrupt the forgetting curve.",
+    },
+  ].map(selectInfographicComposition);
+
+  assert.deepEqual(new Set(compositions), new Set(NUGLET_INFOGRAPHIC_COMPOSITIONS));
+});
+
+test("renders three restrained composition families without changing checked copy", async () => {
+  const content = await fixtureContent();
+  const source = infographicSource(content);
+  const artDirection = {
+    stageLabels: ["Pause clearly", "Leave a marker", "Begin again"],
+    symbols: ["book", "thread", "steps"],
+    accent: "sage",
+    path: "loop",
+  };
+
+  for (const composition of NUGLET_INFOGRAPHIC_COMPOSITIONS) {
+    const svg = renderInfographicSvg(source, artDirection, {}, composition);
+    assert.match(svg, new RegExp(`data-composition="${composition}"`));
+    for (const step of source.steps) assert.match(svg, new RegExp(step.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
 });
 
 test("keeps authoritative Feynman copy intact when it needs the long-copy layout", async () => {
@@ -141,7 +191,7 @@ test("uses checked playbook copy when a legacy visual text equivalent is product
   assert.deepEqual(source.steps, ["Notice the fragments", "Protect real rest"]);
 });
 
-test("supports a three-line checked closing across the full footer width", async () => {
+test("supports a four-line checked closing inside the footer safe area", async () => {
   const content = await fixtureContent();
   content.payload.learning.oneLineToKeep = "Because our intuition is calibrated for linear change, early exponential growth feels unremarkable until explosive acceleration arrives as a surprise.";
 
@@ -158,8 +208,8 @@ test("supports a three-line checked closing across the full footer width", async
   assert.match(rendered.svg, /EXPLOSIVE/);
   assert.match(rendered.svg, /ACCELERATION/);
   assert.match(rendered.svg, /SURPRISE/);
-  const closing = rendered.svg.match(/<text x="92" y="1812" class="closing">([\s\S]*?)<\/text>/)?.[1] ?? "";
-  assert.equal((closing.match(/<tspan/g) ?? []).length, 3);
+  const closing = rendered.svg.match(/<text x="92" y="1786" class="closing">([\s\S]*?)<\/text>/)?.[1] ?? "";
+  assert.equal((closing.match(/<tspan/g) ?? []).length, 4);
 });
 
 test("wraps a closing line before it reaches the right safe edge", async () => {
@@ -172,7 +222,7 @@ test("wraps a closing line before it reaches the right safe edge", async () => {
     accent: "sage",
     path: "loop",
   });
-  const closing = rendered.svg.match(/<text x="92" y="1812" class="closing">([\s\S]*?)<\/text>/)?.[1] ?? "";
+  const closing = rendered.svg.match(/<text x="92" y="1786" class="closing">([\s\S]*?)<\/text>/)?.[1] ?? "";
 
   assert.equal((closing.match(/<tspan/g) ?? []).length, 2);
   assert.doesNotMatch(closing, /AI DOESN&apos;T PREDICT THE FUTURE; IT JUST REMEMBERS THE PAST\.<\/tspan>/);

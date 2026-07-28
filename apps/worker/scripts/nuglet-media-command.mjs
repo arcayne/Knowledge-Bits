@@ -568,6 +568,7 @@ async function generateCurrentInfographicAsset(input) {
       provider: "vertex",
       plannerModel: model,
       rendererVersion: NUGLET_INFOGRAPHIC_RENDERER_VERSION,
+      composition: rendered.composition,
       planChecksum,
       checkedTextEquivalent: rendered.source.steps,
       altText: rendered.source.altText,
