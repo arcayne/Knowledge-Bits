@@ -50,7 +50,7 @@ export function mountPipelinePage({ document = globalThis.document, fetch = glob
     summary.textContent = filter === 'all'
       ? `${model.runs.length} runs · ${model.counts.active} active · ${model.counts.delivering} delivering · ${model.counts.completed} completed · ${model.counts.rejected} rejected · ${model.counts.duplicates} duplicates`
       : `${visibleRuns.length} run${visibleRuns.length === 1 ? '' : 's'} shown`;
-    renderDailyProgress(document, dailyProgress, model.daily);
+    renderDailyProgress(document, dailyProgress, model.daily, latestRun(model.runs));
     renderOperations(document, operations, model);
     statusCounts.replaceChildren(...[
       ['active', 'Active', model.counts.active],
@@ -358,7 +358,7 @@ function runRow(document, run) {
   return row;
 }
 
-function renderDailyProgress(document, container, daily) {
+function renderDailyProgress(document, container, daily, newestRun) {
   const heading = document.createElement('div');
   heading.className = 'daily-heading';
   const title = document.createElement('h2');
@@ -395,7 +395,21 @@ function renderDailyProgress(document, container, daily) {
     item.append(count, name);
     metrics.append(item);
   }
-  container.replaceChildren(heading, progress, metrics);
+  const children = [heading, progress, metrics];
+  if (newestRun) {
+    const latest = document.createElement('div');
+    latest.className = 'latest-run';
+    const label = document.createElement('strong');
+    label.textContent = 'Latest run';
+    const link = document.createElement('a');
+    link.href = `/runs/${encodeURIComponent(newestRun.id)}`;
+    link.textContent = newestRun.title;
+    const detail = document.createElement('p');
+    detail.textContent = `${newestRun.currentStage.replaceAll('_', ' ')} · ${newestRun.currentState.replaceAll('_', ' ')} · started ${formatUpdatedAt(newestRun.createdAt)}`;
+    latest.append(label, link, detail);
+    children.push(latest);
+  }
+  container.replaceChildren(...children);
 }
 
 function renderOperations(document, container, model) {
@@ -437,6 +451,14 @@ function labelForClassification(classification) {
     rejected: 'Rejected',
     duplicate: 'Duplicate',
   }[classification] || classification;
+}
+
+function latestRun(runs) {
+  return runs.reduce((latest, run) => {
+    if (!latest) return run;
+    const createdDelta = Date.parse(run.createdAt) - Date.parse(latest.createdAt);
+    return createdDelta > 0 || (createdDelta === 0 && run.id < latest.id) ? run : latest;
+  }, null);
 }
 
 function formatUpdatedAt(value) {
