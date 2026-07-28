@@ -4004,8 +4004,10 @@ function briefWithMediaRecipeOverrides(
   if (!parsedPlan.success) {
     throw new WorkflowValidationError('Media recipe override requires a valid Nuglet generation plan');
   }
+  const { mediaBaseline: _mediaBaseline, ...planWithoutMediaBaseline } = parsedPlan.data;
   const nextPlan = nugletGenerationPlanSchema.safeParse({
-    ...parsedPlan.data,
+    ...planWithoutMediaBaseline,
+    mediaMode: 'generate',
     recipes: {
       ...parsedPlan.data.recipes,
       infographic: recipeOverrides.infographic,

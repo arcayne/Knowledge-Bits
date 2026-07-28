@@ -102,9 +102,6 @@ test('approval freezes the checksum and queues one delivery action', async () =>
 test('infographic regeneration supersedes queued delivery and requires approval again', async () => {
   const { app, repository, storage } = createTestApp();
   const regenerationBrief = strictLegacyReplacementBrief();
-  const generationPlan = regenerationBrief.generationPlan as Record<string, unknown>;
-  delete generationPlan.mediaBaseline;
-  generationPlan.mediaMode = 'generate';
   const { runId, packageChecksum } = await reviewReadyRun(repository, storage, checksumA, regenerationBrief);
 
   const approved = await app.request(`/runs/${runId}/review`, {
@@ -154,10 +151,13 @@ test('infographic regeneration supersedes queued delivery and requires approval 
     },
   );
   const updatedRun = await repository.getRun(runId);
+  const updatedPlan = updatedRun?.brief.generationPlan as Record<string, any>;
   assert.equal(
-    (((updatedRun?.brief.generationPlan as Record<string, any>).recipes as Record<string, any>).infographic).version,
+    ((updatedPlan.recipes as Record<string, any>).infographic).version,
     '2.0.0',
   );
+  assert.equal(updatedPlan.mediaMode, 'generate');
+  assert.equal(updatedPlan.mediaBaseline, undefined);
   assert.deepEqual(updatedRun?.brief.mediaRegeneration, {
     sourcePackageChecksum: packageChecksum,
     regeneratedKinds: ['infographic'],
