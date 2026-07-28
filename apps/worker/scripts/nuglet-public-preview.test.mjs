@@ -44,7 +44,7 @@ test("compiles a limited English source without protected lesson answers", () =>
   assert.doesNotMatch(source, /Visible cues make attention easier to pull away/);
   assert.doesNotMatch(source, /Design the setup before relying on effort/);
   assert.match(source, /attention pattern/);
-  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.3.0");
+  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.4.0");
   assert.match(publicPreviewSourceTitle(brief), /^Nuglet public preview [a-f0-9]{12}$/);
 });
 
@@ -72,11 +72,15 @@ test("prompt keeps visual tension curious and brand-safe instead of angry", () =
   const prompt = renderPublicPreviewPrompt(brief, "[marker]");
 
   assert.match(source, /thoughtful surprise or puzzlement/);
-  assert.match(source, /untangling a knot/);
+  assert.match(source, /challenge or tension through objects and environments/);
   assert.doesNotMatch(source, /personally frustrating|self-blame/);
   assert.match(prompt, /gentle intellectual intrigue/);
-  assert.match(prompt, /surprise, curiosity, concentration, and gentle relief/);
-  assert.match(prompt, /Avoid angry, hostile, scowling, accusatory, distressed, panicked, or defeated expressions/);
+  assert.match(prompt, /every challenge, tension, or problem beat object-first/);
+  assert.match(prompt, /Do not use a human face to communicate friction, struggle, confusion, difficulty, failure, or conflict/);
+  assert.match(prompt, /relaxed forehead, relaxed eyes and mouth/);
+  assert.match(prompt, /Never show furrowed or knitted brows, narrowed eyes, downturned mouths, clenched jaws/);
+  assert.match(prompt, /Avoid close-up, front-facing portraits during tension or problem beats/);
+  assert.match(prompt, /thoughtful surprise, curiosity, calm recognition, clarity, and gentle relief/);
   assert.match(prompt, /never emotionally threatening/);
   assert.doesNotMatch(prompt, /Build tension/);
 });
