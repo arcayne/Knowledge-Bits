@@ -44,7 +44,7 @@ test("compiles a limited English source without protected lesson answers", () =>
   assert.doesNotMatch(source, /Visible cues make attention easier to pull away/);
   assert.doesNotMatch(source, /Design the setup before relying on effort/);
   assert.match(source, /attention pattern/);
-  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.2.0");
+  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.3.0");
   assert.match(publicPreviewSourceTitle(brief), /^Nuglet public preview [a-f0-9]{12}$/);
 });
 
@@ -64,6 +64,21 @@ test("prompt biases casting toward the core audience without making it exclusive
   assert.match(prompt, /flexible direction, not an exclusive rule or rigid quota/);
   assert.match(prompt, /Avoid repeatedly defaulting to middle-aged or older men/);
   assert.match(prompt, /avoid stereotypes or tokenistic casting/);
+});
+
+test("prompt keeps visual tension curious and brand-safe instead of angry", () => {
+  const brief = compilePublicPreview(content);
+  const source = renderPublicPreviewSource(brief);
+  const prompt = renderPublicPreviewPrompt(brief, "[marker]");
+
+  assert.match(source, /thoughtful surprise or puzzlement/);
+  assert.match(source, /untangling a knot/);
+  assert.doesNotMatch(source, /personally frustrating|self-blame/);
+  assert.match(prompt, /gentle intellectual intrigue/);
+  assert.match(prompt, /surprise, curiosity, concentration, and gentle relief/);
+  assert.match(prompt, /Avoid angry, hostile, scowling, accusatory, distressed, panicked, or defeated expressions/);
+  assert.match(prompt, /never emotionally threatening/);
+  assert.doesNotMatch(prompt, /Build tension/);
 });
 
 test("flags obvious practice and quiz-answer leakage", () => {

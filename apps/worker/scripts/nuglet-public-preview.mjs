@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.2.0";
+export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.3.0";
 
 export function compilePublicPreview(content) {
   const lesson = lessonPayload(content);
@@ -26,15 +26,16 @@ export function compilePublicPreview(content) {
     promptTemplateVersion: PUBLIC_PREVIEW_TEMPLATE_VERSION,
     locale: "en",
     title,
-    recognitionMoment: `Introduce the everyday tension suggested by "${title}" without explaining how to resolve it.`,
-    centralProblem: `Show why this ${topicLabel} pattern can feel confusing or personally frustrating.`,
+    recognitionMoment: `Introduce the familiar puzzle suggested by "${title}" without explaining how to resolve it.`,
+    centralProblem: `Show why this ${topicLabel} pattern can feel puzzling or mentally tangled without turning the moment into conflict or distress.`,
     whyItMatters: "Build curiosity about why the pattern matters without stating the lesson's reframe or action.",
     learningOutcomes: [
       `recognize the situation behind "${title}"`,
       "understand why the pattern matters",
       "see that the full Nuglet contains a practical next step",
     ],
-    emotionalShiftDirection: "Move from self-blame toward calm curiosity.",
+    emotionalShiftDirection: "Move from thoughtful surprise or puzzlement toward calm curiosity, clarity, and gentle relief.",
+    visualDirection: "When useful, show an inviting metaphor such as untangling a knot, making sense of a mess, or discovering a path. Expressions should convey surprise, curiosity, concentration, and gentle relief, never anger or hostility.",
     finalInvitation: "Learn the practical next step in the full Nuglet.",
     protectedContent: {
       exactPractice: takeaway,
@@ -69,6 +70,9 @@ export function renderPublicPreviewSource(brief) {
     "## Emotional direction",
     brief.emotionalShiftDirection,
     "",
+    "## Visual direction",
+    brief.visualDirection,
+    "",
     "## Invitation",
     brief.finalInvitation,
     "",
@@ -86,10 +90,12 @@ export function renderPublicPreviewPrompt(brief, marker) {
     "Treat the selected curated preview source as the only allowed source.",
     "This is a preview, not a summary: do not reveal the exact practice, its steps, quiz answers, complete reframe, or conclusion.",
     "Use NotebookLM Short format: approximately 45-60 seconds, vertical, and mobile-first.",
-    "Open immediately inside the recognition moment. Build tension, explain why it matters, then promise what the full Nuglet helps the viewer understand without giving the answer.",
+    "Open immediately inside the recognition moment. Build gentle intellectual intrigue, explain why it matters, then promise what the full Nuglet helps the viewer understand without giving the answer.",
     "Use one calm narrative arc.",
     "Visual casting should generally reflect working adults aged roughly 25-40, with women represented most often. Younger men and people from varied backgrounds should appear naturally too. This is a flexible direction, not an exclusive rule or rigid quota. Avoid repeatedly defaulting to middle-aged or older men, and avoid stereotypes or tokenistic casting.",
-    "Tone: warm, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises.",
+    "Use thoughtful surprise, curiosity, concentration, and gentle relief. When useful, visualize a tangled idea becoming understandable through an inviting knot, mess, maze, or path metaphor.",
+    "Avoid angry, hostile, scowling, accusatory, distressed, panicked, or defeated expressions, and avoid confrontational body language. The challenge should feel intellectually intriguing, never emotionally threatening.",
+    "Tone: warm, hopeful, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises.",
   ].join(" ");
 }
 

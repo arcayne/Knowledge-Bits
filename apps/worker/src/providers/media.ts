@@ -26,6 +26,8 @@ export type MediaKind =
   | 'audio_discussion'
   | 'public_preview';
 
+const PUBLIC_PREVIEW_MAX_SECONDS = 90;
+
 export type MediaOperation = 'attach_existing' | 'generate';
 
 const NOTEBOOKLM_INFOGRAPHIC_FOOTER_WIDTH_RATIO = 0.0472;
@@ -292,7 +294,7 @@ function validateGeneratedMedia(
       || typeof durationSeconds !== 'number'
       || !Number.isFinite(durationSeconds)
       || durationSeconds < 40
-      || durationSeconds > 65
+      || durationSeconds > PUBLIC_PREVIEW_MAX_SECONDS
       || !width
       || !height
       || Math.abs(width / height - 9 / 16) > 0.08

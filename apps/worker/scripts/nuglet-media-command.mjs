@@ -15,7 +15,10 @@ import {
   renderPublicPreviewPrompt,
   renderPublicPreviewSource,
 } from "./nuglet-public-preview.mjs";
-import { renderPublicPreviewVideo } from "./nuglet-public-preview-renderer.mjs";
+import {
+  PUBLIC_PREVIEW_MAX_SECONDS,
+  renderPublicPreviewVideo,
+} from "./nuglet-public-preview-renderer.mjs";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_VISUAL_REVIEW_MODEL = "gemini-2.5-flash";
@@ -953,7 +956,7 @@ async function generateCurrentMedia(input) {
         const leaks = protectedLeakage(transcription.transcript, brief);
         const technicalPassed = metadata.hasAudio
           && metadata.durationSeconds >= 40
-          && metadata.durationSeconds <= 65
+          && metadata.durationSeconds <= PUBLIC_PREVIEW_MAX_SECONDS
           && Math.abs(metadata.width / metadata.height - 9 / 16) <= 0.08;
         assetsByKind.set(kind, {
           kind,
@@ -976,6 +979,8 @@ async function generateCurrentMedia(input) {
             providerDurationSeconds: rendered.providerDurationSeconds,
             providerTailTrimSeconds: rendered.providerTailTrimSeconds,
             narrativeDurationSeconds: rendered.narrativeDurationSeconds,
+            audioSourceDurationSeconds: rendered.audioSourceDurationSeconds,
+            audioTailTrimSeconds: rendered.audioTailTrimSeconds,
             endCardDurationSeconds: rendered.endCardDurationSeconds,
             endCardTransitionSeconds: rendered.endCardTransitionSeconds,
             endCardVoiceOverlapSeconds: rendered.endCardVoiceOverlapSeconds,
@@ -990,7 +995,7 @@ async function generateCurrentMedia(input) {
               sourceGroundingPassed: null,
               narrativePassed: null,
               issues: [
-                ...(technicalPassed ? [] : ["Video must be 40-65 seconds, near 9:16, and contain audio."]),
+                ...(technicalPassed ? [] : [`Video must be 40-${PUBLIC_PREVIEW_MAX_SECONDS} seconds, near 9:16, and contain audio.`]),
                 ...(leaks.length ? [`Possible protected-content leakage: ${leaks.join(" | ")}`] : []),
               ],
             },
