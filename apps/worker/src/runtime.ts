@@ -913,10 +913,14 @@ function trustedContextResolver<T extends { generationPlan?: NugletGenerationPla
   verifier: TrustedRecipeBindingVerifier | undefined,
 ): (input: ProviderExecutionInput) => Promise<T> {
   return async (input) => {
+    const mediaKinds = input.action === 'produce_assets'
+      ? mediaKindsFromJob(input.job.input)
+      : undefined;
     const generation = await validatedGenerationPlan(
       jobBrief(input),
       input.job.input.notebookLmNotebookId,
       verifier,
+      mediaKinds ? mediaRecipeRoles(mediaKinds) : undefined,
     );
     const context = await resolver(input);
     return generation
