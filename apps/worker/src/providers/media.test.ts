@@ -133,10 +133,10 @@ test('media passes four resolved recipe snapshots and per-run hero direction in 
   assert.equal(requests[0]?.generationInputChecksum, generationInputChecksum);
   assert.notEqual(requests[0]?.generationInputChecksum, semanticChecksum);
   assert.deepEqual(requests[0]?.heroDirection, generationPlan.heroDirection);
-  assert.equal(requests[0]?.resolvedRecipes.hero.id, 'nuglet.hero');
-  assert.equal(requests[0]?.resolvedRecipes.infographic.id, 'nuglet.visual.infographic');
-  assert.equal(requests[0]?.resolvedRecipes.audioBrief.id, 'nuglet.audio.brief');
-  assert.equal(requests[0]?.resolvedRecipes.audioDiscussion.id, 'nuglet.audio.discussion');
+  assert.equal(requests[0]?.resolvedRecipes.hero?.id, 'nuglet.hero');
+  assert.equal(requests[0]?.resolvedRecipes.infographic?.id, 'nuglet.visual.infographic');
+  assert.equal(requests[0]?.resolvedRecipes.audioBrief?.id, 'nuglet.audio.brief');
+  assert.equal(requests[0]?.resolvedRecipes.audioDiscussion?.id, 'nuglet.audio.discussion');
 });
 
 test('media regenerates only the explicitly requested review asset', async () => {

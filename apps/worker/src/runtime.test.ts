@@ -307,6 +307,25 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   const notebook = await resolver.notebook(input('create_content', dependencies, brief));
   const pi = await resolver.pi(input('check_content', dependencies, brief));
   const media = await resolver.media(input('produce_assets', dependencies, brief));
+  const targetedPlan = structuredClone(generationPlan);
+  delete (targetedPlan as Partial<typeof targetedPlan>).mediaBaseline;
+  (targetedPlan as typeof targetedPlan & { mediaMode: 'generate' }).mediaMode = 'generate';
+  targetedPlan.recipes.hero.checksum = `sha256:${'b'.repeat(64)}`;
+  const targetedInput = input('produce_assets', dependencies, {
+    ...brief,
+    generationPlan: targetedPlan,
+    notebookLmNotebookId: generationPlan.mediaBaseline.descriptor.notebookId,
+  });
+  const targetedMedia = await resolver.media({
+    ...targetedInput,
+    job: {
+      ...targetedInput.job,
+      input: {
+        ...targetedInput.job.input,
+        mediaKinds: ['infographic'],
+      },
+    },
+  });
 
   assert.deepEqual(notebook.generationPlan, generationPlan);
   assert.deepEqual(pi.generationPlan, generationPlan);
@@ -321,6 +340,8 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   assert.equal(notebook.resolvedRecipes?.story?.id, generationPlan.recipes.story.id);
   assert.equal(pi.resolvedRecipes?.editorialQa?.id, generationPlan.recipes.editorialQa.id);
   assert.equal(media.resolvedRecipes?.hero?.id, generationPlan.recipes.hero.id);
+  assert.equal(targetedMedia.resolvedRecipes?.infographic?.id, generationPlan.recipes.infographic.id);
+  assert.equal(targetedMedia.resolvedRecipes?.hero, undefined);
 });
 
 test('passes warning-bearing Story and Playbook QA through the media provider gate', async () => {
@@ -958,11 +979,19 @@ function contextClient(bodies: Map<string, Uint8Array>): WorkerEngineClient {
 }
 
 function acceptingRecipeVerifier(): TrustedRecipeBindingVerifier {
-  return { resolvePlan: (plan) => resolvedRecipesFor(plan) };
+  return {
+    resolve: (binding) => resolvedRecipeFor(binding),
+    resolvePlan: (plan) => resolvedRecipesFor(plan),
+  };
 }
 
 function exactRecipeVerifier(trusted: typeof generationPlan): TrustedRecipeBindingVerifier {
   return {
+    resolve(binding) {
+      const trustedBinding = Object.values(trusted.recipes).find((candidate) => candidate.id === binding.id);
+      if (!trustedBinding) throw new Error(`untrusted recipe: ${binding.id}`);
+      return resolvedRecipeFor(trustedBinding);
+    },
     resolvePlan() {
       return resolvedRecipesFor(trusted);
     },
@@ -970,11 +999,18 @@ function exactRecipeVerifier(trusted: typeof generationPlan): TrustedRecipeBindi
 }
 
 function resolvedRecipesFor(plan: Pick<NugletGenerationPlan, 'recipes'>) {
-  return Object.fromEntries(Object.entries(plan.recipes).map(([role, binding]) => [role, {
+  return Object.fromEntries(Object.entries(plan.recipes).map(([role, binding]) => [
+    role,
+    resolvedRecipeFor(binding),
+  ])) as unknown as ResolvedNugletRecipes;
+}
+
+function resolvedRecipeFor(binding: { id: string; version: string; checksum: string }) {
+  return {
     ...binding,
     canonicalBytes: Buffer.from(JSON.stringify(binding)),
     value: binding,
-  }])) as unknown as ResolvedNugletRecipes;
+  };
 }
 
 async function semanticCandidate() {
