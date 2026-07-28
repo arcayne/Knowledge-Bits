@@ -316,7 +316,9 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
     generationPlan: targetedPlan,
     notebookLmNotebookId: generationPlan.mediaBaseline.descriptor.notebookId,
   });
-  const targetedMedia = await resolver.media({
+  const scopedVerifier = scopedOnlyRecipeVerifier();
+  const scopedResolver = new LeaseScopedJobContextResolver(client, scopedVerifier);
+  const scopedInput = {
     ...targetedInput,
     job: {
       ...targetedInput.job,
@@ -325,7 +327,24 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
         mediaKinds: ['infographic'],
       },
     },
-  });
+  };
+  const targetedMedia = await scopedResolver.media(scopedInput);
+  let targetedCalls = 0;
+  const targetedProvider = composeWorkerProviders({
+    env: {},
+    runtime: {
+      recipeBindingVerifier: scopedVerifier,
+      mediaClient: {
+        async generate() {
+          targetedCalls += 1;
+          return [];
+        },
+      },
+      mediaContext: (execution) => scopedResolver.media(execution),
+    },
+  })[2];
+  assert.ok(targetedProvider);
+  await assert.rejects(() => targetedProvider.execute(scopedInput), /media_empty_response/);
 
   assert.deepEqual(notebook.generationPlan, generationPlan);
   assert.deepEqual(pi.generationPlan, generationPlan);
@@ -342,6 +361,7 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   assert.equal(media.resolvedRecipes?.hero?.id, generationPlan.recipes.hero.id);
   assert.equal(targetedMedia.resolvedRecipes?.infographic?.id, generationPlan.recipes.infographic.id);
   assert.equal(targetedMedia.resolvedRecipes?.hero, undefined);
+  assert.equal(targetedCalls, 1);
 });
 
 test('passes warning-bearing Story and Playbook QA through the media provider gate', async () => {
@@ -994,6 +1014,15 @@ function exactRecipeVerifier(trusted: typeof generationPlan): TrustedRecipeBindi
     },
     resolvePlan() {
       return resolvedRecipesFor(trusted);
+    },
+  };
+}
+
+function scopedOnlyRecipeVerifier(): TrustedRecipeBindingVerifier {
+  return {
+    resolve: (binding) => resolvedRecipeFor(binding),
+    resolvePlan() {
+      throw new Error('full plan resolution is intentionally unavailable');
     },
   };
 }
