@@ -43,6 +43,7 @@ export type MediaRecipes = Pick<
   ResolvedNugletRecipes,
   'hero' | 'infographic' | 'audioBrief' | 'audioDiscussion'
 >;
+export type SelectedMediaRecipes = Partial<MediaRecipes>;
 
 export type GeneratedMedia = {
   kind: MediaKind;
@@ -62,7 +63,7 @@ export interface MediaClient {
     notebookLmNotebookId: string;
     heroDirection: NugletGenerationPlan['heroDirection'];
     mediaBaseline?: NugletMediaBaseline;
-    resolvedRecipes: MediaRecipes;
+    resolvedRecipes: SelectedMediaRecipes;
     executionInput: ProviderExecutionInput;
     legacyMediaReuse?: unknown;
     mediaOperation?: MediaOperation;
@@ -103,7 +104,7 @@ export class MediaProviderAdapter implements MediaProvider {
     const mediaOperation = context.mediaOperation ?? 'generate';
     if (mediaOperation === 'attach_existing') assertLegacyMediaKinds(kinds, context.legacyMediaReuse);
     else assertGeneratedMediaKinds(kinds);
-    const generation = requiredMediaGenerationContext(context.generationPlan, context.resolvedRecipes);
+    const generation = requiredMediaGenerationContext(context.generationPlan, context.resolvedRecipes, kinds);
     const generationInputChecksum = calculateNugletGenerationInputChecksum({
       semanticTarget: context.content,
       generationPlan: generation.plan,
@@ -249,19 +250,22 @@ function assertDistinctAudioBytes(generated: readonly GeneratedMedia[]): void {
 function requiredMediaGenerationContext(
   plan: NugletGenerationPlan | undefined,
   recipes: Partial<ResolvedNugletRecipes> | undefined,
-): { plan: NugletGenerationPlan; recipes: MediaRecipes } {
+  kinds: readonly MediaKind[],
+): { plan: NugletGenerationPlan; recipes: SelectedMediaRecipes } {
   if (plan?.schemaVersion !== '1.1.0') throw new ProviderNeedsHumanError('media_generation_plan_required');
-  if (!recipes?.hero || !recipes.infographic || !recipes.audioBrief || !recipes.audioDiscussion) {
+  const requiredRoles = kinds.flatMap((kind) => {
+    if (kind === 'hero') return ['hero'] as const;
+    if (kind === 'infographic') return ['infographic'] as const;
+    if (kind === 'audio_brief') return ['audioBrief'] as const;
+    if (kind === 'audio_discussion') return ['audioDiscussion'] as const;
+    return [];
+  });
+  if (requiredRoles.some((role) => !recipes?.[role])) {
     throw new ProviderNeedsHumanError('media_recipes_incomplete');
   }
   return {
     plan,
-    recipes: {
-      hero: recipes.hero,
-      infographic: recipes.infographic,
-      audioBrief: recipes.audioBrief,
-      audioDiscussion: recipes.audioDiscussion,
-    },
+    recipes: Object.fromEntries(requiredRoles.map((role) => [role, recipes?.[role]])),
   };
 }
 
@@ -296,7 +300,7 @@ function assertLegacyMediaKinds(kinds: readonly MediaKind[], reuse: unknown): vo
 
 function validateGeneratedMedia(
   asset: GeneratedMedia,
-  recipes: MediaRecipes,
+  recipes: SelectedMediaRecipes,
   baseline: NugletMediaBaseline | undefined,
   allowExistingMedia = false,
 ): void {
@@ -347,7 +351,7 @@ function validateGeneratedMedia(
         throw new ProviderNeedsHumanError('media_hero_metadata_invalid');
       }
       if (!allowExistingMedia) {
-        const recipe = recipes.hero;
+        const recipe = recipeForKind(recipes, 'hero');
         if (asset.metadata.styleProfileChecksum !== recipe.checksum) {
           throw new ProviderNeedsHumanError('media_hero_profile_mismatch');
         }
@@ -525,14 +529,19 @@ function expectedHeroReferenceChecksums(
   return recorded as string[];
 }
 
-export function recipeForKind(recipes: MediaRecipes, kind: MediaKind): ResolvedRecipe {
-  if (kind === 'hero') return recipes.hero;
-  if (kind === 'infographic') return recipes.infographic;
-  if (kind === 'audio_brief') return recipes.audioBrief;
+export function recipeForKind(recipes: SelectedMediaRecipes, kind: MediaKind): ResolvedRecipe {
   if (kind === 'public_preview') {
     throw new ProviderNeedsHumanError('media_public_preview_recipe_not_applicable');
   }
-  return recipes.audioDiscussion;
+  const recipe = kind === 'hero'
+    ? recipes.hero
+    : kind === 'infographic'
+      ? recipes.infographic
+      : kind === 'audio_brief'
+        ? recipes.audioBrief
+        : recipes.audioDiscussion;
+  if (!recipe) throw new ProviderNeedsHumanError(`media_recipe_missing:${kind}`);
+  return recipe;
 }
 
 function positiveInteger(value: unknown): number | undefined {

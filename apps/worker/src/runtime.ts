@@ -23,8 +23,8 @@ import {
   type GeneratedMedia,
   type MediaClient,
   type MediaKind,
-  type MediaRecipes,
   type MediaOperation,
+  type SelectedMediaRecipes,
 } from './providers/media.js';
 import { generationSupportArtifacts } from './recipes/support-artifacts.js';
 import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess, type ResearchSourceVerifier } from './providers/notebooklm.js';
@@ -46,7 +46,12 @@ import {
   type WorkerProvider,
 } from './providers/types.js';
 import { FileRecipeRegistry } from './recipes/file-registry.js';
-import type { ResolvedNugletRecipes } from './recipes/types.js';
+import type {
+  NugletRecipeRole,
+  RecipeBinding,
+  ResolvedNugletRecipes,
+  ResolvedRecipe,
+} from './recipes/types.js';
 
 type NotebookContextResolver = (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
 type PiContextResolver = (input: ProviderExecutionInput) => Promise<{
@@ -68,6 +73,7 @@ type MediaContextResolver = (input: ProviderExecutionInput) => Promise<{
 }>;
 
 export interface TrustedRecipeBindingVerifier {
+  resolve?(binding: RecipeBinding): ResolvedRecipe | Promise<ResolvedRecipe>;
   resolvePlan(plan: NugletGenerationPlan): ResolvedNugletRecipes | Promise<ResolvedNugletRecipes>;
 }
 
@@ -241,15 +247,16 @@ export class LeaseScopedJobContextResolver {
 
   async media(input: ProviderExecutionInput) {
     const brief = jobBrief(input);
+    const mediaKinds = mediaKindsFromJob(input.job.input);
     const generation = await validatedGenerationPlan(
       brief,
       input.job.input.notebookLmNotebookId,
       this.recipeBindingVerifier,
+      mediaKinds ? mediaRecipeRoles(mediaKinds) : undefined,
     );
     const content = await this.content(input);
     const qa = knowledgeBitsQaSchema.parse(await this.readJsonDependency(input, 'check_content', 'parsed_output'));
     const contentChecksum = calculateContentChecksum(content);
-    const mediaKinds = mediaKindsFromJob(input.job.input);
     const mediaOperation = mediaOperationFromJob(input.job.input);
     const generationPlan = isRecord(brief.generationPlan) ? brief.generationPlan : undefined;
     const legacyMediaReuse = generationPlan?.legacyMediaReuse ?? brief.legacyMediaReuse;
@@ -641,7 +648,7 @@ export class LocalMediaCommandClient implements MediaClient {
     notebookLmNotebookId: string;
     heroDirection: NugletGenerationPlan['heroDirection'];
     mediaBaseline?: NugletMediaBaseline;
-    resolvedRecipes: MediaRecipes;
+    resolvedRecipes: SelectedMediaRecipes;
     executionInput: ProviderExecutionInput;
     legacyMediaReuse?: unknown;
     mediaOperation?: MediaOperation;
@@ -853,7 +860,8 @@ async function validatedGenerationPlan(
   brief: Record<string, unknown>,
   runNotebookLmNotebookId: unknown,
   verifier: TrustedRecipeBindingVerifier | undefined,
-): Promise<{ plan: NugletGenerationPlan; recipes: ResolvedNugletRecipes } | undefined> {
+  selectedRoles?: readonly NugletRecipeRole[],
+): Promise<{ plan: NugletGenerationPlan; recipes: Partial<ResolvedNugletRecipes> } | undefined> {
   const value = brief.generationPlan;
   if (value === undefined) {
     if (brief.contentKind === 'nuglet.lesson.v1') {
@@ -876,14 +884,25 @@ async function validatedGenerationPlan(
     throw new ProviderNeedsHumanError('run_notebook_id_mismatch');
   }
   if (!verifier) throw new ProviderNeedsHumanError('generation_recipe_verifier_unconfigured');
-  let recipes: ResolvedNugletRecipes;
+  let recipes: Partial<ResolvedNugletRecipes>;
   try {
-    recipes = await verifier.resolvePlan(parsed.data);
+    if (selectedRoles) {
+      if (!verifier.resolve) throw new Error('Scoped recipe resolution is unavailable');
+      recipes = Object.fromEntries(await Promise.all(selectedRoles.map(async (role) => [
+        role,
+        await verifier.resolve!({
+          contentKind: parsed.data.contentKind,
+          ...parsed.data.recipes[role],
+        }),
+      ])));
+    } else {
+      recipes = await verifier.resolvePlan(parsed.data);
+    }
   } catch (error) {
     if (error instanceof ProviderNeedsHumanError) throw error;
     throw new ProviderNeedsHumanError('generation_recipe_verification_failed');
   }
-  if (!resolvedRecipesMatchPlan(parsed.data, recipes)) {
+  if (!resolvedRecipesMatchPlan(parsed.data, recipes, selectedRoles)) {
     throw new ProviderNeedsHumanError('generation_recipe_binding_mismatch');
   }
   return { plan: parsed.data, recipes };
@@ -906,8 +925,15 @@ function trustedContextResolver<T extends { generationPlan?: NugletGenerationPla
   };
 }
 
-function resolvedRecipesMatchPlan(plan: NugletGenerationPlan, recipes: ResolvedNugletRecipes): boolean {
-  return Object.entries(plan.recipes).every(([role, binding]) => {
+function resolvedRecipesMatchPlan(
+  plan: NugletGenerationPlan,
+  recipes: Partial<ResolvedNugletRecipes>,
+  selectedRoles?: readonly NugletRecipeRole[],
+): boolean {
+  const entries = selectedRoles
+    ? selectedRoles.map((role) => [role, plan.recipes[role]] as const)
+    : Object.entries(plan.recipes);
+  return entries.every(([role, binding]) => {
     const recipe = recipes[role as keyof ResolvedNugletRecipes];
     return recipe?.id === binding.id
       && recipe.version === binding.version
@@ -918,7 +944,7 @@ function resolvedRecipesMatchPlan(plan: NugletGenerationPlan, recipes: ResolvedN
 function parseMediaAsset(
   value: unknown,
   input: {
-    resolvedRecipes: MediaRecipes;
+    resolvedRecipes: SelectedMediaRecipes;
     executionInput: ProviderExecutionInput;
     mediaOperation?: MediaOperation;
   },
@@ -1018,13 +1044,23 @@ function decodeBase64(value: string, reason: string): Buffer {
   return bytes;
 }
 
-function serializeMediaRecipes(recipes: MediaRecipes): Record<string, unknown> {
+function serializeMediaRecipes(recipes: SelectedMediaRecipes): Record<string, unknown> {
   return Object.fromEntries(Object.entries(recipes).map(([role, recipe]) => [role, {
     id: recipe.id,
     version: recipe.version,
     checksum: recipe.checksum,
     canonicalBase64: Buffer.from(recipe.canonicalBytes).toString('base64'),
   }]));
+}
+
+function mediaRecipeRoles(kinds: readonly MediaKind[]): readonly NugletRecipeRole[] {
+  return [...new Set(kinds.flatMap((kind) => {
+    if (kind === 'hero') return ['hero'] as const;
+    if (kind === 'infographic') return ['infographic'] as const;
+    if (kind === 'audio_brief') return ['audioBrief'] as const;
+    if (kind === 'audio_discussion') return ['audioDiscussion'] as const;
+    return [];
+  }))];
 }
 
 function mediaKindsFromJob(input: Record<string, unknown>): readonly MediaKind[] | undefined {
