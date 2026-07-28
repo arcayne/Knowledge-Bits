@@ -285,6 +285,29 @@ local operator name. The local review service always talks to `KNOWLEDGE_BITS_LO
 review authentication remains separate. The supervisor prefers Homebrew's `node@24` runtime, matching
 the repository and Vercel runtime contract, without changing the machine's default interactive Node.
 
+### Branded infographic replacement rounds
+
+Use the operator-only campaign command to move existing Nuglets to the current branded infographic
+recipe in small, review-only rounds. `preflight` reads the checked package and renders it locally without
+calling Vertex. `run` queues and executes one run at a time, pins every worker tick to that run, verifies
+the stored PNG bytes and checksum, and stops each package at Human Review. It never approves or delivers.
+
+```bash
+set -a
+source /absolute/path/to/supervisor.env
+set +a
+
+pnpm infographic:campaign preflight
+pnpm infographic:campaign run --limit 5
+pnpm infographic:campaign status
+```
+
+The resumable state file defaults to
+`.local-supervisor/infographic-replacement-campaign-v2.json`. It contains workflow identifiers,
+checksums, review links, and outcomes only; credentials are never persisted. The command excludes
+already-current, rejected, and active pipeline runs, and stops the entire round on the first failed
+generation or verification.
+
 The supervisor writes only local logs and local filesystem artifacts under the repository:
 
 ```text

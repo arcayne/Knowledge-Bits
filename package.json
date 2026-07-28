@@ -19,7 +19,9 @@
     "migration:registry:validate": "node scripts/validate-nuglet-migration-registry.mjs",
     "migration:registry:verify-live": "node scripts/validate-nuglet-migration-registry.mjs --live",
     "check:nuglet-similarity": "node scripts/check-nuglet-similarity.mjs",
-    "new:nuglet": "node scripts/new-nuglet.mjs"
+    "new:nuglet": "node scripts/new-nuglet.mjs",
+    "infographic:campaign": "node scripts/infographic-replacement-round.mjs",
+    "test:infographic-campaign": "node --test scripts/infographic-replacement-round.test.mjs"
   },
   "devDependencies": {
     "turbo": "2.9.18",
