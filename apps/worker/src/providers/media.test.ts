@@ -146,6 +146,22 @@ test('media accepts one technically valid public preview and keeps it pending hu
   });
 });
 
+test('media accepts a narration-preserving public preview slightly over 65 seconds', async () => {
+  const provider = providerFor((request) => request.kinds.map((kind) => {
+    const asset = generated(kind);
+    return kind === 'public_preview'
+      ? { ...asset, metadata: { ...asset.metadata, durationSeconds: 65.7 } }
+      : asset;
+  }), generationPlan, {
+    mediaKinds: ['public_preview'],
+    mediaOperation: 'generate',
+  });
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
+});
+
 test('media preserves measured metadata and recipe support evidence on all four outputs', async () => {
   const provider = providerFor((request) => request.kinds.map((kind) => generated(kind)));
 
