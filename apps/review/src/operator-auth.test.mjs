@@ -48,6 +48,35 @@ test('fails closed for missing identity configuration, missing tokens, and unaut
   );
 });
 
+test('reads production identity configuration from the server runtime environment', async () => {
+  const keys = [
+    'REVIEW_AUTH_JWKS_URL',
+    'REVIEW_AUTH_ISSUER',
+    'REVIEW_AUTH_AUDIENCE',
+  ];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    REVIEW_AUTH_JWKS_URL: 'https://identity.example.test/.well-known/jwks.json',
+    REVIEW_AUTH_ISSUER: issuer,
+    REVIEW_AUTH_AUDIENCE: audience,
+  });
+
+  try {
+    await assert.rejects(
+      authenticateOperator(new Request('https://review.example.test'), {}),
+      (error) => error instanceof Error
+        && 'status' in error
+        && error.status === 401
+        && /required/i.test(error.message),
+    );
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
+});
+
 test('accepts an explicit local operator only when the caller enables local mode', async () => {
   const env = { REVIEW_LOCAL_OPERATOR_ID: 'local-reviewer' };
   const request = new Request('http://127.0.0.1:4321/runs/local');
