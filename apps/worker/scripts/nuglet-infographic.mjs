@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import sharp from "sharp";
 
-export const NUGLET_INFOGRAPHIC_RENDERER_VERSION = "nuglet-editorial-svg@1.0.0";
+export const NUGLET_INFOGRAPHIC_RENDERER_VERSION = "nuglet-editorial-svg@1.0.1";
 export const NUGLET_INFOGRAPHIC_WIDTH = 1080;
 export const NUGLET_INFOGRAPHIC_HEIGHT = 1920;
 
@@ -218,7 +218,7 @@ export function renderInfographicSvg(source, artDirection, fonts = {}) {
         </text>
       </g>`;
   }).join("");
-  const closingLines = wrapText(source.closing, 60, 3);
+  const closingLines = wrapText(source.closing, 52, 3);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${NUGLET_INFOGRAPHIC_WIDTH}" height="${NUGLET_INFOGRAPHIC_HEIGHT}" viewBox="0 0 ${NUGLET_INFOGRAPHIC_WIDTH} ${NUGLET_INFOGRAPHIC_HEIGHT}" role="img" aria-labelledby="title description">
   <title id="title">${escapeXml(source.title)}</title>

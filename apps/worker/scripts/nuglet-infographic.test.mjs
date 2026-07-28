@@ -89,7 +89,7 @@ test("renders a full-size portrait PNG with bundled Nuglet typography", async ()
   assert.match(rendered.svg, /Nuglet Fraunces/);
   assert.match(rendered.svg, /The restart marker/);
   assert.match(rendered.svg, /Write the next visible step/);
-  assert.equal(NUGLET_INFOGRAPHIC_RENDERER_VERSION, "nuglet-editorial-svg@1.0.0");
+  assert.equal(NUGLET_INFOGRAPHIC_RENDERER_VERSION, "nuglet-editorial-svg@1.0.1");
 });
 
 test("keeps authoritative Feynman copy intact when it needs the long-copy layout", async () => {
@@ -152,10 +152,31 @@ test("supports a three-line checked closing across the full footer width", async
     path: "loop",
   });
 
-  assert.match(rendered.svg, /BECAUSE OUR INTUITION IS CALIBRATED FOR LINEAR CHANGE/);
+  assert.match(rendered.svg, /BECAUSE OUR INTUITION IS CALIBRATED FOR/);
+  assert.match(rendered.svg, /LINEAR/);
+  assert.match(rendered.svg, /CHANGE/);
   assert.match(rendered.svg, /EXPLOSIVE/);
   assert.match(rendered.svg, /ACCELERATION/);
   assert.match(rendered.svg, /SURPRISE/);
+  const closing = rendered.svg.match(/<text x="92" y="1812" class="closing">([\s\S]*?)<\/text>/)?.[1] ?? "";
+  assert.equal((closing.match(/<tspan/g) ?? []).length, 3);
+});
+
+test("wraps a closing line before it reaches the right safe edge", async () => {
+  const content = await fixtureContent();
+  content.payload.learning.oneLineToKeep = "AI doesn't predict the future; it just remembers the past.";
+
+  const rendered = await renderNugletInfographic(content, {
+    stageLabels: ["Pause clearly", "Leave a marker", "Begin again"],
+    symbols: ["book", "thread", "steps"],
+    accent: "sage",
+    path: "loop",
+  });
+  const closing = rendered.svg.match(/<text x="92" y="1812" class="closing">([\s\S]*?)<\/text>/)?.[1] ?? "";
+
+  assert.equal((closing.match(/<tspan/g) ?? []).length, 2);
+  assert.doesNotMatch(closing, /AI DOESN&apos;T PREDICT THE FUTURE; IT JUST REMEMBERS THE PAST\.<\/tspan>/);
+  assert.match(closing, /PAST\.<\/tspan>/);
 });
 
 test("fails closed instead of truncating checked learner copy", async () => {
