@@ -558,7 +558,7 @@ async function main() {
     const campaign = await buildCampaignPlan({ api, recipe, reviewBaseUrl });
     await preflightCampaign({ api, campaign, save });
     printCampaign(campaign, args);
-    console.log(`State: ${statePath}`);
+    if (!args.json) console.log(`State: ${statePath}`);
     return;
   }
   const campaign = await loadCampaign(statePath);
@@ -577,8 +577,10 @@ async function main() {
     ensureWorkerIdle: () => assertWorkerIdle(),
   });
   printCampaign(result.campaign, args);
-  console.log(`Completed this round: ${result.completed.length}`);
-  console.log(`State: ${statePath}`);
+  if (!args.json) {
+    console.log(`Completed this round: ${result.completed.length}`);
+    console.log(`State: ${statePath}`);
+  }
 }
 
 const executedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
