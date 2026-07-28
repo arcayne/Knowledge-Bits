@@ -163,7 +163,7 @@ export const pipelineRunSummarySchema = z.object({
 export const pipelineReadModelSchema = z.object({
   daily: z.object({
     day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    timezone: z.literal('UTC'),
+    timezone: z.literal('Europe/Madrid'),
     target: z.number().int().positive(),
     started: z.number().int().nonnegative(),
     readyForReview: z.number().int().nonnegative(),

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { createApp } from '../app.js';
 import { createInMemoryWorkflowStore, WorkflowRepository } from '../repositories/workflow-repository.js';
+import { operatorDay } from '../services/operator-time.js';
 
 test('pipeline list requires review auth and returns current run summaries', async () => {
   const repository = new WorkflowRepository(createInMemoryWorkflowStore());
@@ -27,11 +28,11 @@ test('pipeline list requires review auth and returns current run summaries', asy
   });
   assert.equal(response.status, 200);
   const persisted = (await repository.getRun(runId))!;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = operatorDay(new Date());
   assert.deepEqual(await response.json(), {
     daily: {
       day: today,
-      timezone: 'UTC',
+      timezone: 'Europe/Madrid',
       target: 5,
       started: 1,
       readyForReview: 1,
@@ -127,8 +128,8 @@ test('pipeline dashboard keeps superseded runs visible without counting them as 
     retrying: 0,
   });
   assert.deepEqual(payload.daily, {
-    day: new Date().toISOString().slice(0, 10),
-    timezone: 'UTC',
+    day: operatorDay(new Date()),
+    timezone: 'Europe/Madrid',
     target: 5,
     started: 0,
     readyForReview: 0,

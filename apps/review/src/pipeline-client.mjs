@@ -6,6 +6,7 @@ const STAGES = [
   ['human_review', 'Human review'],
   ['deliver', 'Deliver'],
 ];
+const OPERATOR_TIME_ZONE = 'Europe/Madrid';
 
 const CLASSIFICATIONS = [
   ['active', 'Active pipeline', 'Work still moving through research, creation, checks, assets, or human review.'],
@@ -363,7 +364,7 @@ function renderDailyProgress(document, container, daily) {
   const title = document.createElement('h2');
   title.textContent = `${daily.delivered} of ${daily.target} delivered today`;
   const context = document.createElement('p');
-  context.textContent = `${daily.day} · ${daily.timezone} · ${daily.remaining} remaining`;
+  context.textContent = `${daily.day} · ${timeZoneLabel(daily.day, daily.timezone)} · ${daily.remaining} remaining`;
   heading.append(title, context);
 
   const progress = document.createElement('div');
@@ -440,5 +441,17 @@ function labelForClassification(classification) {
 
 function formatUpdatedAt(value) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-GB', {
+    timeZone: OPERATOR_TIME_ZONE,
+    timeZoneName: 'short',
+  });
+}
+
+function timeZoneLabel(day, timeZone) {
+  const date = new Date(`${day}T12:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return timeZone;
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    timeZoneName: 'short',
+  }).formatToParts(date).find((part) => part.type === 'timeZoneName')?.value ?? timeZone;
 }
