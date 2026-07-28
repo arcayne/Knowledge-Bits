@@ -26,7 +26,7 @@ test("uses only checked lesson visual copy for the rendered teaching sequence", 
   const source = infographicSource(await fixtureContent());
 
   assert.equal(source.title, "The restart marker");
-  assert.equal(source.deck, "Show how a visible next step reduces restart friction.");
+  assert.equal(source.deck, "A visible next step makes interrupted work easier to resume.");
   assert.deepEqual(source.steps, [
     "Pause after a meaningful unit of work.",
     "Write the next visible step.",
@@ -92,9 +92,36 @@ test("renders a full-size portrait PNG with bundled Nuglet typography", async ()
   assert.equal(NUGLET_INFOGRAPHIC_RENDERER_VERSION, "nuglet-editorial-svg@1.0.0");
 });
 
+test("keeps authoritative Feynman copy intact when it needs the long-copy layout", async () => {
+  const content = await fixtureContent();
+  content.payload.visual.title = "The One-Sentence Test for True Understanding";
+  content.payload.identity.deck = "Stop rereading your notes. Discover the fastest way to expose your knowledge gaps and master complex ideas.";
+  content.payload.visual.mediaBrief.objective = "Make You can test whether you understand one idea by explaining it plainly, from memory, and naming the first unclear step. easy to remember.";
+  content.payload.visual.textEquivalent = [
+    "You can test whether you understand one idea by explaining it plainly, from memory, and naming the first unclear step.",
+    "Familiarity is not understanding; true comprehension requires you to explain the idea plainly from memory.",
+    "Pick one idea and explain it in plain language from memory. Circle the part where you get vague.",
+  ];
+  content.payload.learning.oneLineToKeep = "Familiarity is not understanding; true comprehension requires you to explain the idea plainly from memory.";
+
+  const rendered = await renderNugletInfographic(content, {
+    stageLabels: ["Explain plainly", "Test familiarity", "Circle the gap"],
+    symbols: ["speech", "mirror", "knot"],
+    accent: "sage",
+    path: "loop",
+  });
+  const metadata = await sharp(rendered.bytes).metadata();
+
+  assert.equal(metadata.width, NUGLET_INFOGRAPHIC_WIDTH);
+  assert.equal(metadata.height, NUGLET_INFOGRAPHIC_HEIGHT);
+  for (const line of content.payload.visual.textEquivalent) {
+    assert.match(rendered.svg, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
 test("fails closed instead of truncating checked learner copy", async () => {
   const content = await fixtureContent();
-  content.payload.visual.textEquivalent[0] = "This checked teaching step is intentionally far too long for the four-line phone layout and must remain intact rather than being silently shortened with an ellipsis or rewritten by the rendering layer.";
+  content.payload.visual.textEquivalent[0] = "This checked teaching step is intentionally far too long for the five-line phone layout and must remain intact rather than being silently shortened with an ellipsis or rewritten by the rendering layer.";
 
   await assert.rejects(
     () => renderNugletInfographic(content, {

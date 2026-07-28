@@ -74,9 +74,9 @@ export function infographicSource(content) {
       ?? string(identity.title)
       ?? string(story.title)
       ?? "One useful idea",
-    deck: string(visualBrief.objective)
+    deck: string(identity.deck)
       ?? string(learning.centralIdea)
-      ?? string(identity.deck)
+      ?? string(visualBrief.objective)
       ?? steps[0],
     steps,
     closing: string(learning.oneLineToKeep)
@@ -173,11 +173,11 @@ export async function renderNugletInfographic(content, artDirection) {
 export function renderInfographicSvg(source, artDirection, fonts = {}) {
   const stageCount = source.steps.length;
   const headlineLines = wrapText(source.title, 19, 4);
-  const deckLines = wrapText(source.deck, 43, 3);
+  const deckLines = wrapText(source.deck, 43, 4);
   const headlineTop = 190;
   const deckTop = headlineTop + (headlineLines.length * 104) + 26;
   const contentTop = Math.max(680, deckTop + (deckLines.length * 42) + 100);
-  const contentBottom = 1630;
+  const contentBottom = 1540;
   const gap = stageCount === 1 ? 0 : (contentBottom - contentTop) / (stageCount - 1);
   const positions = source.steps.map((_, index) => {
     const left = index % 2 === 0;
@@ -198,14 +198,14 @@ export function renderInfographicSvg(source, artDirection, fonts = {}) {
   }).join("");
   const stages = positions.map((position, index) => {
     const label = `${String(index + 1).padStart(2, "0")}  ${artDirection.stageLabels[index].toUpperCase()}`;
-    const bodyLines = wrapText(source.steps[index], 25, 4);
+    const bodyLines = wrapText(source.steps[index], 32, 5);
     return `
       <g aria-label="${escapeXml(`${label}. ${source.steps[index]}`)}">
         <circle cx="${position.iconX}" cy="${position.y}" r="104" fill="${paleAccent}" opacity="0.62"/>
         ${symbolSvg(artDirection.symbols[index], position.iconX, position.y)}
         <text x="${position.textX}" y="${position.y - 24}" class="stage-label">${escapeXml(label)}</text>
         <text x="${position.textX}" y="${position.y + 28}" class="stage-copy">
-          ${tspans(bodyLines, position.textX, 43)}
+          ${tspans(bodyLines, position.textX, 36)}
         </text>
       </g>`;
   }).join("");
@@ -222,7 +222,7 @@ export function renderInfographicSvg(source, artDirection, fonts = {}) {
     .headline { font: 400 92px "Nuglet Fraunces", Georgia, serif; fill: #171512; }
     .deck { font: 400 31px "Nuglet Bricolage", sans-serif; fill: #625E57; }
     .stage-label { font: 600 21px "Nuglet Bricolage", sans-serif; letter-spacing: 4px; fill: #0B6664; }
-    .stage-copy { font: 400 35px "Nuglet Fraunces", Georgia, serif; fill: #171512; }
+    .stage-copy { font: 400 30px "Nuglet Fraunces", Georgia, serif; fill: #171512; }
     .closing { font: 600 26px "Nuglet Bricolage", sans-serif; letter-spacing: 3px; fill: #0B6664; }
     .ink { fill: none; stroke: #171512; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
     .soft-ink { fill: none; stroke: #0B6664; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
