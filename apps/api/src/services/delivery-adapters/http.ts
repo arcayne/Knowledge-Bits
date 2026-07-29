@@ -36,7 +36,7 @@ export class HttpDeliveryAdapter implements DeliveryAdapter {
 
   async deliver(input: DeliveryAdapterInput, signal?: AbortSignal): Promise<DeliveryAdapterResponse> {
     try {
-      return deliveryResponseSchema.parse(await this.request('/import', input, signal));
+      return deliveryResponseSchema.parse(await this.request('/deliver', input, signal));
     } catch (error) {
       if (error instanceof z.ZodError) throw new DeliveryPermanentSchemaError('delivery_adapter_invalid_response_schema');
       throw error;
