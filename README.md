@@ -138,15 +138,20 @@ receives only its own token:
 ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
 ENGINE_WORKER_TOKEN="local-worker-token" \
 WORKER_PROVIDER_MODE="production" \
-PRODUCT_RECIPE_ROOTS='{"nuglet.lesson.v1":"/absolute/path/to/knowledge-bits/recipes/nuglet.lesson.v1"}' \
+PRODUCT_RECIPE_ROOTS='{"nuglet.lesson.v1":"/absolute/path/to/knowledge-bits/recipes/nuglet.lesson.v1","nuglet.lesson.v2":"/absolute/path/to/knowledge-bits/recipes/nuglet.lesson.v2"}' \
 PI_PROVIDER="configured-pi-provider" \
 PI_MODEL="configured-pi-model" \
+WRITER_PROVIDER="configured-writer-provider" \
+WRITER_MODEL="configured-writer-model" \
 MEDIA_GENERATION_COMMAND="/opt/homebrew/bin/node" \
 MEDIA_GENERATION_ARGS='["/absolute/path/to/knowledge-bits/apps/worker/scripts/nuglet-media-command.mjs"]' \
 pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 ```
 
-Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker.
+Production mode runs NotebookLM research, a separately configured narrative writer,
+Pi/editorial QA, and media generation inside the local worker. NotebookLM does not write
+the learner-facing V2 lesson; it remains the research/evidence layer and produces the
+two-person Conversation audio.
 The Nuglet recipe registry, media command, and approved visual style references live in this repository.
 The worker does not depend on `apps/nuglet-lab` or any other Nuglet source checkout.
 Infographic recipe `2.0.0` uses Vertex AI only for a bounded art-direction JSON decision. Nuglet's

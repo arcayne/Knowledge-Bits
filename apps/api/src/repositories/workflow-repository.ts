@@ -14,7 +14,11 @@ import type {
   StageState,
   WorkflowStage,
 } from '@knowledge-bits/contracts';
-import { knowledgeBitsRunBriefSchema, nugletGenerationPlanSchema } from '@knowledge-bits/contracts';
+import {
+  knowledgeBitsRunBriefSchema,
+  nugletGenerationPlanSchema,
+  nugletNarrativeGenerationPlanSchema,
+} from '@knowledge-bits/contracts';
 import {
   calculatePackageChecksum,
   nextTransition,
@@ -51,6 +55,7 @@ const REVIEW_MEDIA_ARTIFACT_KINDS = new Set([
   'infographic',
   'audio_brief',
   'audio_discussion',
+  'audio_conversation',
 ]);
 
 export interface WorkflowRun {
@@ -359,7 +364,13 @@ export interface ResumeCreateCandidateInput {
   operatorId: string;
 }
 
-type RegenerableMediaKind = 'hero' | 'infographic' | 'audio_brief' | 'audio_discussion' | 'public_preview';
+type RegenerableMediaKind =
+  | 'hero'
+  | 'infographic'
+  | 'audio_brief'
+  | 'audio_discussion'
+  | 'audio_conversation'
+  | 'public_preview';
 type MediaRecipeOverrides = {
   infographic?: NugletGenerationPlan['recipes']['infographic'];
 };
@@ -3989,7 +4000,14 @@ function legacyAudioReconciliationJobIdempotencyKey(runId: string, revision: num
 }
 
 function assertRegenerableMediaKinds(kinds: readonly RegenerableMediaKind[]): void {
-  const allowed = new Set<RegenerableMediaKind>(['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview']);
+  const allowed = new Set<RegenerableMediaKind>([
+    'hero',
+    'infographic',
+    'audio_brief',
+    'audio_discussion',
+    'audio_conversation',
+    'public_preview',
+  ]);
   if (!kinds.length || new Set(kinds).size !== kinds.length || kinds.some((kind) => !allowed.has(kind))) {
     throw new WorkflowValidationError('Media regeneration requires distinct supported media kinds');
   }
@@ -4000,14 +4018,18 @@ function briefWithMediaRecipeOverrides(
   recipeOverrides?: MediaRecipeOverrides,
 ): JsonObject {
   if (!recipeOverrides?.infographic) return brief;
-  const parsedPlan = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
+  const isNarrative = isRecord(brief.generationPlan)
+    && brief.generationPlan.contentKind === 'nuglet.lesson.v2';
+  const planSchema = isNarrative
+    ? nugletNarrativeGenerationPlanSchema
+    : nugletGenerationPlanSchema;
+  const parsedPlan = planSchema.safeParse(brief.generationPlan);
   if (!parsedPlan.success) {
     throw new WorkflowValidationError('Media recipe override requires a valid Nuglet generation plan');
   }
-  const { mediaBaseline: _mediaBaseline, ...planWithoutMediaBaseline } = parsedPlan.data;
-  const nextPlan = nugletGenerationPlanSchema.safeParse({
-    ...planWithoutMediaBaseline,
-    mediaMode: 'generate',
+  const nextPlan = planSchema.safeParse({
+    ...parsedPlan.data,
+    ...(isNarrative ? {} : { mediaBaseline: undefined, mediaMode: 'generate' }),
     recipes: {
       ...parsedPlan.data.recipes,
       infographic: recipeOverrides.infographic,

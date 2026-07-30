@@ -424,7 +424,13 @@ function plannedLegacyMedia(run: WorkflowRun): Map<string, { mediaType: string; 
   const reuse = generationPlan && isRecord(generationPlan.legacyMediaReuse) ? generationPlan.legacyMediaReuse : null;
   const artifacts = reuse && isRecord(reuse.artifacts) ? reuse.artifacts : null;
   if (!artifacts) return new Map();
-  const roles = { hero: 'hero', infographic: 'infographic', audio_brief: 'audioBrief', audio_discussion: 'audioDiscussion' } as const;
+  const roles = {
+    hero: 'hero',
+    infographic: 'infographic',
+    audio_brief: 'audioBrief',
+    audio_discussion: 'audioDiscussion',
+    audio_conversation: 'audioConversation',
+  } as const;
   const planned = new Map<string, { mediaType: string; checksum: string; byteSize: number }>();
   for (const [kind, role] of Object.entries(roles)) {
     const value = artifacts[role];

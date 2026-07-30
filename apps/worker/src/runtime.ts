@@ -5,10 +5,13 @@ import {
   knowledgeBitsRunBriefSchema,
   knowledgeBitsQaSchema,
   nugletGenerationPlanSchema,
+  nugletNarrativeGenerationPlanSchema,
   nugletLessonV1PayloadSchema,
   storyPlaybookDraftSchema,
+  nugletNarrativeDraftTargetSchema,
   type NugletGenerationPlan,
   type NugletMediaBaseline,
+  type NugletNarrativeGenerationPlan,
 } from '@knowledge-bits/contracts';
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
@@ -17,6 +20,7 @@ import type { ContentCandidate, EvidenceManifest } from './checks/deterministic.
 import { DeterministicSourceVerifier, publicUrlRejectionReason } from './checks/source-verifier.js';
 import type { WorkerEngineClient } from './engine-client.js';
 import { FixtureProvider } from './providers/fixture.js';
+import { ContentCreationRouterProvider } from './providers/content-creation-router.js';
 import {
   MediaProviderAdapter,
   recipeForKind,
@@ -28,6 +32,11 @@ import {
 } from './providers/media.js';
 import { generationSupportArtifacts } from './recipes/support-artifacts.js';
 import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess, type ResearchSourceVerifier } from './providers/notebooklm.js';
+import {
+  NarrativeWriterProvider,
+  type NarrativeWriterClient,
+  type NarrativeWriterContext,
+} from './providers/narrative-writer.js';
 import {
   PiEditorialProvider,
   type PiSdkClient,
@@ -54,19 +63,21 @@ import type {
 } from './recipes/types.js';
 
 type NotebookContextResolver = (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
+type NarrativeWriterContextResolver = (input: ProviderExecutionInput) => Promise<NarrativeWriterContext>;
 type PiContextResolver = (input: ProviderExecutionInput) => Promise<{
   candidate: ContentCandidate;
   evidence: EvidenceManifest;
   rubric: string;
-  generationPlan?: NugletGenerationPlan;
+  generationPlan?: NugletGenerationPlan | NugletNarrativeGenerationPlan;
   resolvedRecipes?: Partial<ResolvedNugletRecipes>;
+  editorialRecipe?: ResolvedRecipe;
 }>;
 type MediaContextResolver = (input: ProviderExecutionInput) => Promise<{
   passedCheck: boolean;
   content: ContentCandidate;
   contentChecksum: string;
-  generationPlan?: NugletGenerationPlan;
-  resolvedRecipes?: Partial<ResolvedNugletRecipes>;
+  generationPlan?: NugletGenerationPlan | NugletNarrativeGenerationPlan;
+  resolvedRecipes?: SelectedMediaRecipes;
   legacyMediaReuse?: unknown;
   mediaKinds?: readonly MediaKind[];
   mediaOperation?: MediaOperation;
@@ -83,11 +94,13 @@ export interface ProviderRuntime {
   notebookContext?: NotebookContextResolver;
   sourceVerifier?: ResearchSourceVerifier;
   sourceDiscoverer?: ResearchSourceDiscoveryClient;
+  writerClient?: NarrativeWriterClient;
+  writerContext?: NarrativeWriterContextResolver;
   piClient?: PiSdkClient;
   piContext?: PiContextResolver;
   mediaClient?: MediaClient;
   mediaContext?: MediaContextResolver;
-  configurationIssues?: Partial<Record<'notebooklm' | 'pi' | 'media', string>>;
+  configurationIssues?: Partial<Record<'notebooklm' | 'writer' | 'pi' | 'media', string>>;
 }
 
 export function composeWorkerProviders(options: {
@@ -106,9 +119,8 @@ export function composeWorkerProviders(options: {
   }
 
   const runtime = options.runtime ?? configuredRuntime(env, options.engineClient, options.fetch ?? fetch);
-  return [
-    runtime.notebookProcess && runtime.notebookContext && runtime.sourceVerifier
-      ? new NotebookLmProvider({
+  const notebookProvider = runtime.notebookProcess && runtime.notebookContext && runtime.sourceVerifier
+    ? new NotebookLmProvider({
         process: runtime.notebookProcess,
         context: trustedContextResolver(runtime.notebookContext, runtime.recipeBindingVerifier),
         sourceVerifier: runtime.sourceVerifier,
@@ -119,7 +131,19 @@ export function composeWorkerProviders(options: {
         phaseReporter: (event) => console.info(JSON.stringify({ event: 'notebooklm_phase', ...event })),
         timeoutMs: configuredPositiveInteger(env, 'NOTEBOOKLM_TIMEOUT_MS', 180_000),
       })
-      : new UnavailableProvider('notebooklm', ['collect_sources', 'create_content']),
+    : undefined;
+  const narrativeWriterProvider = runtime.writerClient && runtime.writerContext
+    ? new NarrativeWriterProvider({
+      client: runtime.writerClient,
+      context: runtime.writerContext,
+      model: configuredValue(env, 'WRITER_MODEL') ?? 'narrative-writer',
+    })
+    : undefined;
+  return [
+    new ContentCreationRouterProvider({
+      ...(notebookProvider ? { legacy: notebookProvider } : {}),
+      ...(narrativeWriterProvider ? { narrative: narrativeWriterProvider } : {}),
+    }),
     runtime.piClient && runtime.piContext
       ? new PiEditorialProvider({
         client: runtime.piClient,
@@ -147,6 +171,8 @@ function configuredRuntime(
   const contexts = new LeaseScopedJobContextResolver(engineClient, recipeBindingVerifier);
   const piProvider = configuredValue(env, 'PI_PROVIDER');
   const piModel = configuredValue(env, 'PI_MODEL');
+  const writerProvider = configuredValue(env, 'WRITER_PROVIDER');
+  const writerModel = configuredValue(env, 'WRITER_MODEL');
   const googleCloudProject = configuredValue(env, 'GOOGLE_CLOUD_PROJECT');
   const googleCloudLocation = configuredValue(env, 'GOOGLE_CLOUD_LOCATION');
   const piClient = piProvider && piModel
@@ -154,6 +180,13 @@ function configuredRuntime(
       provider: piProvider,
       model: piModel,
       timeoutMs: configuredPositiveInteger(env, 'PI_TIMEOUT_MS', 60_000),
+    })
+    : undefined;
+  const writerClient = writerProvider && writerModel
+    ? new LocalNarrativeWriterClient({
+      provider: writerProvider,
+      model: writerModel,
+      timeoutMs: configuredPositiveInteger(env, 'WRITER_TIMEOUT_MS', 90_000),
     })
     : undefined;
   const mediaCommand = configuredValue(env, 'MEDIA_GENERATION_COMMAND');
@@ -190,6 +223,10 @@ function configuredRuntime(
       } : {}),
       piClient,
       piContext: (input: ProviderExecutionInput) => contexts.pi(input),
+    } : {}),
+    ...(writerClient ? {
+      writerClient,
+      writerContext: (input: ProviderExecutionInput) => contexts.narrativeWriter(input),
     } : {}),
     ...(mediaCommand && !mediaConfigurationIssue ? {
       mediaClient: new LocalMediaCommandClient({
@@ -231,9 +268,24 @@ export class LeaseScopedJobContextResolver {
     };
   }
 
-  async pi(input: ProviderExecutionInput) {
+  async pi(input: ProviderExecutionInput): ReturnType<PiContextResolver> {
+    const brief = jobBrief(input);
+    if (brief.contentKind === 'nuglet.lesson.v2') {
+      const generation = await validatedNarrativeGenerationPlan(
+        brief,
+        input.job.input.notebookLmNotebookId,
+        this.recipeBindingVerifier,
+      );
+      return {
+        candidate: await this.content(input),
+        evidence: await this.evidence(input),
+        rubric: 'Reject unsupported claims, unexplained jargon, lecture-like writing, factual sequencing without a narrative arc, repeated explanations, harmful guidance, and unusable lesson structure.',
+        generationPlan: generation.plan,
+        editorialRecipe: generation.recipes.editorialQa,
+      };
+    }
     const generation = await validatedGenerationPlan(
-      jobBrief(input),
+      brief,
       input.job.input.notebookLmNotebookId,
       this.recipeBindingVerifier,
     );
@@ -245,15 +297,48 @@ export class LeaseScopedJobContextResolver {
     };
   }
 
-  async media(input: ProviderExecutionInput) {
+  async narrativeWriter(input: ProviderExecutionInput): Promise<NarrativeWriterContext> {
     const brief = jobBrief(input);
-    const mediaKinds = mediaKindsFromJob(input.job.input);
-    const generation = await validatedGenerationPlan(
+    const generationPlan = await validatedNarrativeGenerationPlan(
       brief,
       input.job.input.notebookLmNotebookId,
       this.recipeBindingVerifier,
-      mediaKinds ? mediaRecipeRoles(mediaKinds) : undefined,
     );
+    const research = await this.verifiedResearch(input);
+    const sources = await Promise.all(research.evidence.sources.map(async (source) => {
+      const artifact = await this.client.readArtifact(input.job, source.snapshotArtifactId, input.signal);
+      return {
+        ...source,
+        text: narrativeSourceText(artifact.body, artifact.mediaType),
+      };
+    }));
+    const topic = stringValue(brief.title) ?? stringValue(brief.topic) ?? stringValue(brief.objective) ?? 'Knowledge Bits lesson';
+    return {
+      topic,
+      locale: stringValue(brief.locale) ?? 'en',
+      audience: stringValue(brief.audience) ?? 'busy working women who are intelligent general readers',
+      objective: stringValue(brief.objective) ?? topic,
+      generationPlan: generationPlan.plan,
+      recipes: generationPlan.recipes,
+      sources,
+    };
+  }
+
+  async media(input: ProviderExecutionInput) {
+    const brief = jobBrief(input);
+    const mediaKinds = mediaKindsFromJob(input.job.input);
+    const generation = brief.contentKind === 'nuglet.lesson.v2'
+      ? await validatedNarrativeGenerationPlan(
+        brief,
+        input.job.input.notebookLmNotebookId,
+        this.recipeBindingVerifier,
+      )
+      : await validatedGenerationPlan(
+        brief,
+        input.job.input.notebookLmNotebookId,
+        this.recipeBindingVerifier,
+        mediaKinds ? mediaRecipeRoles(mediaKinds) : undefined,
+      );
     const content = await this.content(input);
     const qa = knowledgeBitsQaSchema.parse(await this.readJsonDependency(input, 'check_content', 'parsed_output'));
     const contentChecksum = calculateContentChecksum(content);
@@ -276,6 +361,11 @@ export class LeaseScopedJobContextResolver {
   private async content(input: ProviderExecutionInput): Promise<ContentCandidate> {
     const value = await this.readJsonDependency(input, 'create_content', 'parsed_output');
     const generationPlan = jobBrief(input).generationPlan;
+    if (isRecord(generationPlan) && generationPlan.schemaVersion === '2.0.0') {
+      const parsed = nugletNarrativeDraftTargetSchema.safeParse(value);
+      if (!parsed.success) throw new ProviderNeedsHumanError('narrative_writer_content_invalid', 'quality');
+      return parsed.data;
+    }
     if (isRecord(generationPlan) && generationPlan.schemaVersion === '1.1.0') {
       if (!isRecord(value)
         || value.kind !== 'nuglet.lesson.v1'
@@ -517,6 +607,43 @@ export class LocalPiSdkClient implements PiSdkClient {
     }
   }
 
+}
+
+export class LocalNarrativeWriterClient implements NarrativeWriterClient {
+  constructor(private readonly options: {
+    provider: string;
+    model: string;
+    timeoutMs?: number;
+    models?: PiModelsAdapter;
+  }) {}
+
+  async write(input: {
+    renderedPrompt: string;
+    idempotencyKey: string;
+    signal: AbortSignal;
+  }): Promise<unknown> {
+    const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 90_000);
+    const signal = AbortSignal.any([input.signal, timeout]);
+    try {
+      return await (this.options.models ?? new PiSdkModelsAdapter()).complete({
+        provider: this.options.provider,
+        model: this.options.model,
+        systemPrompt: 'Write one source-grounded Nuglet lesson. Return one strict JSON object matching the supplied contract. Never use tools or return markdown.',
+        userPrompt: input.renderedPrompt,
+        sessionId: input.idempotencyKey,
+        signal,
+      });
+    } catch (error) {
+      if (error instanceof ProviderNeedsHumanError || input.signal.aborted) throw error;
+      if (timeout.aborted) {
+        throw new ProviderWaitingError('narrative_writer_timeout', new Date(Date.now() + 60_000).toISOString());
+      }
+      if (googleCredentialsRequireReauthentication(error)) {
+        throw new ProviderNeedsHumanError('google_credentials_reauthentication_required');
+      }
+      throw new ProviderWaitingError('narrative_writer_unavailable', new Date(Date.now() + 60_000).toISOString());
+    }
+  }
 }
 
 function googleCredentialsRequireReauthentication(error: unknown): boolean {
@@ -908,7 +1035,96 @@ async function validatedGenerationPlan(
   return { plan: parsed.data, recipes };
 }
 
-function trustedContextResolver<T extends { generationPlan?: NugletGenerationPlan; resolvedRecipes?: Partial<ResolvedNugletRecipes> }>(
+async function validatedNarrativeGenerationPlan(
+  brief: Record<string, unknown>,
+  runNotebookLmNotebookId: unknown,
+  verifier: TrustedRecipeBindingVerifier | undefined,
+): Promise<{
+  plan: NugletNarrativeGenerationPlan;
+  recipes: {
+    writer: ResolvedRecipe;
+    challenge: ResolvedRecipe;
+    infographic: ResolvedRecipe;
+    audioConversation: ResolvedRecipe;
+    hero: ResolvedRecipe;
+    editorialQa: ResolvedRecipe;
+  };
+}> {
+  const parsed = nugletNarrativeGenerationPlanSchema.safeParse(brief.generationPlan);
+  if (!parsed.success || brief.contentKind !== 'nuglet.lesson.v2') {
+    throw new ProviderNeedsHumanError('narrative_generation_plan_invalid');
+  }
+  const parsedBrief = knowledgeBitsRunBriefSchema.safeParse(brief);
+  if (!parsedBrief.success) throw new ProviderNeedsHumanError('run_brief_invalid');
+  if (runNotebookLmNotebookId !== parsedBrief.data.notebookLmNotebookId) {
+    throw new ProviderNeedsHumanError('run_notebook_id_mismatch');
+  }
+  if (!verifier?.resolve) throw new ProviderNeedsHumanError('generation_recipe_verifier_unconfigured');
+  try {
+    const writer = await verifier.resolve({
+      contentKind: parsed.data.contentKind,
+      ...parsed.data.recipes.writer,
+    });
+    const challenge = await verifier.resolve({
+      contentKind: parsed.data.contentKind,
+      ...parsed.data.recipes.challenge,
+    });
+    const editorialQa = await verifier.resolve({
+      contentKind: parsed.data.contentKind,
+      ...parsed.data.recipes.editorialQa,
+    });
+    const infographic = await verifier.resolve({
+      contentKind: parsed.data.contentKind,
+      ...parsed.data.recipes.infographic,
+    });
+    const audioConversation = await verifier.resolve({
+      contentKind: parsed.data.contentKind,
+      ...parsed.data.recipes.audioConversation,
+    });
+    const hero = await verifier.resolve({
+      contentKind: parsed.data.contentKind,
+      ...parsed.data.recipes.hero,
+    });
+    return {
+      plan: parsed.data,
+      recipes: { writer, challenge, infographic, audioConversation, hero, editorialQa },
+    };
+  } catch {
+    throw new ProviderNeedsHumanError('generation_recipe_verification_failed');
+  }
+}
+
+function narrativeSourceText(body: Uint8Array, mediaType: string): string {
+  const normalizedMediaType = mediaType.split(';')[0]?.trim().toLowerCase();
+  if (normalizedMediaType !== 'text/html'
+    && normalizedMediaType !== 'application/xhtml+xml'
+    && normalizedMediaType !== 'text/plain') {
+    throw new ProviderNeedsHumanError('narrative_writer_source_text_unavailable', 'quality');
+  }
+  const decoded = Buffer.from(body).toString('utf8');
+  const text = normalizedMediaType === 'text/plain'
+    ? decoded
+    : decoded
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;|&apos;/gi, "'")
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>');
+  const compact = text.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  if (compact.length < 100) {
+    throw new ProviderNeedsHumanError('narrative_writer_source_text_unavailable', 'quality');
+  }
+  return compact.slice(0, 60_000);
+}
+
+function trustedContextResolver<T extends {
+  generationPlan?: NugletGenerationPlan | NugletNarrativeGenerationPlan;
+  resolvedRecipes?: Partial<ResolvedNugletRecipes>;
+}>(
   resolver: (input: ProviderExecutionInput) => Promise<T>,
   verifier: TrustedRecipeBindingVerifier | undefined,
 ): (input: ProviderExecutionInput) => Promise<T> {
@@ -959,6 +1175,7 @@ function parseMediaAsset(
       && value.kind !== 'infographic'
       && value.kind !== 'audio_brief'
       && value.kind !== 'audio_discussion'
+      && value.kind !== 'audio_conversation'
       && value.kind !== 'public_preview')
     || typeof value.mediaType !== 'string'
     || typeof value.bytesBase64 !== 'string'
@@ -1069,7 +1286,14 @@ function mediaRecipeRoles(kinds: readonly MediaKind[]): readonly NugletRecipeRol
 
 function mediaKindsFromJob(input: Record<string, unknown>): readonly MediaKind[] | undefined {
   if (input.mediaKinds === undefined) return undefined;
-  const validKinds: readonly MediaKind[] = ['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview'];
+  const validKinds: readonly MediaKind[] = [
+    'hero',
+    'infographic',
+    'audio_brief',
+    'audio_discussion',
+    'audio_conversation',
+    'public_preview',
+  ];
   if (!Array.isArray(input.mediaKinds)
     || input.mediaKinds.length === 0
     || input.mediaKinds.some((kind) => typeof kind !== 'string' || !validKinds.includes(kind as MediaKind))) {

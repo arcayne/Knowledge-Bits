@@ -1,10 +1,16 @@
 import { parseEditorialCheck, requiresEditorialFailure } from '../checks/editorial.js';
-import { isStoryPlaybookCandidate, runDeterministicChecks, type ContentCandidate, type EvidenceManifest } from '../checks/deterministic.js';
+import {
+  isNarrativeCandidate,
+  isStoryPlaybookCandidate,
+  runDeterministicChecks,
+  type ContentCandidate,
+  type EvidenceManifest,
+} from '../checks/deterministic.js';
 import { EDITORIAL_CHECK_PROMPT_VERSION, renderEditorialCheckPrompt } from '../prompts/editorial-check.v1.js';
-import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
+import type { NugletGenerationPlan, NugletNarrativeGenerationPlan } from '@knowledge-bits/contracts';
 import { renderPromptSections } from '../recipes/file-registry.js';
 import { generationSupportArtifacts } from '../recipes/support-artifacts.js';
-import type { ResolvedNugletRecipes } from '../recipes/types.js';
+import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
 
 import {
   ProviderNeedsHumanError,
@@ -34,8 +40,9 @@ export class PiEditorialProvider implements ContentProvider {
       candidate: ContentCandidate;
       evidence: EvidenceManifest;
       rubric: string;
-      generationPlan?: NugletGenerationPlan;
+      generationPlan?: NugletGenerationPlan | NugletNarrativeGenerationPlan;
       resolvedRecipes?: Partial<ResolvedNugletRecipes>;
+      editorialRecipe?: ResolvedRecipe;
     }>;
     model?: string;
   }) {}
@@ -44,16 +51,18 @@ export class PiEditorialProvider implements ContentProvider {
     if (input.action !== 'check_content') throw new ProviderNeedsHumanError(`pi_unsupported_action:${input.action}`);
     const context = await this.options.context(input);
     const storyPlaybookPlan = context.generationPlan?.schemaVersion === '1.1.0';
+    const narrativePlan = context.generationPlan?.schemaVersion === '2.0.0';
     const storyPlaybookCandidate = isStoryPlaybookCandidate(context.candidate);
-    if (storyPlaybookPlan !== storyPlaybookCandidate) {
+    const narrativeCandidate = isNarrativeCandidate(context.candidate);
+    if (storyPlaybookPlan !== storyPlaybookCandidate || narrativePlan !== narrativeCandidate) {
       throw new ProviderNeedsHumanError('generation_plan_candidate_mismatch');
     }
     const deterministic = runDeterministicChecks(context);
     if (!deterministic.passed) throw new ProviderNeedsHumanError('deterministic_check_failed', 'quality');
 
-    if (!storyPlaybookPlan) return this.executeLegacy(input, context, deterministic);
+    if (!storyPlaybookPlan && !narrativePlan) return this.executeLegacy(input, context, deterministic);
 
-    const recipe = context.resolvedRecipes?.editorialQa;
+    const recipe = context.editorialRecipe ?? context.resolvedRecipes?.editorialQa;
     if (!recipe) throw new ProviderNeedsHumanError('generation_recipe_resolution_missing');
     const rubric = Buffer.from(recipe.canonicalBytes).toString('utf8');
     const renderedPromptBytes = renderPromptSections([

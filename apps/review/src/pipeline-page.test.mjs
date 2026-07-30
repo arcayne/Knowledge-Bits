@@ -47,7 +47,7 @@ test('pipeline page exposes daily throughput, operations, filters, and preview l
   assert.match(clientSource, /fetch\('\/api\/similarity'/);
   assert.match(clientSource, /X-CSRF-Token/);
   assert.match(clientSource, /30_000/);
-  assert.match(clientSource, /requestedFormat: 'story_playbook'/);
+  assert.match(clientSource, /requestedFormat: 'single_narrative'/);
   assert.match(clientSource, /decision: similarity\.risk === 'none' \? 'clear' : 'proceed_distinct'/);
   assert.doesNotMatch(clientSource, /contentKind: 'nuglet\.lesson\.v1'/);
 });

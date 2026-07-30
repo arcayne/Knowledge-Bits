@@ -33,6 +33,8 @@ test('review client renders the complete Story Playbook package in review order'
   assert.match(source, /payload\.quiz\.questions/);
   assert.match(source, /audioBrief/);
   assert.match(source, /audioDiscussion/);
+  assert.match(source, /audioConversation/);
+  assert.match(source, /renderNarrative/);
   assert.match(source, /generationExecutions/);
   assert.match(source, /fetch\('\/api\/regenerate-infographic'/);
   assert.match(source, /Queueing one Nuglet infographic/);
@@ -62,6 +64,87 @@ test('review client renders editorial warnings beside the overall decision witho
   const decisionFooter = pageSource.slice(pageSource.indexOf('<footer'));
   assert.ok(decisionFooter.indexOf('editorial-warnings') > decisionFooter.indexOf('decision-status'));
   assert.doesNotMatch(clientSource, /warnings[^\n]+setDecisionAllowed/);
+});
+
+test('review client presents V2 as one Lesson and one Conversation', async () => {
+  const page = reviewPageDocument();
+  const payload = {
+    title: 'Protect your attention',
+    currentStage: 'human_review',
+    reviewStatus: 'pending',
+    currentPackageChecksum: 'a'.repeat(64),
+    decisionAllowed: true,
+    issues: [],
+    warnings: [],
+    package: {
+      packageChecksum: 'a'.repeat(64),
+      content: {
+        target: {
+          schemaVersion: '2.0.0',
+          payload: {
+            materialization: 'materialized',
+            contentModel: 'single-narrative.v2',
+            read: {
+              lesson: {
+                title: 'Protect your attention',
+                estimatedMinutes: 5,
+                sections: [
+                  { id: 'scene', type: 'scene', text: 'Maya opened her laptop.', claimRefs: [] },
+                  { id: 'close', type: 'close', text: 'One quiet block was enough.', claimRefs: [] },
+                ],
+              },
+            },
+            hero: {
+              altText: 'A woman beginning a quiet work block.',
+              width: 1200,
+              height: 900,
+              focalPoint: { x: 0.5, y: 0.5 },
+              cropSafeArea: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 },
+            },
+            visual: {
+              altText: 'Three steps for protecting attention.',
+              textEquivalent: ['Choose the block.', 'Remove the interruption.'],
+            },
+            listen: {
+              conversation: {
+                transcript: { text: 'A natural two-person conversation.' },
+              },
+            },
+            quiz: { questions: [] },
+            claimCoverage: [],
+          },
+        },
+      },
+      evidence: { acceptedSources: [], rejectedSources: [], coverageGaps: [], claims: [] },
+      qa: {
+        deterministic: { passed: true, findings: [] },
+        editorial: { summary: 'Ready for review.', findings: [] },
+      },
+    },
+    assets: {
+      hero: { state: 'missing' },
+      infographic: { state: 'missing' },
+      audioBrief: { state: 'missing' },
+      audioDiscussion: { state: 'missing' },
+      audioConversation: { state: 'missing' },
+    },
+    generationExecutions: {},
+  };
+
+  await mountReviewPage({
+    document: page,
+    fetch: async () => ({ ok: true, json: async () => payload }),
+  });
+
+  assert.equal(page.querySelector('#written-format-label').textContent, 'Lesson');
+  assert.equal(page.querySelector('#playbook-section').hidden, true);
+  assert.equal(page.querySelector('#audio-brief-section').hidden, true);
+  assert.equal(page.querySelector('#audio-discussion-section').hidden, true);
+  assert.equal(page.querySelector('#audio-conversation-section').hidden, false);
+  assert.equal(
+    page.querySelector('#audio-conversation-transcript').textContent,
+    'A natural two-person conversation.',
+  );
 });
 
 test('review client shows warning details while enabling both overall decisions', async () => {
@@ -329,13 +412,17 @@ function reviewPageDocument() {
   selectors.set('[data-decision="request_changes"]', requestChanges);
   add('meta[name="review-csrf-token"]', { content: 'csrf-token' });
   for (const selector of [
-    '#title', '#status', '#checksum', '#review', '#run-summary', '#story-title', '#story-meta', '#story-blocks',
+    '#title', '#status', '#checksum', '#review', '#run-summary', '#written-format-label',
+    '#story-section', '#story-title', '#story-meta', '#story-blocks',
+    '#playbook-section', '#audio-brief-section', '#audio-discussion-section',
+    '#audio-conversation-section',
     '#playbook-title', '#playbook-principle', '#playbook-why', '#playbook-steps', '#playbook-example',
     '#playbook-watch-outs', '#playbook-action', '#hero', '#hero-alt', '#hero-metadata',
     '#hero-lesson-header', '#hero-card', '#hero-thumbnail', '#infographic', '#infographic-alt',
     '#infographic-text-equivalent', '#regenerate-infographic', '#regenerate-infographic-status',
-    '#audio-brief', '#audio-discussion', '#audio-brief-transcript',
-    '#audio-discussion-transcript', '#quiz', '#accepted-sources', '#rejected-sources', '#coverage-gaps',
+    '#audio-brief', '#audio-discussion', '#audio-conversation', '#audio-brief-transcript',
+    '#audio-discussion-transcript', '#audio-conversation-transcript', '#quiz',
+    '#accepted-sources', '#rejected-sources', '#coverage-gaps',
     '#claims', '#qa', '#qa-findings', '#generation-executions', '#claim-coverage', '#editorial-warnings',
   ]) add(selector);
 

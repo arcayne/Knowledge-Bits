@@ -72,6 +72,14 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     container.append(note);
   };
 
+  const setNarrativeLayout = (isNarrative) => {
+    required('#written-format-label').textContent = isNarrative ? 'Lesson' : 'Story';
+    required('#playbook-section').hidden = isNarrative;
+    required('#audio-brief-section').hidden = isNarrative;
+    required('#audio-discussion-section').hidden = isNarrative;
+    required('#audio-conversation-section').hidden = !isNarrative;
+  };
+
   const renderProgressiveMedia = (media = [], candidate = null) => {
     const byKind = new Map(media.filter((item) => item.state !== 'missing').map((item) => [item.kind, item]));
     const hero = byKind.get('hero');
@@ -102,8 +110,14 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
       'Infographic text will appear after the visual brief is generated.',
     );
 
-    renderProgressiveAudio('audio-brief', byKind.get('audio_brief'));
-    renderProgressiveAudio('audio-discussion', byKind.get('audio_discussion'));
+    const isNarrative = candidate?.contentModel === 'single-narrative.v2';
+    setNarrativeLayout(isNarrative);
+    if (isNarrative) {
+      renderProgressiveAudio('audio-conversation', byKind.get('audio_conversation'));
+    } else {
+      renderProgressiveAudio('audio-brief', byKind.get('audio_brief'));
+      renderProgressiveAudio('audio-discussion', byKind.get('audio_discussion'));
+    }
   };
 
   const renderProgressiveAudio = (id, asset) => {
@@ -112,9 +126,14 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     const source = assetSource(asset);
     if (!source || !asset.mediaType?.startsWith('audio/')) {
       container.dataset.state = 'pending';
+      const label = id === 'audio-brief'
+        ? 'Brief'
+        : id === 'audio-discussion'
+          ? 'Discussion'
+          : 'Conversation';
       container.textContent = asset?.state === 'planned'
-        ? `Verified legacy ${id === 'audio-brief' ? 'Brief' : 'Discussion'} audio is ready and will attach at Produce assets.`
-        : `${id === 'audio-brief' ? 'Brief' : 'Discussion'} audio is pending attachment.`;
+        ? `${label} audio is ready and will attach at Produce assets.`
+        : `${label} audio is pending attachment.`;
       return;
     }
     const control = document.createElement('audio');
@@ -147,14 +166,18 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     const candidate = payload.documents.content.state === 'available'
       ? payload.documents.content.data?.payload
       : null;
-    if (candidate?.read?.story) {
+    if (candidate?.read?.lesson) {
+      renderNarrative(candidate);
+    } else if (candidate?.read?.story) {
       renderStory(candidate);
     } else {
       renderPendingDocument('#story-blocks', payload.documents.content.state === 'unavailable'
         ? `Story generation exists but cannot be read: ${payload.documents.content.issue}`
         : 'Story has not been generated yet. It is scheduled in the Create stage.');
     }
-    if (candidate?.read?.playbook) {
+    if (candidate?.read?.lesson) {
+      required('#playbook-section').hidden = true;
+    } else if (candidate?.read?.playbook) {
       renderPlaybook(candidate);
     } else {
       renderPendingDocument('#playbook-steps', payload.documents.content.state === 'unavailable'
@@ -193,6 +216,23 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
       const text = document.createElement('p');
       text.textContent = block.text;
       section.append(label, text);
+      container.append(section);
+    }
+  };
+
+  const renderNarrative = (payload) => {
+    const lesson = payload.read.lesson;
+    setNarrativeLayout(true);
+    required('#story-title').textContent = lesson.title;
+    required('#story-meta').textContent = `${lesson.estimatedMinutes} minute read`;
+    const container = required('#story-blocks');
+    container.replaceChildren();
+    for (const part of lesson.sections) {
+      const section = document.createElement('section');
+      section.className = 'story-block';
+      const text = document.createElement('p');
+      text.textContent = part.text;
+      section.append(text);
       container.append(section);
     }
   };
@@ -327,7 +367,22 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
         required('#title').textContent = payload.title;
         required('#status').textContent = `${payload.currentStage.replaceAll('_', ' ')}: ${payload.reviewStatus.replaceAll('_', ' ')}`;
         const learner = payload.package.content.target.payload;
-        if (payload.package.content.target.schemaVersion === '1.1.0' && learner.materialization === 'materialized') {
+        if (payload.package.content.target.schemaVersion === '2.0.0' && learner.materialization === 'materialized') {
+          renderNarrative(learner);
+          const heroSource = renderAsset('hero', payload.assets.hero, learner.hero.altText);
+          renderHeroCrops(learner.hero, heroSource);
+          renderAsset('infographic', payload.assets.infographic, learner.visual.altText);
+          required('#infographic-alt').textContent = `Alt text: ${learner.visual.altText}`;
+          fillList('#infographic-text-equivalent', learner.visual.textEquivalent, 'No text equivalent.');
+          renderAudio(
+            'audio-conversation',
+            payload.assets.audioConversation,
+            learner.listen.conversation,
+          );
+          renderVideo('public-preview', payload.assets.publicPreview);
+          renderQuiz(learner);
+        } else if (payload.package.content.target.schemaVersion === '1.1.0' && learner.materialization === 'materialized') {
+          setNarrativeLayout(false);
           renderStory(learner);
           renderPlaybook(learner);
           const heroSource = renderAsset('hero', payload.assets.hero, learner.hero.altText);
@@ -340,6 +395,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           renderVideo('public-preview', payload.assets.publicPreview);
           renderQuiz(learner);
         } else {
+          setNarrativeLayout(false);
           renderLegacyContent(learner);
           renderAsset('hero', payload.assets.hero, 'Hero preview');
           renderAsset('infographic', payload.assets.infographic, 'Infographic preview');

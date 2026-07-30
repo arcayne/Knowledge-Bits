@@ -1,0 +1,13 @@
+{
+  "id": "nuglet.audio.conversation",
+  "instructions": [
+    "Create one natural two-person conversation based on the approved canonical lesson and its accepted evidence.",
+    "Let one speaker bring a recognizable situation or honest question and let the other help uncover the useful idea through dialogue.",
+    "Keep turns short enough to follow by ear. Explain unavoidable terminology as people naturally would in conversation.",
+    "Do not sound like a lecture, executive brief, debate performance, or list of facts.",
+    "Do not introduce claims, advice, examples, or conclusions that are absent from the approved lesson and accepted sources.",
+    "End with the lesson's action in a way that feels natural rather than announced as a recap."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

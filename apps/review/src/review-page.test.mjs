@@ -20,6 +20,7 @@ test('review page has one fixed overall decision bar and the required review sur
     'Infographic',
     'Brief audio',
     'Discussion audio',
+    'The Conversation',
     'Public preview Short',
     'Quiz',
     'Sources, claims, and QA',

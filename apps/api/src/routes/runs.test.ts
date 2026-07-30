@@ -86,7 +86,7 @@ test('allows an authenticated review operator to start a research run', async ()
         audience: 'general adult learners',
         locale: 'en',
         notebookLmNotebookId: 'notebook-new',
-        intake: { requestedBy: 'review_operator', requestedFormat: 'story_playbook' },
+        intake: { requestedBy: 'review_operator', requestedFormat: 'single_narrative' },
       },
     }),
   });
@@ -94,9 +94,12 @@ test('allows an authenticated review operator to start a research run', async ()
   assert.equal(response.status, 201);
   const body = await response.json();
   assert.equal(body.notebookLmNotebookId, 'notebook-new');
-  assert.equal(body.brief.contentKind, 'nuglet.lesson.v1');
-  assert.equal(body.brief.generationPlan.schemaVersion, '1.1.0');
+  assert.equal(body.brief.contentKind, 'nuglet.lesson.v2');
+  assert.equal(body.brief.generationPlan.schemaVersion, '2.0.0');
   assert.equal(body.brief.generationPlan.mediaMode, 'generate');
+  assert.equal(body.brief.generationPlan.recipes.writer.id, 'nuglet.lesson.narrative');
+  assert.equal('story' in body.brief.generationPlan.recipes, false);
+  assert.equal('audioBrief' in body.brief.generationPlan.recipes, false);
   assert.equal(body.brief.intake.similarityReview.decision, 'clear');
 });
 

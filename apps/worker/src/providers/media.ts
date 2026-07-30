@@ -3,10 +3,15 @@ import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 
 import type { ContentCandidate } from '../checks/deterministic.js';
-import type { NugletGenerationPlan, NugletMediaBaseline } from '@knowledge-bits/contracts';
+import type {
+  NugletGenerationPlan,
+  NugletMediaBaseline,
+  NugletNarrativeGenerationPlan,
+} from '@knowledge-bits/contracts';
 import { legacyMediaReuseSchema } from '@knowledge-bits/contracts';
 import {
   calculateContentChecksum,
+  calculateNugletNarrativeGenerationInputChecksum,
   calculateNugletGenerationInputChecksum,
 } from '@knowledge-bits/pipeline';
 import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
@@ -24,6 +29,7 @@ export type MediaKind =
   | 'infographic'
   | 'audio_brief'
   | 'audio_discussion'
+  | 'audio_conversation'
   | 'public_preview';
 
 const PUBLIC_PREVIEW_MAX_SECONDS = 90;
@@ -39,11 +45,19 @@ export const REQUIRED_MEDIA_KINDS = [
   'audio_discussion',
 ] as const satisfies readonly MediaKind[];
 
+export const REQUIRED_NARRATIVE_MEDIA_KINDS = [
+  'hero',
+  'infographic',
+  'audio_conversation',
+] as const satisfies readonly MediaKind[];
+
 export type MediaRecipes = Pick<
   ResolvedNugletRecipes,
   'hero' | 'infographic' | 'audioBrief' | 'audioDiscussion'
 >;
-export type SelectedMediaRecipes = Partial<MediaRecipes>;
+export type SelectedMediaRecipes = Partial<MediaRecipes & {
+  audioConversation: ResolvedRecipe;
+}>;
 
 export type GeneratedMedia = {
   kind: MediaKind;
@@ -61,7 +75,7 @@ export interface MediaClient {
     kinds: readonly MediaKind[];
     idempotencyKey: string;
     notebookLmNotebookId: string;
-    heroDirection: NugletGenerationPlan['heroDirection'];
+    heroDirection: NugletGenerationPlan['heroDirection'] | NugletNarrativeGenerationPlan['heroDirection'];
     mediaBaseline?: NugletMediaBaseline;
     resolvedRecipes: SelectedMediaRecipes;
     executionInput: ProviderExecutionInput;
@@ -81,8 +95,8 @@ export class MediaProviderAdapter implements MediaProvider {
       passedCheck: boolean;
       content: ContentCandidate;
       contentChecksum: string;
-      generationPlan?: NugletGenerationPlan;
-      resolvedRecipes?: Partial<ResolvedNugletRecipes>;
+      generationPlan?: NugletGenerationPlan | NugletNarrativeGenerationPlan;
+      resolvedRecipes?: SelectedMediaRecipes;
       legacyMediaReuse?: unknown;
       mediaKinds?: readonly MediaKind[];
       mediaOperation?: MediaOperation;
@@ -100,15 +114,24 @@ export class MediaProviderAdapter implements MediaProvider {
       || context.contentChecksum !== calculateContentChecksum(context.content)) {
       throw new ProviderNeedsHumanError('media_content_checksum_invalid');
     }
-    const kinds = context.mediaKinds ?? this.options.kinds ?? REQUIRED_MEDIA_KINDS;
+    const kinds = context.mediaKinds
+      ?? this.options.kinds
+      ?? (context.generationPlan?.schemaVersion === '2.0.0'
+        ? REQUIRED_NARRATIVE_MEDIA_KINDS
+        : REQUIRED_MEDIA_KINDS);
     const mediaOperation = context.mediaOperation ?? 'generate';
     if (mediaOperation === 'attach_existing') assertLegacyMediaKinds(kinds, context.legacyMediaReuse);
     else assertGeneratedMediaKinds(kinds);
     const generation = requiredMediaGenerationContext(context.generationPlan, context.resolvedRecipes, kinds);
-    const generationInputChecksum = calculateNugletGenerationInputChecksum({
-      semanticTarget: context.content,
-      generationPlan: generation.plan,
-    });
+    const generationInputChecksum = generation.plan.schemaVersion === '2.0.0'
+      ? calculateNugletNarrativeGenerationInputChecksum({
+        semanticTarget: context.content,
+        generationPlan: generation.plan,
+      })
+      : calculateNugletGenerationInputChecksum({
+        semanticTarget: context.content,
+        generationPlan: generation.plan,
+      });
     const notebookLmNotebookId = context.notebookLmNotebookId
       ?? (typeof input.job.input.notebookLmNotebookId === 'string' ? input.job.input.notebookLmNotebookId.trim() : '');
     if (!notebookLmNotebookId) throw new ProviderNeedsHumanError('notebooklm_notebook_id_missing');
@@ -119,7 +142,9 @@ export class MediaProviderAdapter implements MediaProvider {
       idempotencyKey: input.idempotencyKey,
       notebookLmNotebookId,
       heroDirection: generation.plan.heroDirection,
-      ...(generation.plan.mediaBaseline ? { mediaBaseline: generation.plan.mediaBaseline } : {}),
+      ...('mediaBaseline' in generation.plan && generation.plan.mediaBaseline
+        ? { mediaBaseline: generation.plan.mediaBaseline }
+        : {}),
       resolvedRecipes: generation.recipes,
       executionInput: input,
       ...(context.legacyMediaReuse === undefined ? {} : { legacyMediaReuse: context.legacyMediaReuse }),
@@ -138,7 +163,7 @@ export class MediaProviderAdapter implements MediaProvider {
       validateGeneratedMedia(
         asset,
         generation.recipes,
-        generation.plan.mediaBaseline,
+        'mediaBaseline' in generation.plan ? generation.plan.mediaBaseline : undefined,
         mediaOperation === 'attach_existing',
       );
     }
@@ -248,16 +273,22 @@ function assertDistinctAudioBytes(generated: readonly GeneratedMedia[]): void {
 }
 
 function requiredMediaGenerationContext(
-  plan: NugletGenerationPlan | undefined,
-  recipes: Partial<ResolvedNugletRecipes> | undefined,
+  plan: NugletGenerationPlan | NugletNarrativeGenerationPlan | undefined,
+  recipes: SelectedMediaRecipes | undefined,
   kinds: readonly MediaKind[],
-): { plan: NugletGenerationPlan; recipes: SelectedMediaRecipes } {
-  if (plan?.schemaVersion !== '1.1.0') throw new ProviderNeedsHumanError('media_generation_plan_required');
+): {
+  plan: NugletGenerationPlan | NugletNarrativeGenerationPlan;
+  recipes: SelectedMediaRecipes;
+} {
+  if (plan?.schemaVersion !== '1.1.0' && plan?.schemaVersion !== '2.0.0') {
+    throw new ProviderNeedsHumanError('media_generation_plan_required');
+  }
   const requiredRoles = kinds.flatMap((kind) => {
     if (kind === 'hero') return ['hero'] as const;
     if (kind === 'infographic') return ['infographic'] as const;
     if (kind === 'audio_brief') return ['audioBrief'] as const;
     if (kind === 'audio_discussion') return ['audioDiscussion'] as const;
+    if (kind === 'audio_conversation') return ['audioConversation'] as const;
     return [];
   });
   if (requiredRoles.some((role) => !recipes?.[role])) {
@@ -270,7 +301,11 @@ function requiredMediaGenerationContext(
 }
 
 function assertGeneratedMediaKinds(kinds: readonly MediaKind[]): void {
-  const allowedKinds: readonly MediaKind[] = [...REQUIRED_MEDIA_KINDS, 'public_preview'];
+  const allowedKinds: readonly MediaKind[] = [
+    ...REQUIRED_MEDIA_KINDS,
+    ...REQUIRED_NARRATIVE_MEDIA_KINDS,
+    'public_preview',
+  ];
   if (!kinds.length
     || new Set(kinds).size !== kinds.length
     || kinds.some((kind) => !allowedKinds.includes(kind))) {
@@ -291,6 +326,7 @@ function assertLegacyMediaKinds(kinds: readonly MediaKind[], reuse: unknown): vo
     infographic: 'infographic',
     audio_brief: 'audioBrief',
     audio_discussion: 'audioDiscussion',
+    audio_conversation: 'audioDiscussion',
     public_preview: 'hero',
   };
   if (kinds.some((kind) => !parsed.data.artifacts[receiptByKind[kind]])) {
@@ -539,7 +575,9 @@ export function recipeForKind(recipes: SelectedMediaRecipes, kind: MediaKind): R
       ? recipes.infographic
       : kind === 'audio_brief'
         ? recipes.audioBrief
-        : recipes.audioDiscussion;
+        : kind === 'audio_discussion'
+          ? recipes.audioDiscussion
+          : recipes.audioConversation;
   if (!recipe) throw new ProviderNeedsHumanError(`media_recipe_missing:${kind}`);
   return recipe;
 }

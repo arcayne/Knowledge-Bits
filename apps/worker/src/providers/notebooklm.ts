@@ -130,7 +130,9 @@ interface NotebookLmResearchSource {
 
 export class NotebookLmProvider implements ContentProvider {
   readonly name = 'notebooklm';
-  readonly capabilities = ['collect_sources', 'create_content'] as const;
+  // NotebookLM owns research. V1 creation remains callable only through the
+  // compatibility router; new learner text is routed to the narrative writer.
+  readonly capabilities = ['collect_sources'] as const;
   private readonly now: () => Date;
 
   constructor(private readonly options: {
@@ -1059,6 +1061,8 @@ const SAFE_DETERMINISTIC_MESSAGES_BY_CODE: Readonly<Record<DeterministicFinding[
   'story-integrity': 'Include the required narrative arc and evidence-bound factual block.',
   'playbook-structure': 'Include the required principle, steps, example, watch-outs, and shared action.',
   'cross-format-consistency': 'Apply every cross-format requirement below while keeping Story and Playbook distinct.',
+  'narrative-structure': 'Include the required scene, discovery, evidence, application, and close.',
+  'narrative-readability': 'Shorten overloaded sentences and remove repeated narrative sections.',
   'challenge-shape': 'Return exactly three valid application questions.',
   'citation-source': 'Bind every factual claim to accepted evidence.',
   'citation-excerpt': 'Give every citation a non-empty excerpt.',

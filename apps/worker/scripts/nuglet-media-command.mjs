@@ -106,10 +106,16 @@ function lessonPayload(content) {
 function contentText(content) {
   const value = lessonPayload(content);
   const learning = record(value.learning);
-  const story = record(record(value.read).story);
+  const read = record(value.read);
+  const story = record(read.story);
+  const lesson = record(read.lesson);
+  const identity = record(value.identity);
+  const opening = Array.isArray(lesson.sections)
+    ? record(lesson.sections[0]).text
+    : "";
   return {
-    title: String(value.title ?? story.title ?? learning.centralIdea ?? "Knowledge Bit"),
-    hook: String(value.hook ?? learning.centralIdea ?? ""),
+    title: String(value.title ?? identity.title ?? lesson.title ?? story.title ?? learning.centralIdea ?? "Knowledge Bit"),
+    hook: String(value.hook ?? identity.deck ?? opening ?? learning.centralIdea ?? ""),
     takeaway: String(value.takeaway ?? learning.oneLineToKeep ?? ""),
   };
 }
@@ -733,7 +739,13 @@ function notebookLmPrompt(input, kind) {
     return renderPublicPreviewPrompt(compilePublicPreview(input.content), marker);
   }
   const { title, hook, takeaway } = contentText(input.content);
-  const role = kind === "infographic" ? "infographic" : kind === "audio_brief" ? "audioBrief" : "audioDiscussion";
+  const role = kind === "infographic"
+    ? "infographic"
+    : kind === "audio_brief"
+      ? "audioBrief"
+      : kind === "audio_conversation"
+        ? "audioConversation"
+        : "audioDiscussion";
   const recipe = recipeSnapshot(input, role);
   const instructions = Buffer.from(String(recipe.canonicalBase64 ?? ""), "base64").toString("utf8");
   return [marker, `Create the Nuglet ${kind.replace("audio_", "audio ")} for "${title}".`, hook, takeaway, instructions]
@@ -1055,7 +1067,15 @@ async function generateCurrentMedia(input) {
     if (heroAsset) assetsByKind.set("hero", heroAsset);
     if (infographicAsset) assetsByKind.set("infographic", infographicAsset);
     for (const kind of kinds) {
-      const role = kind === "hero" ? "hero" : kind === "infographic" ? "infographic" : kind === "audio_brief" ? "audioBrief" : "audioDiscussion";
+      const role = kind === "hero"
+        ? "hero"
+        : kind === "infographic"
+          ? "infographic"
+          : kind === "audio_brief"
+            ? "audioBrief"
+            : kind === "audio_conversation"
+              ? "audioConversation"
+              : "audioDiscussion";
       const recipe = kind === "public_preview" ? undefined : recipeSnapshot(input, role);
       if (kind === "hero" || assetsByKind.has(kind)) continue;
 
@@ -1137,7 +1157,11 @@ async function generateCurrentMedia(input) {
         continue;
       }
 
-      const label = kind === "audio_brief" ? "Brief" : "Discussion";
+      const label = kind === "audio_brief"
+        ? "Brief"
+        : kind === "audio_conversation"
+          ? "Conversation"
+          : "Discussion";
       const transcription = await transcribeAudio(bytes, label);
       assetsByKind.set(kind, {
         kind,

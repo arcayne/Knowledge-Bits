@@ -1,0 +1,11 @@
+{
+  "id": "nuglet.hero",
+  "instructions": [
+    "Create one editorial hero image direction rooted in the canonical lesson's opening scene or central metaphor.",
+    "Use one clear focal subject and an asymmetrical story composition.",
+    "Avoid text-heavy layouts, generic corporate imagery, icon grids, and literal diagrams.",
+    "Keep the direction specific to this lesson rather than to the broad topic category."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

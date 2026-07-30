@@ -4,12 +4,19 @@ import {
   artifactReferenceSchema,
   knowledgeBitsContentSchema,
   nugletGenerationPlanSchema,
+  nugletNarrativeDraftSchema,
+  nugletNarrativeGenerationPlanSchema,
   storyPlaybookDraftSchema,
   type ArtifactReference,
   type NugletGenerationPlan,
   type NugletLessonTarget,
+  type NugletNarrativeGenerationPlan,
+  type NugletNarrativeTarget,
 } from '@knowledge-bits/contracts';
-import { calculateNugletGenerationInputChecksum } from '@knowledge-bits/pipeline';
+import {
+  calculateNugletGenerationInputChecksum,
+  calculateNugletNarrativeGenerationInputChecksum,
+} from '@knowledge-bits/pipeline';
 
 import type { WorkflowArtifact } from '../repositories/workflow-repository.js';
 
@@ -20,9 +27,18 @@ export const NUGLET_REVIEW_MEDIA_KINDS = [
   'audio_discussion',
 ] as const;
 
-export type NugletReviewMediaKind = typeof NUGLET_REVIEW_MEDIA_KINDS[number];
+export const NUGLET_NARRATIVE_REVIEW_MEDIA_KINDS = [
+  'hero',
+  'infographic',
+  'audio_conversation',
+] as const;
+
+export type NugletReviewMediaKind =
+  | typeof NUGLET_REVIEW_MEDIA_KINDS[number]
+  | typeof NUGLET_NARRATIVE_REVIEW_MEDIA_KINDS[number];
 export type NugletReviewMediaArtifacts = Partial<Record<NugletReviewMediaKind, WorkflowArtifact>>;
 export type StoryPlaybookTarget = Extract<NugletLessonTarget, { schemaVersion: '1.1.0' }>;
+export type NarrativeTarget = NugletNarrativeTarget;
 
 export function calculateStoryPlaybookGenerationInputChecksum(
   semanticTarget: unknown,
@@ -98,6 +114,66 @@ export function materializeStoryPlaybookTarget(input: {
   }).target as StoryPlaybookTarget;
 }
 
+export function calculateNarrativeGenerationInputChecksum(
+  semanticTarget: unknown,
+  generationPlan: NugletNarrativeGenerationPlan,
+): string {
+  return calculateNugletNarrativeGenerationInputChecksum({
+    semanticTarget: parseNarrativeSemanticTarget(semanticTarget),
+    generationPlan: nugletNarrativeGenerationPlanSchema.parse(generationPlan),
+  });
+}
+
+export function materializeNarrativeTarget(input: {
+  semanticTarget: unknown;
+  generationPlan: NugletNarrativeGenerationPlan;
+  mediaArtifacts: NugletReviewMediaArtifacts;
+  retainedMediaArtifactIds?: ReadonlySet<string>;
+}): NarrativeTarget {
+  const semanticTarget = parseNarrativeSemanticTarget(input.semanticTarget);
+  const generationPlan = nugletNarrativeGenerationPlanSchema.parse(input.generationPlan);
+  const generationInputChecksum = calculateNarrativeGenerationInputChecksum(semanticTarget, generationPlan);
+  const hero = requiredMedia(input.mediaArtifacts, 'hero', generationInputChecksum, 'image/', input.retainedMediaArtifactIds);
+  const infographic = requiredMedia(input.mediaArtifacts, 'infographic', generationInputChecksum, 'image/', input.retainedMediaArtifactIds);
+  const conversation = requiredMedia(input.mediaArtifacts, 'audio_conversation', generationInputChecksum, 'audio/', input.retainedMediaArtifactIds);
+  const heroMetadata = heroMetadataFor(hero, generationPlan);
+  const infographicMetadata = imageMetadataFor(infographic, 'infographic');
+  const conversationMetadata = audioMetadataFor(conversation, 'audio_conversation');
+  const target = {
+    ...semanticTarget,
+    payload: {
+      ...semanticTarget.payload,
+      materialization: 'materialized' as const,
+      hero: {
+        ...semanticTarget.payload.hero,
+        asset: toArtifactReference(hero),
+        width: heroMetadata.width,
+        height: heroMetadata.height,
+        focalPoint: heroMetadata.focalPoint,
+        cropSafeArea: heroMetadata.cropSafeArea,
+      },
+      visual: {
+        ...semanticTarget.payload.visual,
+        asset: toArtifactReference(infographic),
+        width: infographicMetadata.width,
+        height: infographicMetadata.height,
+      },
+      listen: {
+        conversation: {
+          ...semanticTarget.payload.listen.conversation,
+          asset: toArtifactReference(conversation),
+          durationSeconds: conversationMetadata.durationSeconds,
+          transcript: transcriptFor(conversationMetadata.transcript),
+        },
+      },
+    },
+  };
+  return knowledgeBitsContentSchema.parse({
+    schemaVersion: 'knowledge-bits.content.v1',
+    target,
+  }).target as NarrativeTarget;
+}
+
 function parseSemanticTarget(value: unknown): StoryPlaybookTarget & { payload: ReturnType<typeof storyPlaybookDraftSchema.parse> } {
   if (!isRecord(value)
     || value.kind !== 'nuglet.lesson.v1'
@@ -109,6 +185,24 @@ function parseSemanticTarget(value: unknown): StoryPlaybookTarget & { payload: R
     kind: 'nuglet.lesson.v1',
     schemaVersion: '1.1.0',
     payload: storyPlaybookDraftSchema.parse(value.payload),
+  };
+}
+
+function parseNarrativeSemanticTarget(
+  value: unknown,
+): Extract<NarrativeTarget, { schemaVersion: '2.0.0' }> & {
+  payload: ReturnType<typeof nugletNarrativeDraftSchema.parse>;
+} {
+  if (!isRecord(value)
+    || value.kind !== 'nuglet.lesson.v2'
+    || value.schemaVersion !== '2.0.0'
+    || !('payload' in value)) {
+    throw new TypeError('Narrative semantic target must be nuglet.lesson.v2 schema 2.0.0');
+  }
+  return {
+    kind: 'nuglet.lesson.v2',
+    schemaVersion: '2.0.0',
+    payload: nugletNarrativeDraftSchema.parse(value.payload),
   };
 }
 
@@ -139,7 +233,7 @@ function requiredMedia(
 
 function heroMetadataFor(
   artifact: WorkflowArtifact,
-  generationPlan: NugletGenerationPlan,
+  generationPlan: NugletGenerationPlan | NugletNarrativeGenerationPlan,
 ) {
   const dimensions = imageMetadataFor(artifact, 'hero');
   const isLegacyReuse = artifact.provenance.mediaSource === 'legacy_nuglet';

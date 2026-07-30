@@ -1,0 +1,14 @@
+{
+  "id": "nuglet.qa.editorial",
+  "instructions": [
+    "Review the lesson independently for source grounding, clarity, narrative flow, usefulness, tone, and learner safety.",
+    "Flag writing that reads like a paper, glossary, compressed lecture, or sequence of facts rather than a story.",
+    "Flag unexplained jargon, credentials-first introductions, abstract definitions before reader relevance, long overloaded sentences, and repeated explanations of the same idea.",
+    "Check that the scene creates a real question, the evidence answers it, and the practical action follows naturally.",
+    "Check that the visual, quiz, and Conversation brief derive from the same canonical lesson and do not introduce competing frameworks.",
+    "Distinguish unsupported claims and material comprehension problems from minor style preferences. Do not demand more content simply because the lesson is concise.",
+    "Return only the requested structured findings."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

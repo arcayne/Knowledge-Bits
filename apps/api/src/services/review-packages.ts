@@ -4,11 +4,13 @@ import {
   knowledgeBitsEvidenceSchema,
   knowledgeBitsQaSchema,
   nugletGenerationPlanSchema,
+  nugletNarrativeGenerationPlanSchema,
   reviewPackageVersionSchema,
   reviewReadModelSchema,
   type ArtifactReference,
   type KnowledgeBitsEvidence,
   type NugletGenerationPlan,
+  type NugletNarrativeGenerationPlan,
   type ReviewGenerationExecution,
   type ReviewGenerationExecutions,
   type ReviewGenerationRole,
@@ -26,8 +28,11 @@ import {
   type ArtifactStorageAdapter,
 } from './artifacts.js';
 import {
+  calculateNarrativeGenerationInputChecksum,
   calculateStoryPlaybookGenerationInputChecksum,
+  materializeNarrativeTarget,
   materializeStoryPlaybookTarget,
+  NUGLET_NARRATIVE_REVIEW_MEDIA_KINDS,
   NUGLET_REVIEW_MEDIA_KINDS,
   type NugletReviewMediaKind,
 } from './nuglet-package-materializer.js';
@@ -40,10 +45,15 @@ const REVIEW_ASSETS = [
   { kind: 'infographic', key: 'infographic' },
   { kind: 'audio_brief', key: 'audioBrief' },
   { kind: 'audio_discussion', key: 'audioDiscussion' },
+  { kind: 'audio_conversation', key: 'audioConversation' },
   { kind: 'public_preview', key: 'publicPreview' },
 ] as const;
 const REVIEW_ASSET_KINDS = NUGLET_REVIEW_MEDIA_KINDS;
-const REVIEW_PACKAGE_ASSET_KINDS = [...REVIEW_ASSET_KINDS, 'public_preview'] as const;
+const REVIEW_PACKAGE_ASSET_KINDS = [
+  ...REVIEW_ASSET_KINDS,
+  ...NUGLET_NARRATIVE_REVIEW_MEDIA_KINDS,
+  'public_preview',
+] as const;
 
 export class ReviewPackageService {
   constructor(private readonly dependencies: {
@@ -61,10 +71,12 @@ export class ReviewPackageService {
       || artifact.provenance.mediaSource === 'legacy_nuglet'
     )));
     const assets = assetStates(run.id, packageArtifacts);
+    const requiredAssetKinds = requiredReviewAssetKinds(run.brief);
     const mediaIssues = REVIEW_ASSETS
       .filter(({ kind, key }) => (
         assets[key].state === 'missing'
-        && (kind !== 'public_preview' || publicPreviewPlanned(run.brief))
+        && ((kind !== 'public_preview' && requiredAssetKinds.includes(kind))
+          || (kind === 'public_preview' && publicPreviewPlanned(run.brief)))
       ))
       .map(({ kind }) => `Required review media is missing: ${kind}`);
     let warnings: string[] = [];
@@ -85,9 +97,9 @@ export class ReviewPackageService {
       const assembled = assembleContent(run.brief, contentOutput, packageArtifacts, retainedMediaArtifactIds);
       const content = assembled.content;
       const generationExecutions = assembled.generationExecutions;
-      const editorialWarningsAllowed = isMaterializedStoryPlaybook(content.target);
+      const editorialWarningsAllowed = isMaterializedNuglet(content.target);
       warnings = editorialWarningsAllowed ? editorialWarnings(qa) : [];
-      for (const kind of REVIEW_ASSET_KINDS) {
+      for (const kind of requiredAssetKinds) {
         const artifact = latestArtifact(packageArtifacts, kind);
         if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
       }
@@ -99,7 +111,12 @@ export class ReviewPackageService {
       const approvalIssues = [
         ...mediaIssues,
         ...qaApprovalIssues(qa, assembled.semanticChecksum, editorialWarningsAllowed),
-        ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum, retainedMediaArtifactIds),
+        ...assetChecksumIssues(
+          packageArtifacts,
+          assembled.generationInputChecksum,
+          retainedMediaArtifactIds,
+          requiredAssetKinds,
+        ),
       ];
       const packageChecksum = calculatePackageChecksum({
         content,
@@ -213,6 +230,29 @@ function assembleContent(
   artifacts: readonly WorkflowArtifact[],
   retainedMediaArtifactIds: ReadonlySet<string> = new Set(),
 ) {
+  if (contentOutput.kind === 'nuglet.lesson.v2' && contentOutput.schemaVersion === '2.0.0') {
+    const generationPlan = narrativeGenerationPlanFromBrief(brief);
+    const semanticChecksum = calculateContentChecksum(contentOutput);
+    const generationInputChecksum = calculateNarrativeGenerationInputChecksum(contentOutput, generationPlan);
+    const mediaArtifacts = Object.fromEntries(NUGLET_NARRATIVE_REVIEW_MEDIA_KINDS.map((kind) => [
+      kind,
+      latestArtifact(artifacts, kind),
+    ])) as Partial<Record<NugletReviewMediaKind, WorkflowArtifact>>;
+    const target = materializeNarrativeTarget({
+      semanticTarget: contentOutput,
+      generationPlan,
+      mediaArtifacts,
+      retainedMediaArtifactIds,
+    });
+    const content = knowledgeBitsContentSchema.parse({
+      schemaVersion: 'knowledge-bits.content.v1',
+      target,
+    });
+    const generationExecutions = assembleNarrativeGenerationExecutions(artifacts, generationPlan);
+    if (generationExecutions.hero.length > 0) assertHeroReferenceProvenance(generationExecutions.hero);
+    return { content, generationExecutions, generationInputChecksum, semanticChecksum };
+  }
+
   if (contentOutput.kind === 'nuglet.lesson.v1' && contentOutput.schemaVersion === '1.1.0') {
     const generationPlan = generationPlanFromBrief(brief);
     const semanticChecksum = calculateContentChecksum(contentOutput);
@@ -254,6 +294,12 @@ function generationPlanFromBrief(brief: Record<string, unknown>): NugletGenerati
   return parsed.data;
 }
 
+function narrativeGenerationPlanFromBrief(brief: Record<string, unknown>): NugletNarrativeGenerationPlan {
+  const parsed = nugletNarrativeGenerationPlanSchema.safeParse(brief.generationPlan);
+  if (!parsed.success) throw new ReviewPackageAssemblyError('Narrative generation plan is missing or unreadable');
+  return parsed.data;
+}
+
 const GENERATION_ROLE_BINDINGS = [
   { role: 'story', recipeKey: 'story', action: 'create_content', outputKind: 'parsed_output' },
   { role: 'playbook', recipeKey: 'playbook', action: 'create_content', outputKind: 'parsed_output' },
@@ -269,13 +315,55 @@ const GENERATION_ROLE_BINDINGS = [
   outputKind: string;
 }[];
 
+const NARRATIVE_GENERATION_ROLE_BINDINGS = [
+  { role: 'writer', recipeKey: 'writer', action: 'create_content', outputKind: 'parsed_output' },
+  { role: 'quiz', recipeKey: 'challenge', action: 'create_content', outputKind: 'parsed_output' },
+  { role: 'hero', recipeKey: 'hero', action: 'produce_assets', outputKind: 'hero' },
+  { role: 'infographic', recipeKey: 'infographic', action: 'produce_assets', outputKind: 'infographic' },
+  { role: 'audioConversation', recipeKey: 'audioConversation', action: 'produce_assets', outputKind: 'audio_conversation' },
+] as const satisfies readonly {
+  role: ReviewGenerationRole;
+  recipeKey: keyof NugletNarrativeGenerationPlan['recipes'];
+  action: string;
+  outputKind: string;
+}[];
+
 export function assembleGenerationExecutions(
   artifacts: readonly WorkflowArtifact[],
   generationPlan: NugletGenerationPlan,
 ): ReviewGenerationExecutions {
+  return assembleGenerationExecutionBindings(artifacts, GENERATION_ROLE_BINDINGS.map((binding) => ({
+    role: binding.role,
+    action: binding.action,
+    outputKind: binding.outputKind,
+    recipe: generationPlan.recipes[binding.recipeKey],
+  })));
+}
+
+export function assembleNarrativeGenerationExecutions(
+  artifacts: readonly WorkflowArtifact[],
+  generationPlan: NugletNarrativeGenerationPlan,
+): ReviewGenerationExecutions {
+  return assembleGenerationExecutionBindings(artifacts, NARRATIVE_GENERATION_ROLE_BINDINGS.map((binding) => ({
+    role: binding.role,
+    action: binding.action,
+    outputKind: binding.outputKind,
+    recipe: generationPlan.recipes[binding.recipeKey],
+  })));
+}
+
+function assembleGenerationExecutionBindings(
+  artifacts: readonly WorkflowArtifact[],
+  bindings: readonly {
+    role: ReviewGenerationRole;
+    action: string;
+    outputKind: string;
+    recipe: { id: string; version: string; checksum: string };
+  }[],
+): ReviewGenerationExecutions {
   const result = emptyGenerationExecutions();
-  for (const binding of GENERATION_ROLE_BINDINGS) {
-    const recipe = generationPlan.recipes[binding.recipeKey];
+  for (const binding of bindings) {
+    const recipe = binding.recipe;
     const output = latestArtifactForAction(artifacts, binding.outputKind, binding.action);
     if (output?.provenance.mediaSource === 'legacy_nuglet') continue;
     if (!output || !executorBindingMatches(output)) {
@@ -450,6 +538,7 @@ function assertHeroReferenceProvenance(executions: readonly ReviewGenerationExec
 
 function emptyGenerationExecutions(): ReviewGenerationExecutions {
   return {
+    writer: [],
     story: [],
     playbook: [],
     quiz: [],
@@ -457,6 +546,7 @@ function emptyGenerationExecutions(): ReviewGenerationExecutions {
     infographic: [],
     audioBrief: [],
     audioDiscussion: [],
+    audioConversation: [],
   };
 }
 
@@ -621,10 +711,10 @@ function qaApprovalIssues(
   ];
 }
 
-function isMaterializedStoryPlaybook(target: Record<string, unknown>): boolean {
+function isMaterializedNuglet(target: Record<string, unknown>): boolean {
   const payload = target.payload;
-  return target.kind === 'nuglet.lesson.v1'
-    && target.schemaVersion === '1.1.0'
+  return ((target.kind === 'nuglet.lesson.v1' && target.schemaVersion === '1.1.0')
+    || (target.kind === 'nuglet.lesson.v2' && target.schemaVersion === '2.0.0'))
     && isRecord(payload)
     && payload.materialization === 'materialized';
 }
@@ -639,8 +729,9 @@ function assetChecksumIssues(
   artifacts: readonly WorkflowArtifact[],
   contentChecksum: string,
   retainedMediaArtifactIds: ReadonlySet<string> = new Set(),
+  requiredKinds: readonly string[] = REVIEW_ASSET_KINDS,
 ): string[] {
-  return REVIEW_PACKAGE_ASSET_KINDS.flatMap((kind) => {
+  return requiredKinds.flatMap((kind) => {
     const artifact = latestArtifact(artifacts, kind);
     return artifact
       && artifact.provenance.mediaSource !== 'legacy_nuglet'
@@ -649,6 +740,13 @@ function assetChecksumIssues(
       ? [`Required ${kind} input checksum does not match learner content`]
       : [];
   });
+}
+
+function requiredReviewAssetKinds(brief: Record<string, unknown>): readonly NugletReviewMediaKind[] {
+  const plan = isRecord(brief.generationPlan) ? brief.generationPlan : undefined;
+  return brief.contentKind === 'nuglet.lesson.v2' || plan?.contentKind === 'nuglet.lesson.v2'
+    ? NUGLET_NARRATIVE_REVIEW_MEDIA_KINDS
+    : REVIEW_ASSET_KINDS;
 }
 
 function publicPreviewPlanned(brief: Record<string, unknown>): boolean {
@@ -667,7 +765,9 @@ async function trustedRetainedMediaArtifactIds(
   const sourcePackageChecksum = nonEmptyString(marker?.sourcePackageChecksum);
   const regeneratedKinds = Array.isArray(marker?.regeneratedKinds)
     ? marker.regeneratedKinds.filter((kind): kind is NugletReviewMediaKind => (
-      typeof kind === 'string' && REVIEW_ASSET_KINDS.includes(kind as NugletReviewMediaKind)
+      typeof kind === 'string'
+      && kind !== 'public_preview'
+      && (REVIEW_PACKAGE_ASSET_KINDS as readonly string[]).includes(kind)
     ))
     : [];
   if (!sourcePackageChecksum || regeneratedKinds.length === 0) return new Set();
@@ -675,7 +775,7 @@ async function trustedRetainedMediaArtifactIds(
   if (!sourcePackage) return new Set();
   const sourceArtifactIds = new Set(sourcePackage.artifactInventory.map(({ artifactId }) => artifactId));
   if (!sourceArtifactIds.has(contentArtifact.id)) return new Set();
-  return new Set(REVIEW_ASSET_KINDS.flatMap((kind) => {
+  return new Set(requiredReviewAssetKinds(run.brief).flatMap((kind) => {
     if (regeneratedKinds.includes(kind)) return [];
     const artifact = latestArtifact(artifacts, kind);
     return artifact && sourceArtifactIds.has(artifact.id) ? [artifact.id] : [];

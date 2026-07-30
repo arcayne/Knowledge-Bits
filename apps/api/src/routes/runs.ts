@@ -115,7 +115,10 @@ function standardNugletSimilarityInput(
   brief: Record<string, unknown>,
 ): ReturnType<typeof nugletSimilarityRequestSchema.parse> | null | undefined {
   const intake = isRecord(brief.intake) ? brief.intake : undefined;
-  if (intake?.requestedFormat !== 'story_playbook') return undefined;
+  if (
+    intake?.requestedFormat !== 'story_playbook'
+    && intake?.requestedFormat !== 'single_narrative'
+  ) return undefined;
   const parsed = nugletSimilarityRequestSchema.safeParse({
     title,
     objective: brief.objective,

@@ -4,12 +4,17 @@ import test from 'node:test';
 
 import {
   nugletGenerationPlanSchema,
+  nugletNarrativeDraftSchema,
+  nugletNarrativeGenerationPlanSchema,
   type NugletGenerationPlan,
+  type NugletNarrativeGenerationPlan,
   type StoryPlaybookDraft,
 } from '@knowledge-bits/contracts';
 import type { WorkflowArtifact } from '../repositories/workflow-repository.js';
 import {
+  calculateNarrativeGenerationInputChecksum,
   calculateStoryPlaybookGenerationInputChecksum,
+  materializeNarrativeTarget,
   materializeStoryPlaybookTarget,
 } from './nuglet-package-materializer.js';
 
@@ -45,6 +50,37 @@ test('materializes the checked Story Playbook target with immutable media metada
     materialized.payload.listen.discussion.transcript.checksum,
   );
   assert.equal(materialized.payload.hero.asset.inputChecksum, generationInputChecksum);
+});
+
+test('materializes one narrative lesson with one Conversation asset', () => {
+  const semanticTarget = narrativeTarget();
+  const generationPlan = narrativePlan();
+  const generationInputChecksum = calculateNarrativeGenerationInputChecksum(
+    semanticTarget,
+    generationPlan,
+  );
+  const mediaArtifacts = narrativeAssets(generationInputChecksum, generationPlan);
+
+  const materialized = materializeNarrativeTarget({
+    semanticTarget,
+    generationPlan,
+    mediaArtifacts,
+  });
+
+  assert.equal(materialized.schemaVersion, '2.0.0');
+  assert.equal(materialized.payload.contentModel, 'single-narrative.v2');
+  assert.equal(materialized.payload.materialization, 'materialized');
+  assert.equal(materialized.payload.read.lesson.sections.length, 5);
+  assert.equal(
+    materialized.payload.listen.conversation.asset.artifactId,
+    mediaArtifacts.audio_conversation?.id,
+  );
+  assert.equal(
+    materialized.payload.listen.conversation.transcript.text,
+    'Conversation final transcript.',
+  );
+  assert.equal('brief' in materialized.payload.listen, false);
+  assert.equal('discussion' in materialized.payload.listen, false);
 });
 
 test('rejects materialization when any required media role is missing', () => {
@@ -197,6 +233,69 @@ function target() {
   };
 }
 
+function narrativeTarget() {
+  const base = draft();
+  return {
+    kind: 'nuglet.lesson.v2' as const,
+    schemaVersion: '2.0.0' as const,
+    payload: nugletNarrativeDraftSchema.parse({
+      materialization: 'draft',
+      contentModel: 'single-narrative.v2',
+      identity: base.identity,
+      learning: {
+        oneLineToKeep: base.learning.oneLineToKeep,
+        action: base.learning.action,
+        terminology: [
+          { term: 'reserve', plainLanguage: 'money kept for an unexpected cost' },
+        ],
+      },
+      hero: base.hero,
+      read: {
+        lesson: {
+          title: 'The expense that arrived before payday',
+          estimatedMinutes: 5,
+          sections: [
+            { id: 'scene', type: 'scene', text: 'The repair bill arrived on a Tuesday.', claimRefs: [] },
+            { id: 'discovery', type: 'discovery', text: 'A small reserve changed the decision.', claimRefs: [claimId] },
+            { id: 'evidence', type: 'evidence', text: 'A small buffer can absorb an unexpected expense.', claimRefs: [claimId] },
+            { id: 'application', type: 'application', text: 'The first transfer can be deliberately small.', claimRefs: [secondClaimId] },
+            { id: 'close', type: 'close', text: 'Start with a buffer small enough to build consistently.', claimRefs: [secondClaimId] },
+          ],
+        },
+      },
+      visual: base.visual,
+      listen: {
+        conversation: {
+          editorialBrief: {
+            objective: 'Explore how a small reserve changes a difficult decision.',
+            tone: 'warm and practical',
+            keyPoints: ['Start small.', 'Make the transfer repeatable.'],
+            format: 'two-person-conversation',
+          },
+        },
+      },
+      quiz: {
+        questions: base.quiz.questions.map(({
+          reviewConcept: _reviewConcept,
+          ...question
+        }) => question),
+      },
+      publicSources: base.publicSources,
+      claims: base.claims,
+      claimCoverage: [
+        { path: 'identity.title', claimIds: [claimId] },
+        { path: 'identity.deck', claimIds: [claimId] },
+        { path: 'learning.oneLineToKeep', claimIds: [secondClaimId] },
+        { path: 'learning.action', claimIds: [secondClaimId] },
+        { path: 'read.lesson', claimIds: [claimId, secondClaimId] },
+        { path: 'visual', claimIds: [claimId, secondClaimId] },
+        { path: 'listen.conversation', claimIds: [claimId, secondClaimId] },
+        { path: 'quiz', claimIds: [claimId, secondClaimId] },
+      ],
+    }),
+  };
+}
+
 function draft(): StoryPlaybookDraft {
   const citations = [{ sourceId, snapshotArtifactId, excerpt: 'A small buffer can absorb an unexpected expense.' }];
   const claims = [
@@ -329,6 +428,34 @@ function plan(): NugletGenerationPlan {
   });
 }
 
+function narrativePlan(): NugletNarrativeGenerationPlan {
+  const recipe = (id: string, digit: string) => ({
+    id,
+    version: '1.0.0',
+    checksum: `sha256:${digit.repeat(64)}`,
+  });
+  return nugletNarrativeGenerationPlanSchema.parse({
+    contentKind: 'nuglet.lesson.v2',
+    schemaVersion: '2.0.0',
+    recipes: {
+      writer: recipe('nuglet.lesson.narrative', '1'),
+      challenge: recipe('nuglet.challenge', '2'),
+      infographic: recipe('nuglet.visual.infographic', '3'),
+      audioConversation: recipe('nuglet.audio.conversation', '4'),
+      hero: recipe('nuglet.hero', '5'),
+      editorialQa: recipe('nuglet.qa.editorial', '6'),
+    },
+    heroDirection: {
+      concept: 'Moving from surprise costs to resilience',
+      metaphor: 'A vessel collecting tokens beside a seedling',
+      compositionFamily: 'asymmetrical-story',
+      mustInclude: ['one vessel'],
+      mustAvoid: ['rigid symmetry'],
+    },
+    mediaMode: 'generate',
+  });
+}
+
 function mediaBaseline() {
   const evidence = (recipeId: string, artifactId: string, digit: string) => ({
     artifactId,
@@ -410,6 +537,36 @@ function assets(generationInputChecksum: string, generationPlan: NugletGeneratio
       transcriptAudioChecksum: `sha256:${'4'.repeat(64)}`,
       transcriptSource: 'vertex_gemini',
     }),
+  };
+}
+
+function narrativeAssets(
+  generationInputChecksum: string,
+  generationPlan: NugletNarrativeGenerationPlan,
+) {
+  const base = assets(
+    generationInputChecksum,
+    generationPlan as unknown as NugletGenerationPlan,
+  );
+  const conversation: WorkflowArtifact = {
+    ...base.audio_discussion,
+    id: '60000000-0000-4000-8000-000000000005',
+    kind: 'audio_conversation',
+    storageKey: 'objects/audio_conversation',
+    checksum: '5'.repeat(64),
+    provenance: {
+      provider: 'fixture',
+      byteSize: 256,
+      durationSeconds: 312.5,
+      transcript: 'Conversation final transcript.',
+      transcriptAudioChecksum: `sha256:${'5'.repeat(64)}`,
+      transcriptSource: 'notebooklm',
+    },
+  };
+  return {
+    hero: base.hero,
+    infographic: base.infographic,
+    audio_conversation: conversation,
   };
 }
 

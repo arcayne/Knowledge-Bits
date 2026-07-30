@@ -1,0 +1,11 @@
+{
+  "id": "nuglet.challenge",
+  "instructions": [
+    "Create exactly three short application questions derived from the canonical lesson.",
+    "Test whether the reader can recognize and use the idea in a realistic situation, not whether she memorized a technical label.",
+    "Use plausible answer choices and explain the correct answer in plain language.",
+    "Do not introduce claims, concepts, or advice that do not appear in the canonical lesson."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

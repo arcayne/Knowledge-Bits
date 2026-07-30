@@ -122,6 +122,7 @@ test('joins every Story Playbook and media execution to complete inspectable pro
   const executions = assembleGenerationExecutions(artifacts, plan);
 
   assert.deepEqual(Object.keys(executions), [
+    'writer',
     'story',
     'playbook',
     'quiz',
@@ -129,6 +130,7 @@ test('joins every Story Playbook and media execution to complete inspectable pro
     'infographic',
     'audioBrief',
     'audioDiscussion',
+    'audioConversation',
   ]);
   assert.equal(executions.story.length, 1);
   assert.equal(executions.playbook.length, 1);

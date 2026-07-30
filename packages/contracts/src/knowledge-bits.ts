@@ -9,6 +9,10 @@ import {
   workflowStageSchema,
   workflowRunResponseSchema,
 } from './workflow.js';
+import {
+  nugletNarrativeGenerationPlanSchema,
+  nugletNarrativeTargetSchema,
+} from './nuglet-v2.js';
 
 const packageIdSchema = z.string().uuid();
 
@@ -269,7 +273,9 @@ export type NugletMediaBaseline = z.infer<typeof nugletMediaBaselineSchema>;
 export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((brief, context) => {
   const generationPlan = brief.generationPlan;
   if (!targetsNugletLesson(brief)) return;
-  const parsed = nugletGenerationPlanSchema.safeParse(generationPlan);
+  const parsed = targetsNarrativeNuglet(brief)
+    ? nugletNarrativeGenerationPlanSchema.safeParse(generationPlan)
+    : nugletGenerationPlanSchema.safeParse(generationPlan);
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       context.addIssue({ ...issue, path: ['generationPlan', ...issue.path] });
@@ -278,10 +284,14 @@ export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((br
   }
   const baseline = isUnknownRecord(brief.baseline) ? brief.baseline : undefined;
   const baselineRunId = baseline?.runId;
-  const evidenceRunId = parsed.data.mediaBaseline?.descriptor.runId
-    ?? parsed.data.legacyMediaReuse?.sourceRunId;
-  const evidenceNotebookId = parsed.data.mediaBaseline?.descriptor.notebookId
-    ?? parsed.data.legacyMediaReuse?.notebookId;
+  const evidenceRunId = 'mediaBaseline' in parsed.data
+    ? parsed.data.mediaBaseline?.descriptor.runId
+      ?? parsed.data.legacyMediaReuse?.sourceRunId
+    : undefined;
+  const evidenceNotebookId = 'mediaBaseline' in parsed.data
+    ? parsed.data.mediaBaseline?.descriptor.notebookId
+      ?? parsed.data.legacyMediaReuse?.notebookId
+    : brief.notebookLmNotebookId;
   if (evidenceRunId !== undefined
     && (typeof baselineRunId !== 'string' || baselineRunId !== evidenceRunId)) {
     context.addIssue({
@@ -403,7 +413,14 @@ export const resumeCreateCandidateRequestSchema = z.object({
 }).strict();
 
 export const regenerateMediaRequestSchema = z.object({
-  kinds: z.array(z.enum(['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview']))
+  kinds: z.array(z.enum([
+    'hero',
+    'infographic',
+    'audio_brief',
+    'audio_discussion',
+    'audio_conversation',
+    'public_preview',
+  ]))
     .min(1)
     .refine((kinds) => new Set(kinds).size === kinds.length, 'Media kinds must be distinct'),
   recipeOverrides: z.object({
@@ -428,7 +445,16 @@ export const prepareLegacyRevisionResponseSchema = z.object({
 function targetsNugletLesson(brief: Record<string, unknown>): boolean {
   const generationPlan = brief.generationPlan;
   return brief.contentKind === 'nuglet.lesson.v1'
-    || (isUnknownRecord(generationPlan) && generationPlan.contentKind === 'nuglet.lesson.v1');
+    || brief.contentKind === 'nuglet.lesson.v2'
+    || (isUnknownRecord(generationPlan)
+      && (generationPlan.contentKind === 'nuglet.lesson.v1'
+        || generationPlan.contentKind === 'nuglet.lesson.v2'));
+}
+
+function targetsNarrativeNuglet(brief: Record<string, unknown>): boolean {
+  const generationPlan = brief.generationPlan;
+  return brief.contentKind === 'nuglet.lesson.v2'
+    || (isUnknownRecord(generationPlan) && generationPlan.contentKind === 'nuglet.lesson.v2');
 }
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
@@ -1087,6 +1113,7 @@ export const storyPlaybookNugletLessonTargetSchema = z.object({
 export const nugletLessonTargetSchema = z.discriminatedUnion('schemaVersion', [
   legacyNugletLessonTargetSchema,
   storyPlaybookNugletLessonTargetSchema,
+  nugletNarrativeTargetSchema,
 ]);
 
 const compatibleNugletLessonTargetSchema = z.preprocess((value) => {
@@ -1228,6 +1255,7 @@ export const reviewAssetSchema = z.discriminatedUnion('state', [
 ]);
 
 export const reviewGenerationRoleSchema = z.enum([
+  'writer',
   'story',
   'playbook',
   'quiz',
@@ -1235,6 +1263,7 @@ export const reviewGenerationRoleSchema = z.enum([
   'infographic',
   'audioBrief',
   'audioDiscussion',
+  'audioConversation',
 ]);
 
 export const reviewGenerationExecutionSchema = z.object({
@@ -1259,6 +1288,7 @@ export const reviewGenerationExecutionSchema = z.object({
 }).strict();
 
 export const reviewGenerationExecutionsSchema = z.object({
+  writer: z.array(reviewGenerationExecutionSchema).default([]),
   story: z.array(reviewGenerationExecutionSchema),
   playbook: z.array(reviewGenerationExecutionSchema),
   quiz: z.array(reviewGenerationExecutionSchema),
@@ -1266,6 +1296,7 @@ export const reviewGenerationExecutionsSchema = z.object({
   infographic: z.array(reviewGenerationExecutionSchema),
   audioBrief: z.array(reviewGenerationExecutionSchema),
   audioDiscussion: z.array(reviewGenerationExecutionSchema),
+  audioConversation: z.array(reviewGenerationExecutionSchema).default([]),
 }).strict().superRefine((executions, context) => {
   for (const role of reviewGenerationRoleSchema.options) {
     executions[role].forEach((execution, index) => {
@@ -1296,6 +1327,12 @@ export const reviewReadModelSchema = z.object({
     infographic: reviewAssetSchema,
     audioBrief: reviewAssetSchema,
     audioDiscussion: reviewAssetSchema,
+    audioConversation: reviewAssetSchema.default({
+      state: 'missing',
+      artifactId: null,
+      mediaType: null,
+      previewPath: null,
+    }),
     publicPreview: reviewAssetSchema.optional(),
   }).strict(),
   generationExecutions: reviewGenerationExecutionsSchema,

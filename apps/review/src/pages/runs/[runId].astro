@@ -106,7 +106,7 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
       <div class="run-summary" id="run-summary" hidden></div>
       <div class="review-flow" id="review" hidden>
         <section class="review-section" id="story-section">
-          <h2>Story</h2><h3 id="story-title"></h3><p class="muted" id="story-meta"></p><div id="story-blocks"></div>
+          <h2 id="written-format-label">Story</h2><h3 id="story-title"></h3><p class="muted" id="story-meta"></p><div id="story-blocks"></div>
         </section>
         <section class="review-section" id="playbook-section">
           <h2>Playbook</h2><h3 id="playbook-title"></h3><p id="playbook-principle"></p><p id="playbook-why"></p>
@@ -133,6 +133,9 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
         </section>
         <section class="review-section" id="audio-discussion-section">
           <h2>Discussion audio</h2><div class="audio-layout"><div class="asset" id="audio-discussion">Missing Discussion audio.</div><div><h4>Transcript</h4><p class="transcript" id="audio-discussion-transcript"></p></div></div>
+        </section>
+        <section class="review-section" id="audio-conversation-section" hidden>
+          <h2>The Conversation</h2><div class="audio-layout"><div class="asset" id="audio-conversation">Missing Conversation audio.</div><div><h4>Transcript</h4><p class="transcript" id="audio-conversation-transcript"></p></div></div>
         </section>
         <section class="review-section" id="public-preview-section">
           <h2>Public preview Short</h2>

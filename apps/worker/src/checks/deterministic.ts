@@ -1,6 +1,7 @@
 import {
   normalizeNugletTerminologyTerm,
   type NugletLessonV1Payload,
+  type NugletNarrativeDraft,
   type StoryPlaybookDraft,
 } from '@knowledge-bits/contracts';
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
@@ -23,7 +24,13 @@ export interface StoryPlaybookDraftTarget {
   payload: StoryPlaybookDraft;
 }
 
-export type ContentCandidate = NugletLessonV1Payload | StoryPlaybookDraftTarget;
+export interface NugletNarrativeDraftTarget {
+  kind: 'nuglet.lesson.v2';
+  schemaVersion: '2.0.0';
+  payload: NugletNarrativeDraft;
+}
+
+export type ContentCandidate = NugletLessonV1Payload | StoryPlaybookDraftTarget | NugletNarrativeDraftTarget;
 
 export interface EvidenceManifest {
   sources: readonly { sourceId: string; title: string; snapshotArtifactId: string }[];
@@ -36,6 +43,8 @@ export interface DeterministicFinding {
     | 'story-integrity'
     | 'playbook-structure'
     | 'cross-format-consistency'
+    | 'narrative-structure'
+    | 'narrative-readability'
     | 'challenge-shape'
     | 'citation-source'
     | 'citation-excerpt'
@@ -61,6 +70,8 @@ export function runDeterministicChecks(input: {
   const findings: DeterministicFinding[] = [];
   if (isStoryPlaybookCandidate(input.candidate)) {
     checkStoryPlaybook(input.candidate.payload, findings);
+  } else if (isNarrativeCandidate(input.candidate)) {
+    checkNarrative(input.candidate.payload, findings);
   } else {
     checkLegacy(input.candidate, findings);
   }
@@ -76,6 +87,12 @@ export function runDeterministicChecks(input: {
 export function isStoryPlaybookCandidate(candidate: ContentCandidate): candidate is StoryPlaybookDraftTarget {
   return 'schemaVersion' in candidate
     && candidate.schemaVersion === '1.1.0'
+    && 'payload' in candidate;
+}
+
+export function isNarrativeCandidate(candidate: ContentCandidate): candidate is NugletNarrativeDraftTarget {
+  return 'schemaVersion' in candidate
+    && candidate.schemaVersion === '2.0.0'
     && 'payload' in candidate;
 }
 
@@ -209,6 +226,50 @@ function checkStoryPlaybook(payload: StoryPlaybookDraft, findings: Deterministic
   checkStoryPlaybookCoverage(payload.claims, payload.claimCoverage, nestedClaimRefs, findings);
 }
 
+function checkNarrative(payload: NugletNarrativeDraft, findings: DeterministicFinding[]): void {
+  const learnerText = stringValues({
+    identity: payload.identity,
+    learning: payload.learning,
+    read: payload.read,
+    visual: payload.visual,
+    listen: payload.listen,
+    quiz: payload.quiz,
+  });
+  if (learnerText.some((value) => PLACEHOLDER.test(value))) {
+    findings.push({ code: 'placeholder', message: 'Candidate contains a placeholder or internal metadata label.' });
+  }
+
+  const sections = payload.read.lesson.sections;
+  const sectionTypes = new Set(sections.map(({ type }) => type));
+  const requiredTypes = ['scene', 'discovery', 'evidence', 'application', 'close'] as const;
+  const evidenceSections = sections.filter(({ type }) => type === 'evidence');
+  if (!requiredTypes.every((type) => sectionTypes.has(type))
+    || evidenceSections.some(({ claimRefs }) => claimRefs.length === 0)) {
+    findings.push({
+      code: 'narrative-structure',
+      message: 'The single lesson requires a scene, discovery, evidence-bound explanation, application, and close.',
+    });
+  }
+
+  const narrativeText = sections.map(({ text }) => text).join(' ');
+  const sentences = narrativeText.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+  const overloadedSentences = sentences.filter((sentence) => sentence.split(/\s+/).length > 35);
+  const duplicateSections = new Set(sections.map(({ text }) => semanticNormalize(text))).size !== sections.length;
+  if (overloadedSentences.length > Math.max(1, Math.floor(sentences.length * 0.15)) || duplicateSections) {
+    findings.push({
+      code: 'narrative-readability',
+      message: 'The canonical lesson contains too many overloaded sentences or repeated sections.',
+    });
+  }
+
+  const nestedClaimRefs = [
+    ...sections.flatMap(({ claimRefs }) => claimRefs.map((claimId) => ({ path: 'read.lesson', claimId }))),
+    ...payload.visual.claimRefs.map((claimId) => ({ path: 'visual', claimId })),
+    ...payload.quiz.questions.flatMap(({ claimRefs }) => claimRefs.map((claimId) => ({ path: 'quiz', claimId }))),
+  ];
+  checkStoryPlaybookCoverage(payload.claims, payload.claimCoverage, nestedClaimRefs, findings);
+}
+
 function checkLegacyCoverage(
   claims: readonly GroundedClaim[],
   coverageEntries: readonly { path: string; claimIds: readonly string[] }[],
@@ -232,7 +293,9 @@ function checkClaims(
   evidence: EvidenceManifest,
   findings: DeterministicFinding[],
 ): void {
-  const claims = isStoryPlaybookCandidate(candidate) ? candidate.payload.claims : candidate.claims;
+  const claims = isStoryPlaybookCandidate(candidate) || isNarrativeCandidate(candidate)
+    ? candidate.payload.claims
+    : candidate.claims;
   if (claims.length === 0) {
     findings.push({ code: 'claim-inventory', message: 'Learner content requires at least one supported claim.' });
   }

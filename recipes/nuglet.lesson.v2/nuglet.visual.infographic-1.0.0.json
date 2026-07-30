@@ -1,0 +1,11 @@
+{
+  "id": "nuglet.visual.infographic",
+  "instructions": [
+    "Turn the canonical lesson's single useful shift into one glanceable visual.",
+    "Use one clear hierarchy and no more than three short supporting points.",
+    "Derive every label from the approved lesson; do not create a second framework or explanation.",
+    "Prefer concrete language and visual relationships over technical terminology."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

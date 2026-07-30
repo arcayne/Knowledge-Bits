@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { knowledgeBitsRunBriefSchema, nugletGenerationPlanSchema } from '@knowledge-bits/contracts';
+import {
+  knowledgeBitsRunBriefSchema,
+  nugletGenerationPlanSchema,
+  nugletNarrativeGenerationPlanSchema,
+} from '@knowledge-bits/contracts';
 
 import {
   bindStandardNugletIntakePlan,
+  standardNarrativeRecipeBindings,
   standardRecipeBindings,
 } from './standard-nuglet-intake.js';
 
@@ -43,6 +48,43 @@ test('standard bindings match approved entries in the repository recipe manifest
     .map(({ id, version, checksum }) => `${id}@${version}:${checksum}`));
 
   for (const binding of Object.values(standardRecipeBindings())) {
+    assert.equal(approved.has(`${binding.id}@${binding.version}:${binding.checksum}`), true);
+  }
+});
+
+test('binds the one-text, one-Conversation V2 plan without Story, Playbook, or Brief audio', () => {
+  const brief = bindStandardNugletIntakePlan({
+    title: 'The thought that followed you home',
+    brief: {
+      title: 'The thought that followed you home',
+      objective: 'Help readers leave unfinished work at work.',
+      notebookLmNotebookId: 'notebook-narrative-intake',
+      intake: { requestedBy: 'review_operator', requestedFormat: 'single_narrative' },
+    },
+  });
+
+  const parsedBrief = knowledgeBitsRunBriefSchema.parse(brief);
+  const plan = nugletNarrativeGenerationPlanSchema.parse(parsedBrief.generationPlan);
+  assert.equal(parsedBrief.contentKind, 'nuglet.lesson.v2');
+  assert.equal(plan.recipes.writer.id, 'nuglet.lesson.narrative');
+  assert.equal(plan.recipes.audioConversation.id, 'nuglet.audio.conversation');
+  assert.equal('story' in plan.recipes, false);
+  assert.equal('playbook' in plan.recipes, false);
+  assert.equal('audioBrief' in plan.recipes, false);
+});
+
+test('V2 standard bindings match approved entries in the V2 recipe manifest', async () => {
+  const manifest = JSON.parse(await readFile(
+    new URL('../../../../recipes/nuglet.lesson.v2/manifest.json', import.meta.url),
+    'utf8',
+  )) as {
+    recipes: Array<{ id: string; version: string; status: string; checksum: string }>;
+  };
+  const approved = new Set(manifest.recipes
+    .filter(({ status }) => status === 'approved')
+    .map(({ id, version, checksum }) => `${id}@${version}:${checksum}`));
+
+  for (const binding of Object.values(standardNarrativeRecipeBindings())) {
     assert.equal(approved.has(`${binding.id}@${binding.version}:${binding.checksum}`), true);
   }
 });

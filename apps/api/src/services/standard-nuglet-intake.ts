@@ -1,4 +1,9 @@
-import { nugletGenerationPlanSchema, type NugletGenerationPlan } from '@knowledge-bits/contracts';
+import {
+  nugletGenerationPlanSchema,
+  nugletNarrativeGenerationPlanSchema,
+  type NugletGenerationPlan,
+  type NugletNarrativeGenerationPlan,
+} from '@knowledge-bits/contracts';
 
 type JsonObject = Record<string, unknown>;
 
@@ -45,32 +50,67 @@ const STANDARD_RECIPE_BINDINGS: NugletGenerationPlan['recipes'] = {
   },
 };
 
+const STANDARD_NARRATIVE_RECIPE_BINDINGS: NugletNarrativeGenerationPlan['recipes'] = {
+  writer: {
+    id: 'nuglet.lesson.narrative',
+    version: '1.0.0',
+    checksum: 'sha256:a0469ccf1ff91753d70063cddfbd7cd26d63968a8dbdd84ecd8950c6831fe59d',
+  },
+  challenge: {
+    id: 'nuglet.challenge',
+    version: '1.0.0',
+    checksum: 'sha256:7aa0cab4452a6768187f3286ad3e1ccb01becfdca3bca69887fac1d9d7610686',
+  },
+  infographic: {
+    id: 'nuglet.visual.infographic',
+    version: '1.0.0',
+    checksum: 'sha256:f24346b4dfafaf3892d4cc0c4f682bafa01acbd94487790ebb2d3ab0903fd03b',
+  },
+  audioConversation: {
+    id: 'nuglet.audio.conversation',
+    version: '1.0.0',
+    checksum: 'sha256:f71789a8b037d58c8cd0024bc5bc97571ab2e75a9a44502a4849504f457db5ea',
+  },
+  hero: {
+    id: 'nuglet.hero',
+    version: '1.0.0',
+    checksum: 'sha256:2f8a9a3b49afbae42fb6c8982c73c7002d71ea742dc36b3ac35c319f84bc89a1',
+  },
+  editorialQa: {
+    id: 'nuglet.qa.editorial',
+    version: '1.0.0',
+    checksum: 'sha256:317a9f48a5ff7a6009415461426742a506b640790eb85ab81e4c50ab7dc151c7',
+  },
+};
+
 export function bindStandardNugletIntakePlan(input: {
   title: string;
   brief: JsonObject;
 }): JsonObject {
-  if (!isStandardStoryPlaybookIntake(input.brief) || input.brief.generationPlan !== undefined) {
+  if (input.brief.generationPlan !== undefined) {
     return input.brief;
   }
+  if (isStandardNarrativeIntake(input.brief)) {
+    const plan = nugletNarrativeGenerationPlanSchema.parse({
+      contentKind: 'nuglet.lesson.v2',
+      schemaVersion: '2.0.0',
+      recipes: STANDARD_NARRATIVE_RECIPE_BINDINGS,
+      heroDirection: standardHeroDirection(input.title),
+      mediaMode: 'generate',
+    });
+    return {
+      ...input.brief,
+      contentKind: 'nuglet.lesson.v2',
+      generationPlan: plan,
+    };
+  }
+  if (!isStandardStoryPlaybookIntake(input.brief)) return input.brief;
+
   const plan = nugletGenerationPlanSchema.parse({
     contentKind: 'nuglet.lesson.v1',
     schemaVersion: '1.1.0',
     recipes: STANDARD_RECIPE_BINDINGS,
-    heroDirection: {
-      concept: input.title,
-      metaphor: `One physical action that makes ${input.title} immediately understandable`,
-      compositionFamily: 'asymmetrical-story',
-      mustInclude: [
-        `one clear focal metaphor specific to ${input.title}`,
-        'the final checked lesson hero brief when content generation provides one',
-      ],
-      mustAvoid: [
-        'generic icon grids',
-        'text-heavy composition',
-        'rigid symmetry',
-        'literal corporate stock imagery',
-      ],
-    },
+    heroDirection: standardHeroDirection(input.title),
     mediaMode: 'generate',
   });
   return {
@@ -84,13 +124,36 @@ export function standardRecipeBindings(): NugletGenerationPlan['recipes'] {
   return structuredClone(STANDARD_RECIPE_BINDINGS);
 }
 
+export function standardNarrativeRecipeBindings(): NugletNarrativeGenerationPlan['recipes'] {
+  return structuredClone(STANDARD_NARRATIVE_RECIPE_BINDINGS);
+}
+
+function standardHeroDirection(title: string) {
+  return {
+    concept: title,
+    metaphor: `One physical action that makes ${title} immediately understandable`,
+    compositionFamily: 'asymmetrical-story' as const,
+    mustInclude: [
+      `one clear focal metaphor specific to ${title}`,
+      'the final checked lesson hero brief when content generation provides one',
+    ],
+    mustAvoid: [
+      'generic icon grids',
+      'text-heavy composition',
+      'rigid symmetry',
+      'literal corporate stock imagery',
+    ],
+  };
+}
+
 function isStandardStoryPlaybookIntake(brief: JsonObject): boolean {
   const intake = isRecord(brief.intake) ? brief.intake : undefined;
   return intake?.requestedFormat === 'story_playbook';
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+function isStandardNarrativeIntake(brief: JsonObject): boolean {
+  const intake = isRecord(brief.intake) ? brief.intake : undefined;
+  return intake?.requestedFormat === 'single_narrative';
 }
 
 function isRecord(value: unknown): value is JsonObject {

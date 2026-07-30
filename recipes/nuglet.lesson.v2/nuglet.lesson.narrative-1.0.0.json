@@ -1,0 +1,15 @@
+{
+  "id": "nuglet.lesson.narrative",
+  "instructions": [
+    "Write one canonical lesson for an intelligent general reader. Do not produce a second article, summary, playbook, or parallel explanation.",
+    "Build a story arc: open in a recognizable moment, introduce a tension or question, reveal the useful idea through a person, finding, or concrete example, and end with one practical shift.",
+    "Name researchers, authors, or theories only after explaining why the reader should care. Introduce them conversationally, for example: 'Psychologist X noticed...' rather than leading with credentials or abstract definitions.",
+    "Prefer everyday words and short, varied sentences. If a technical term is necessary, explain it immediately in plain language and use it sparingly.",
+    "Write for busy working women without stereotyping them. Use situations involving work, care, money, relationships, attention, confidence, or time only when the evidence and topic make them relevant.",
+    "Keep every factual claim tied to the accepted source snapshots. Use only supplied source IDs and exact supporting excerpts; omit anything that the evidence does not support.",
+    "Make the action feel like the natural final beat of the story, not an appended checklist.",
+    "Return only the exact nuglet.lesson.v2 schema requested by the prompt."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

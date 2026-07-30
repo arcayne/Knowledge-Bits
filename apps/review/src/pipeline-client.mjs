@@ -282,7 +282,7 @@ function mountNewNugletForm({ document, fetch }) {
       ...(sourceUrls.length ? { sourceUrls } : {}),
       intake: {
         requestedBy: 'review_operator',
-        requestedFormat: 'story_playbook',
+        requestedFormat: 'single_narrative',
         similarityReview: {
           fingerprint: similarity.fingerprint,
           decision: similarity.risk === 'none' ? 'clear' : 'proceed_distinct',

@@ -1,0 +1,48 @@
+{
+  "contentKind": "nuglet.lesson.v2",
+  "recipes": [
+    {
+      "checksum": "sha256:f71789a8b037d58c8cd0024bc5bc97571ab2e75a9a44502a4849504f457db5ea",
+      "id": "nuglet.audio.conversation",
+      "path": "nuglet.audio.conversation-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:7aa0cab4452a6768187f3286ad3e1ccb01becfdca3bca69887fac1d9d7610686",
+      "id": "nuglet.challenge",
+      "path": "nuglet.challenge-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:2f8a9a3b49afbae42fb6c8982c73c7002d71ea742dc36b3ac35c319f84bc89a1",
+      "id": "nuglet.hero",
+      "path": "nuglet.hero-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:a0469ccf1ff91753d70063cddfbd7cd26d63968a8dbdd84ecd8950c6831fe59d",
+      "id": "nuglet.lesson.narrative",
+      "path": "nuglet.lesson.narrative-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:317a9f48a5ff7a6009415461426742a506b640790eb85ab81e4c50ab7dc151c7",
+      "id": "nuglet.qa.editorial",
+      "path": "nuglet.qa.editorial-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:f24346b4dfafaf3892d4cc0c4f682bafa01acbd94487790ebb2d3ab0903fd03b",
+      "id": "nuglet.visual.infographic",
+      "path": "nuglet.visual.infographic-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    }
+  ],
+  "registryVersion": "1.0.0"
+}
