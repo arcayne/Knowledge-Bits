@@ -1114,6 +1114,10 @@ function narrativeSourceText(body: Uint8Array, mediaType: string): string | unde
       .replace(/&nbsp;/gi, ' ')
       .replace(/&amp;/gi, '&')
       .replace(/&quot;/gi, '"')
+      .replace(/&ldquo;|&rdquo;|&#8220;|&#8221;|&#x201c;|&#x201d;/gi, '"')
+      .replace(/&lsquo;|&rsquo;|&#8216;|&#8217;|&#x2018;|&#x2019;/gi, "'")
+      .replace(/&mdash;|&#8212;|&#x2014;/gi, '—')
+      .replace(/&ndash;|&#8211;|&#x2013;/gi, '–')
       .replace(/&#39;|&apos;/gi, "'")
       .replace(/&lt;/gi, '<')
       .replace(/&gt;/gi, '>');

@@ -280,7 +280,12 @@ test('builds narrative writer context from readable sources when research also c
       mediaType: 'application/json',
     }],
     [htmlSnapshotId, {
-      body: Buffer.from(`<html><body>${'A source-grounded finding written in plain language. '.repeat(4)}</body></html>`),
+      body: Buffer.from(
+        `<html><body>${'A source-grounded finding written in plain language. '.repeat(4)}`
+        + 'She said &ldquo;start here&rdquo;&mdash;then called it &lsquo;useful&rsquo;. '
+        + 'He said &#8220;continue&#8221;&#8211;without changing the evidence.'
+        + '</body></html>',
+      ),
       mediaType: 'text/html',
     }],
     [pdfSnapshotId, {
@@ -320,6 +325,8 @@ test('builds narrative writer context from readable sources when research also c
 
   assert.deepEqual(context.sources.map(({ sourceId }) => sourceId), [htmlSourceId]);
   assert.match(context.sources[0]?.text ?? '', /source-grounded finding/);
+  assert.match(context.sources[0]?.text ?? '', /She said "start here"—then called it 'useful'\./);
+  assert.match(context.sources[0]?.text ?? '', /He said "continue"–without changing the evidence\./);
 });
 
 test('passes a validated generation plan to NotebookLM, editorial QA, and media contexts', async () => {
