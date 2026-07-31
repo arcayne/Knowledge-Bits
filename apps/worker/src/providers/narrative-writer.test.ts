@@ -28,7 +28,14 @@ const source: NarrativeWriterSource = {
 };
 
 function recipe(id: string): ResolvedRecipe {
-  const value = { id, version: '1.0.0', status: 'approved', instructions: [`Instructions for ${id}`] };
+  const instructions = id === 'nuglet.lesson.narrative'
+    ? [
+        'Write identity.deck as a spoken cold open that a listener can understand the first time she hears it.',
+        'Read the deck and first scene sentence together and remove needless repetition.',
+        'Do not use em dashes, en dashes, curly double quotation marks, or spaced double hyphens in authored learner copy.',
+      ]
+    : [`Instructions for ${id}`];
+  const value = { id, version: '1.0.0', status: 'approved', instructions };
   return {
     id,
     version: '1.0.0',
@@ -94,7 +101,7 @@ function candidate() {
         topic: { label: 'Work and attention', categoryId: null },
         tags: ['attention'],
         title: 'The thought that followed you home',
-        deck: 'Why unfinished work keeps borrowing your evening—and one small way to close the loop.',
+        deck: 'Maya closed her laptop. She was still composing the unfinished email in her head.',
         slugSuggestion: 'the-thought-that-followed-you-home',
       },
       learning: {
@@ -198,6 +205,10 @@ test('writer prompt makes the single narrative boundary and evidence inputs expl
   assert.match(prompt, /Return exactly the top-level keys kind, schemaVersion, and payload/);
   assert.match(prompt, /\"materialization\":\"draft\"/);
   assert.match(prompt, /\"format\":\"two-person-conversation\"/);
+  assert.match(prompt, /spoken cold open/i);
+  assert.match(prompt, /understand the first time she hears it/i);
+  assert.match(prompt, /remove needless repetition/i);
+  assert.match(prompt, /Do not use em dashes, en dashes/i);
   assert.match(prompt, /Never return read\.playbook, listen\.brief/);
   assert.match(prompt, /Participants reported fewer intrusive thoughts/);
   assert.doesNotMatch(prompt, /NotebookLM/i);
@@ -232,6 +243,19 @@ test('writer evidence matching tolerates typographic quotation differences', () 
     parsed.payload.claims[0]?.citations[0]?.snapshotArtifactId,
     snapshotArtifactId,
   );
+});
+
+test('deterministic checks reject typographic punctuation in authored V2 copy', () => {
+  const punctuated = candidate();
+  punctuated.payload.identity.deck = 'The meeting feels settled—before anyone checks the plan.';
+  const parsed = parseNarrativeWriterResponse(punctuated, [source]);
+  const report = runDeterministicChecks({
+    candidate: parsed,
+    evidence: { sources: [{ sourceId: source.sourceId, title: source.title, snapshotArtifactId }] },
+  });
+
+  assert.equal(report.passed, false);
+  assert.ok(report.findings.some(({ code }) => code === 'narrative-readability'));
 });
 
 test('independent editorial QA reviews the V2 narrative with its own recipe call', async () => {

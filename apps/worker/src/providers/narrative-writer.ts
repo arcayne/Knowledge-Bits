@@ -162,7 +162,7 @@ const narrativeWriterResponseSkeleton = {
       topic: { label: '<plain-language topic>', categoryId: null },
       tags: ['<tag>'],
       title: '<learner-facing title>',
-      deck: '<one-sentence invitation>',
+      deck: '<spoken cold open: one to three short sentences with a person, action, concrete detail, or plain tension>',
       slugSuggestion: '<lowercase-hyphenated-slug>',
     },
     learning: {

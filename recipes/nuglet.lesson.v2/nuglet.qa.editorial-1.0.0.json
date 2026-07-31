@@ -2,10 +2,13 @@
   "id": "nuglet.qa.editorial",
   "instructions": [
     "Review the lesson independently for source grounding, clarity, narrative flow, usefulness, tone, and learner safety.",
+    "Read identity.deck and the first scene sentence aloud as one opening. Flag the deck if an intelligent general listener would need to hear it twice, if it merely summarizes the lesson, or if the scene needlessly repeats it.",
+    "Flag openings built from abstract metaphor, personification, credentials, definitions, technical labels, or commands to learn and discover. Prefer a person, action, concrete detail, or plain tension that creates a natural question.",
     "Flag writing that reads like a paper, glossary, compressed lecture, or sequence of facts rather than a story.",
     "Flag unexplained jargon, credentials-first introductions, abstract definitions before reader relevance, long overloaded sentences, and repeated explanations of the same idea.",
     "Check that the scene creates a real question, the evidence answers it, and the practical action follows naturally.",
     "Check that the visual, quiz, and Conversation brief derive from the same canonical lesson and do not introduce competing frameworks.",
+    "Flag em dashes, en dashes, curly double quotation marks, and spaced double hyphens in authored learner copy, while leaving verbatim evidence excerpts unchanged.",
     "Distinguish unsupported claims and material comprehension problems from minor style preferences. Do not demand more content simply because the lesson is concise.",
     "Return only the requested structured findings."
   ],

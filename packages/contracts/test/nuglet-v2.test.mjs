@@ -52,7 +52,7 @@ function target() {
         topic: { label: 'Work and attention', categoryId: null },
         tags: ['attention'],
         title: 'The thought that followed you home',
-        deck: 'Why unfinished work keeps borrowing your evening—and one small way to close the loop.',
+        deck: 'Maya closed her laptop. She was still composing the unfinished email in her head.',
         slugSuggestion: 'the-thought-that-followed-you-home',
       },
       learning: {

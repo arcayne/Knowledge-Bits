@@ -255,10 +255,13 @@ function checkNarrative(payload: NugletNarrativeDraft, findings: DeterministicFi
   const sentences = narrativeText.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
   const overloadedSentences = sentences.filter((sentence) => sentence.split(/\s+/).length > 35);
   const duplicateSections = new Set(sections.map(({ text }) => semanticNormalize(text))).size !== sections.length;
-  if (overloadedSentences.length > Math.max(1, Math.floor(sentences.length * 0.15)) || duplicateSections) {
+  const prohibitedAuthoredPunctuation = learnerText.some((value) => /[\u2013\u2014\u201c\u201d]|\s--\s/.test(value));
+  if (overloadedSentences.length > Math.max(1, Math.floor(sentences.length * 0.15))
+    || duplicateSections
+    || prohibitedAuthoredPunctuation) {
     findings.push({
       code: 'narrative-readability',
-      message: 'The canonical lesson contains too many overloaded sentences or repeated sections.',
+      message: 'The canonical lesson contains overloaded sentences, repeated sections, or punctuation that does not fit the spoken learner voice.',
     });
   }
 

@@ -54,7 +54,7 @@ const STANDARD_NARRATIVE_RECIPE_BINDINGS: NugletNarrativeGenerationPlan['recipes
   writer: {
     id: 'nuglet.lesson.narrative',
     version: '1.0.0',
-    checksum: 'sha256:a0469ccf1ff91753d70063cddfbd7cd26d63968a8dbdd84ecd8950c6831fe59d',
+    checksum: 'sha256:993d9d7afb16bdfb8c9c1d8bae45944f9de4e8a7154c2bdaa8e173da62a1008c',
   },
   challenge: {
     id: 'nuglet.challenge',
@@ -69,7 +69,7 @@ const STANDARD_NARRATIVE_RECIPE_BINDINGS: NugletNarrativeGenerationPlan['recipes
   audioConversation: {
     id: 'nuglet.audio.conversation',
     version: '1.0.0',
-    checksum: 'sha256:f71789a8b037d58c8cd0024bc5bc97571ab2e75a9a44502a4849504f457db5ea',
+    checksum: 'sha256:7441f239bccfd2f487e64354897a6efa95f51d94fe6212e6cd17ab090136dbe6',
   },
   hero: {
     id: 'nuglet.hero',
@@ -79,7 +79,7 @@ const STANDARD_NARRATIVE_RECIPE_BINDINGS: NugletNarrativeGenerationPlan['recipes
   editorialQa: {
     id: 'nuglet.qa.editorial',
     version: '1.0.0',
-    checksum: 'sha256:317a9f48a5ff7a6009415461426742a506b640790eb85ab81e4c50ab7dc151c7',
+    checksum: 'sha256:fb277d5a585ead617de29f4768f15a4cd0c1a14ace15523c8ee9fcdeaff4c58c',
   },
 };
 
