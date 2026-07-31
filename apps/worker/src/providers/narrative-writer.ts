@@ -306,7 +306,13 @@ function writerResponseObject(response: unknown): Record<string, unknown> {
 }
 
 function normalizedEvidenceText(value: string): string {
-  return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en');
+  return value
+    .normalize('NFKC')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('en');
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {

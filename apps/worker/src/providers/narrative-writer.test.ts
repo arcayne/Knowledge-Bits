@@ -219,6 +219,21 @@ test('writer output is bound to immutable snapshots and must quote accepted evid
   );
 });
 
+test('writer evidence matching tolerates typographic quotation differences', () => {
+  const typographicSource = {
+    ...source,
+    text: "Bloom’s taxonomy calls this learners’ ability to apply knowledge in new situations.",
+  };
+  const typographicCandidate = candidate();
+  typographicCandidate.payload.claims[0]!.citations[0]!.excerpt = "Bloom's taxonomy calls this learners' ability to apply knowledge in new situations.";
+
+  const parsed = parseNarrativeWriterResponse(typographicCandidate, [typographicSource]);
+  assert.equal(
+    parsed.payload.claims[0]?.citations[0]?.snapshotArtifactId,
+    snapshotArtifactId,
+  );
+});
+
 test('independent editorial QA reviews the V2 narrative with its own recipe call', async () => {
   const parsed = parseNarrativeWriterResponse(candidate(), [source]);
   let calls = 0;
