@@ -194,6 +194,10 @@ function executionInput(contentKind = 'nuglet.lesson.v2'): ProviderExecutionInpu
 test('writer prompt makes the single narrative boundary and evidence inputs explicit', () => {
   const prompt = Buffer.from(renderNarrativeWriterPrompt(context())).toString('utf8');
   assert.match(prompt, /writtenLessonCount/);
+  assert.match(prompt, /Exact response skeleton/);
+  assert.match(prompt, /Return exactly the top-level keys kind, schemaVersion, and payload/);
+  assert.match(prompt, /\"materialization\":\"draft\"/);
+  assert.match(prompt, /\"format\":\"two-person-conversation\"/);
   assert.match(prompt, /Never return read\.playbook, listen\.brief/);
   assert.match(prompt, /Participants reported fewer intrusive thoughts/);
   assert.doesNotMatch(prompt, /NotebookLM/i);

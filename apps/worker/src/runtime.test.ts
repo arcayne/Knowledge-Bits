@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { calculateContentChecksum } from '@knowledge-bits/pipeline';
-import type { NugletGenerationPlan } from '@knowledge-bits/contracts';
+import type { NugletGenerationPlan, NugletNarrativeGenerationPlan } from '@knowledge-bits/contracts';
 
 import {
   composeWorkerProviders,
@@ -261,6 +261,65 @@ test('builds Create context from accepted source URLs instead of brief candidate
   assert.deepEqual(context.sourceUrls, [acceptedUrl]);
   assert.deepEqual(context.evidence, evidence);
   assert.deepEqual(context.generationPlan, generationPlan);
+});
+
+test('builds narrative writer context from readable sources when research also contains PDFs', async () => {
+  const researchId = '77777777-7777-4777-8777-777777777781';
+  const htmlSnapshotId = '77777777-7777-4777-8777-777777777782';
+  const pdfSnapshotId = '77777777-7777-4777-8777-777777777783';
+  const htmlSourceId = '77777777-7777-4777-8777-777777777784';
+  const pdfSourceId = '77777777-7777-4777-8777-777777777785';
+  const bodies = new Map<string, { body: Uint8Array; mediaType: string }>([
+    [researchId, {
+      body: Buffer.from(JSON.stringify({
+        acceptedSources: [
+          { sourceId: htmlSourceId, title: 'Readable evidence', url: 'https://example.test/readable' },
+          { sourceId: pdfSourceId, title: 'PDF evidence', url: 'https://example.test/evidence.pdf' },
+        ],
+      })),
+      mediaType: 'application/json',
+    }],
+    [htmlSnapshotId, {
+      body: Buffer.from(`<html><body>${'A source-grounded finding written in plain language. '.repeat(4)}</body></html>`),
+      mediaType: 'text/html',
+    }],
+    [pdfSnapshotId, {
+      body: Buffer.from('%PDF-1.7 fixture'),
+      mediaType: 'application/pdf',
+    }],
+  ]);
+  const client: WorkerEngineClient = {
+    async claim() { return null; },
+    async heartbeat() { return { kind: 'continue' }; },
+    async readArtifact(_job, artifactId) {
+      const artifact = bodies.get(artifactId);
+      if (!artifact) throw new Error(`missing ${artifactId}`);
+      return artifact;
+    },
+    async prepareArtifact() { throw new Error('not used'); },
+    async uploadArtifact() { throw new Error('not used'); },
+    async completeArtifact() { throw new Error('not used'); },
+    async reportResult() { throw new Error('not used'); },
+    async runDelivery() { throw new Error('not used'); },
+  };
+  const resolver = new LeaseScopedJobContextResolver(client, acceptingRecipeVerifier());
+  const dependencies = [
+    { artifactId: researchId, revision: 1, kind: 'parsed_output', mediaType: 'application/json', checksum: inputChecksum, action: 'collect_sources' },
+    { artifactId: htmlSnapshotId, revision: 1, kind: 'source_snapshot', mediaType: 'text/html', checksum: inputChecksum, action: 'collect_sources', sourceId: htmlSourceId },
+    { artifactId: pdfSnapshotId, revision: 1, kind: 'source_snapshot', mediaType: 'application/pdf', checksum: inputChecksum, action: 'collect_sources', sourceId: pdfSourceId },
+  ];
+  const context = await resolver.narrativeWriter(input('create_content', dependencies, {
+    title: 'Women Don’t Ask',
+    locale: 'en',
+    audience: 'busy working women',
+    objective: 'Make a clear request while navigating social costs.',
+    contentKind: 'nuglet.lesson.v2',
+    generationPlan: narrativeGenerationPlan,
+    notebookLmNotebookId: 'notebook-1',
+  }));
+
+  assert.deepEqual(context.sources.map(({ sourceId }) => sourceId), [htmlSourceId]);
+  assert.match(context.sources[0]?.text ?? '', /source-grounded finding/);
 });
 
 test('passes a validated generation plan to NotebookLM, editorial QA, and media contexts', async () => {
@@ -858,6 +917,27 @@ const generationPlan = {
       schemaVersion: 'nuglet.media-baseline.v1',
     },
   } as const,
+};
+
+const narrativeGenerationPlan: NugletNarrativeGenerationPlan = {
+  contentKind: 'nuglet.lesson.v2',
+  schemaVersion: '2.0.0',
+  recipes: {
+    writer: { id: 'nuglet.lesson.narrative', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    challenge: { id: 'nuglet.challenge', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    infographic: { id: 'nuglet.visual.infographic', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    audioConversation: { id: 'nuglet.audio.conversation', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    hero: { id: 'nuglet.hero', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+    editorialQa: { id: 'nuglet.qa.editorial', version: '1.0.0', checksum: `sha256:${inputChecksum}` },
+  },
+  heroDirection: {
+    concept: 'Make the ask',
+    metaphor: 'A hand opening a previously closed door',
+    compositionFamily: 'asymmetrical-story',
+    mustInclude: ['one clear focal action'],
+    mustAvoid: ['corporate stock imagery'],
+  },
+  mediaMode: 'generate',
 };
 
 function baselineArtifact<Path extends string>(recipeId: string, artifactId: string, path: Path) {

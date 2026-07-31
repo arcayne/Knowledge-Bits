@@ -104,6 +104,15 @@ export function renderNarrativeWriterPrompt(context: NarrativeWriterContext): Ui
     'You are the writer for Nuglet. Return one strict JSON object and no markdown.',
     'The object must match this contract exactly:',
     JSON.stringify(nugletNarrativeDraftContractDescriptor),
+    [
+      'The contract description above is instruction metadata, not the response.',
+      'Do not return descriptorVersion, target, outputEnvelope, productRule, narrativeArc, voice, or grounding.',
+      'Return exactly the top-level keys kind, schemaVersion, and payload.',
+      'Replace every angle-bracket placeholder in the skeleton below with a real value.',
+      'The five lesson sections and three quiz questions shown are required. Repeat claim, citation, source, terminology, and coverage items only as needed.',
+    ].join('\n'),
+    'Exact response skeleton:',
+    JSON.stringify(narrativeWriterResponseSkeleton),
     'Approved lesson-writing recipe:',
     Buffer.from(context.recipes.writer.canonicalBytes).toString('utf8'),
     'Approved challenge recipe:',
@@ -127,6 +136,107 @@ export function renderNarrativeWriterPrompt(context: NarrativeWriterContext): Ui
     ].join('\n'),
   ]);
 }
+
+const claimUuid = '<real UUID also declared in payload.claims>';
+const quizQuestion = (id: string) => ({
+  id,
+  prompt: '<realistic application question>',
+  options: [
+    { id: 'a', text: '<plausible answer>' },
+    { id: 'b', text: '<plausible answer>' },
+    { id: 'c', text: '<plausible answer>' },
+  ],
+  correctOptionId: '<a, b, or c>',
+  rationale: '<plain-language explanation>',
+  claimRefs: [claimUuid],
+});
+
+const narrativeWriterResponseSkeleton = {
+  kind: 'nuglet.lesson.v2',
+  schemaVersion: '2.0.0',
+  payload: {
+    contentModel: 'single-narrative.v2',
+    materialization: 'draft',
+    identity: {
+      locale: '<locale>',
+      topic: { label: '<plain-language topic>', categoryId: null },
+      tags: ['<tag>'],
+      title: '<learner-facing title>',
+      deck: '<one-sentence invitation>',
+      slugSuggestion: '<lowercase-hyphenated-slug>',
+    },
+    learning: {
+      oneLineToKeep: '<one memorable sentence>',
+      action: { label: '<short action label>', instruction: '<one concrete instruction>' },
+      terminology: [{ term: '<necessary term>', plainLanguage: '<immediate everyday explanation>' }],
+    },
+    hero: {
+      altText: '<useful image description>',
+      accessibilityPurpose: 'informative',
+      mediaBrief: {
+        concept: '<visual concept>',
+        metaphor: '<specific physical metaphor>',
+        compositionFamily: 'asymmetrical-story',
+      },
+    },
+    read: {
+      lesson: {
+        title: '<same canonical lesson title>',
+        estimatedMinutes: 5,
+        sections: [
+          { id: 'scene', type: 'scene', text: '<recognizable opening moment>', claimRefs: [] },
+          { id: 'discovery', type: 'discovery', text: '<tension and useful discovery>', claimRefs: [claimUuid] },
+          { id: 'evidence', type: 'evidence', text: '<plain-language evidence woven into the story>', claimRefs: [claimUuid] },
+          { id: 'application', type: 'application', text: '<idea applied in a realistic moment>', claimRefs: [claimUuid] },
+          { id: 'close', type: 'close', text: '<story-led close and practical shift>', claimRefs: [] },
+        ],
+      },
+    },
+    visual: {
+      title: '<visual title>',
+      altText: '<visual description>',
+      textEquivalent: ['<key point in text form>'],
+      claimRefs: [claimUuid],
+      mediaBrief: { objective: '<what the visual should clarify>', structure: '<simple visual structure>' },
+    },
+    listen: {
+      conversation: {
+        editorialBrief: {
+          objective: '<what two people should explore>',
+          tone: 'warm, curious, and natural',
+          keyPoints: ['<moment from the lesson>', '<useful idea>', '<practical shift>'],
+          format: 'two-person-conversation',
+        },
+      },
+    },
+    quiz: {
+      questions: [
+        quizQuestion('q1'),
+        quizQuestion('q2'),
+        quizQuestion('q3'),
+      ],
+    },
+    publicSources: [{
+      evidenceSourceId: '<accepted sourceId>',
+      label: '<reader-facing source label>',
+      publisher: '<publisher>',
+    }],
+    claims: [{
+      claimId: claimUuid,
+      statement: '<one factual statement used by the lesson>',
+      citations: [{
+        sourceId: '<accepted sourceId>',
+        excerpt: '<verbatim excerpt from the matching evidence text>',
+      }],
+    }],
+    claimCoverage: [
+      { path: 'read.lesson', claimIds: [claimUuid] },
+      { path: 'visual', claimIds: [claimUuid] },
+      { path: 'listen.conversation', claimIds: [claimUuid] },
+      { path: 'quiz', claimIds: [claimUuid] },
+    ],
+  },
+} as const;
 
 export function parseNarrativeWriterResponse(
   response: unknown,

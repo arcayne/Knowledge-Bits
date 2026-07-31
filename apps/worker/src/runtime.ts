@@ -36,6 +36,7 @@ import {
   NarrativeWriterProvider,
   type NarrativeWriterClient,
   type NarrativeWriterContext,
+  type NarrativeWriterSource,
 } from './providers/narrative-writer.js';
 import {
   PiEditorialProvider,
@@ -305,13 +306,15 @@ export class LeaseScopedJobContextResolver {
       this.recipeBindingVerifier,
     );
     const research = await this.verifiedResearch(input);
-    const sources = await Promise.all(research.evidence.sources.map(async (source) => {
+    const sources = (await Promise.all(research.evidence.sources.map(async (source) => {
       const artifact = await this.client.readArtifact(input.job, source.snapshotArtifactId, input.signal);
+      const text = narrativeSourceText(artifact.body, artifact.mediaType);
+      if (!text) return undefined;
       return {
         ...source,
-        text: narrativeSourceText(artifact.body, artifact.mediaType),
+        text,
       };
-    }));
+    }))).filter((source): source is NarrativeWriterSource => source !== undefined);
     const topic = stringValue(brief.title) ?? stringValue(brief.topic) ?? stringValue(brief.objective) ?? 'Knowledge Bits lesson';
     return {
       topic,
@@ -1094,12 +1097,12 @@ async function validatedNarrativeGenerationPlan(
   }
 }
 
-function narrativeSourceText(body: Uint8Array, mediaType: string): string {
+function narrativeSourceText(body: Uint8Array, mediaType: string): string | undefined {
   const normalizedMediaType = mediaType.split(';')[0]?.trim().toLowerCase();
   if (normalizedMediaType !== 'text/html'
     && normalizedMediaType !== 'application/xhtml+xml'
     && normalizedMediaType !== 'text/plain') {
-    throw new ProviderNeedsHumanError('narrative_writer_source_text_unavailable', 'quality');
+    return undefined;
   }
   const decoded = Buffer.from(body).toString('utf8');
   const text = normalizedMediaType === 'text/plain'
@@ -1116,7 +1119,7 @@ function narrativeSourceText(body: Uint8Array, mediaType: string): string {
       .replace(/&gt;/gi, '>');
   const compact = text.normalize('NFKC').replace(/\s+/g, ' ').trim();
   if (compact.length < 100) {
-    throw new ProviderNeedsHumanError('narrative_writer_source_text_unavailable', 'quality');
+    return undefined;
   }
   return compact.slice(0, 60_000);
 }
