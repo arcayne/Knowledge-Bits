@@ -25,7 +25,7 @@ const fixtureRoot = fileURLToPath(new URL('../fixtures/attention-recovery/', imp
 const providerRoot = fileURLToPath(new URL('../fixtures/attention-recovery/providers/', import.meta.url));
 const requireFromApi = createRequire(new URL('../../apps/api/package.json', import.meta.url));
 const { serve } = requireFromApi('@hono/node-server');
-const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0;
+const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore', timeout: 30_000 }).status !== 0;
 
 test(
   'brief becomes one approved and verified Knowledge Bits delivery',
@@ -154,8 +154,15 @@ test(
     ]);
     assert.ok(legacyMedia.every(({ inputChecksum }) => inputChecksum === contentChecksum));
     assert.deepEqual(
-      Object.values(review.assets).map(({ state }) => state),
-      ['available', 'available', 'available', 'available'],
+      Object.fromEntries(Object.entries(review.assets).map(([key, { state }]) => [key, state])),
+      {
+        hero: 'available',
+        infographic: 'available',
+        audioBrief: 'available',
+        audioDiscussion: 'available',
+        audioConversation: 'missing',
+        publicPreview: 'missing',
+      },
     );
 
     const surfaceChecksum = review.currentPackageChecksum;
@@ -417,6 +424,7 @@ async function startPostgres(containerName) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     if (spawnSync('docker', ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', 'knowledge_bits_fixture'], {
       stdio: 'ignore',
+      timeout: 10_000,
     }).status === 0) {
       const port = run('docker', ['port', containerName, '5432/tcp']).match(/:(\d+)\s*$/m)?.[1];
       assert.ok(port, 'PostgreSQL fixture port should resolve');
@@ -464,7 +472,7 @@ function createRestrictedRuntimeLogin(containerName, ownerUrl) {
 }
 
 function removeContainer(containerName) {
-  spawnSync('docker', ['rm', '--force', containerName], { stdio: 'ignore' });
+  spawnSync('docker', ['rm', '--force', containerName], { stdio: 'ignore', timeout: 30_000 });
 }
 
 function run(command, args, options = {}) {
@@ -473,5 +481,6 @@ function run(command, args, options = {}) {
     env: options.env ?? process.env,
     encoding: 'utf8',
     stdio: 'pipe',
+    timeout: options.timeout ?? 60_000,
   }).trim();
 }

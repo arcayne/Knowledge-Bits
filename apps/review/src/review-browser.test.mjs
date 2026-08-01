@@ -43,13 +43,14 @@ test('browser renders the complete approved payload and submits its displayed ch
     response.end(browserFixtureHtml());
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
-  const browser = await chromium.launch({ headless: true });
+  let browser;
   t.after(async () => {
-    await browser.close();
+    await browser?.close();
     await new Promise((resolve) => server.close(resolve));
   });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${address.port}`);
   await page.waitForSelector('#review:not([hidden])');
@@ -105,13 +106,14 @@ test('browser makes a failed approval visible and restores the decision controls
     response.end(browserFixtureHtml());
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
-  const browser = await chromium.launch({ headless: true });
+  let browser;
   t.after(async () => {
-    await browser.close();
+    await browser?.close();
     await new Promise((resolve) => server.close(resolve));
   });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${address.port}`);
   await page.waitForSelector('#review:not([hidden])');
@@ -149,13 +151,14 @@ test('mobile browser bounds long editorial warnings without covering decision co
     response.end(browserFixtureHtml());
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
-  const browser = await chromium.launch({ headless: true });
+  let browser;
   t.after(async () => {
-    await browser.close();
+    await browser?.close();
     await new Promise((resolve) => server.close(resolve));
   });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(`http://127.0.0.1:${address.port}`);
   await page.waitForSelector('#review:not([hidden])');

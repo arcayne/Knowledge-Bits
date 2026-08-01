@@ -22,6 +22,13 @@ Product documentation:
 - [Product and business vision](docs/VISION.md)
 - [Approved V1 design](docs/V1_DESIGN.md)
 
+Engineering delivery controls:
+
+- [System map](docs/engineering/system-map.md)
+- [Change risk map](docs/engineering/risk-map.md)
+- [Independent reviewer-agent pilot](docs/engineering/independent-review.md)
+- [Historical PR baseline](docs/engineering/pr-baseline.csv)
+
 ## Requirements
 
 - Node 24
