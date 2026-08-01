@@ -41,6 +41,9 @@ jobs:
       - name: Build workspace
         run: pnpm build
 
+      - name: Pull PostgreSQL test image
+        run: timeout 180s docker pull postgres:16-alpine
+
       - name: Test workspace and clean fixture workflow
         run: pnpm test
 
