@@ -178,8 +178,14 @@ test(
       .filter(({ kind }) => ['hero', 'infographic', 'audio_brief', 'audio_discussion'].includes(kind))
       .every(({ inputChecksum }) => inputChecksum === generationInputChecksum));
     assert.deepEqual(
-      Object.values(review.assets).map(({ state }) => state),
-      ['available', 'available', 'available', 'available'],
+      Object.fromEntries(Object.entries(review.assets).map(([key, { state }]) => [key, state])),
+      {
+        hero: 'available',
+        infographic: 'available',
+        audioBrief: 'available',
+        audioDiscussion: 'available',
+        publicPreview: 'missing',
+      },
     );
     assertCompleteGenerationProvenance(review);
 

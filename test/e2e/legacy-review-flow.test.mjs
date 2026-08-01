@@ -154,8 +154,14 @@ test(
     ]);
     assert.ok(legacyMedia.every(({ inputChecksum }) => inputChecksum === contentChecksum));
     assert.deepEqual(
-      Object.values(review.assets).map(({ state }) => state),
-      ['available', 'available', 'available', 'available'],
+      Object.fromEntries(Object.entries(review.assets).map(([key, { state }]) => [key, state])),
+      {
+        hero: 'available',
+        infographic: 'available',
+        audioBrief: 'available',
+        audioDiscussion: 'available',
+        publicPreview: 'missing',
+      },
     );
 
     const surfaceChecksum = review.currentPackageChecksum;

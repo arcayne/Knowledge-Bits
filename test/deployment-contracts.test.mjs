@@ -4,6 +4,62 @@ import test from 'node:test';
 
 const repositoryRoot = new URL('../', import.meta.url);
 
+test('required Quality workflow covers pull requests and independently reproduces root checks', async () => {
+  const workflow = await readFile(new URL('.github/workflows/quality.yml', repositoryRoot), 'utf8');
+
+  assert.match(workflow, /^name:\s*Quality$/m);
+  assert.match(workflow, /^\s{2}pull_request:\s*$/m);
+  assert.match(workflow, /^\s{2}push:\s*$/m);
+  assert.match(workflow, /^\s{6}- main\s*$/m);
+  assert.match(workflow, /^permissions:\s*\n\s{2}contents:\s*read$/m);
+  assert.match(workflow, /^\s{8}run:\s*pnpm install --frozen-lockfile$/m);
+  assert.match(workflow, /^\s{8}run:\s*pnpm typecheck$/m);
+  assert.match(workflow, /^\s{8}run:\s*pnpm test$/m);
+  assert.match(workflow, /^\s{8}run:\s*pnpm build$/m);
+});
+
+test('historical PR baseline follows the fixed 20-PR pilot contract', async () => {
+  const csv = await readFile(new URL('docs/engineering/pr-baseline.csv', repositoryRoot), 'utf8');
+  const rows = csv.trim().split(/\r?\n/).map((line) => line.split(','));
+  const expectedHeader = [
+    'date', 'repository', 'pr', 'change_area', 'risk_tier', 'builder_agent', 'reviewer_agent',
+    'automated_checks', 'preview_verified', 'human_minutes', 'merged', 'accepted',
+    'corrective_pr_within_48h', 'failure_category', 'notes',
+  ];
+  const changeAreas = new Set([
+    'local_runtime', 'intake_and_similarity', 'review_routing', 'shorts_prompt_and_rendering',
+    'infographic_pipeline', 'artifact_regeneration', 'review_auth', 'review_dashboard',
+    'review_artifacts', 'delivery_contract',
+  ]);
+  const riskTiers = new Set(['Green', 'Yellow', 'Orange', 'Red']);
+  const correctiveValues = new Set(['inferred_yes', 'no_observed_in_sample', 'unknown']);
+  const failureCategories = new Set([
+    'Specification', 'Model', 'Environment', 'Tooling', 'Architecture', 'Review', 'none_observed',
+  ]);
+
+  assert.deepEqual(rows[0], expectedHeader);
+  assert.equal(rows.length, 21, 'baseline must contain one header plus exactly 20 PR rows');
+  assert.deepEqual(rows.slice(1).map((row) => row[2]), Array.from({ length: 20 }, (_, index) => `#${index + 31}`));
+
+  for (const row of rows.slice(1)) {
+    assert.equal(row.length, expectedHeader.length, `row ${row[2]} must have ${expectedHeader.length} fields`);
+    assert.match(row[0], /^2026-\d{2}-\d{2}$/);
+    assert.equal(row[1], 'arcayne/Knowledge-Bits');
+    assert.ok(changeAreas.has(row[3]), `unexpected change_area in ${row[2]}`);
+    assert.ok(riskTiers.has(row[4]), `unexpected risk_tier in ${row[2]}`);
+    assert.equal(row[5], 'unrecorded_codex_branch');
+    assert.equal(row[6], 'none_recorded');
+    assert.equal(row[7], 'vercel_status_only_no_actions');
+    assert.equal(row[8], 'unknown');
+    assert.equal(row[9], 'unknown');
+    assert.equal(row[10], 'true');
+    assert.equal(row[11], 'unknown');
+    assert.ok(correctiveValues.has(row[12]), `unexpected corrective value in ${row[2]}`);
+    assert.ok(failureCategories.has(row[13]), `unexpected failure category in ${row[2]}`);
+    assert.match(row[14], /^open_to_merge_seconds=\d+;/);
+  }
+});
+
 test('API app exposes a catch-all Hono Vercel function from its documented root', async () => {
   const rootPackageJson = await readJson('package.json');
   const config = await readJson('apps/api/vercel.json');
