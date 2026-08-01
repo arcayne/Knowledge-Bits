@@ -17,6 +17,7 @@ test('required Quality workflow covers pull requests and independently reproduce
   assert.match(workflow, /^\s{8}run:\s*pnpm typecheck$/m);
   assert.match(workflow, /^\s{8}run:\s*pnpm test$/m);
   assert.match(workflow, /^\s{8}run:\s*pnpm build$/m);
+  assert.match(workflow, /^\s{8}run:\s*pnpm --filter @knowledge-bits\/review exec playwright install --with-deps chromium$/m);
   assert.match(workflow, /^\s{8}run:\s*timeout 180s docker pull postgres:16-alpine$/m);
   assert.match(packageJson.scripts.test, /pnpm test:workspace/);
   assert.doesNotMatch(packageJson.scripts.test, /turbo run test/);

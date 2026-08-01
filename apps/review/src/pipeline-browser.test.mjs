@@ -60,13 +60,14 @@ test('new Nuglet UI checks similarity, invalidates changed drafts, and submits a
     response.end(fixtureHtml());
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
-  const browser = await chromium.launch({ headless: true });
+  let browser;
   t.after(async () => {
-    await browser.close();
+    await browser?.close();
     await new Promise((resolve) => server.close(resolve));
   });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
+  browser = await chromium.launch({ headless: true });
 
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${address.port}`);
