@@ -6,6 +6,7 @@ const repositoryRoot = new URL('../', import.meta.url);
 
 test('required Quality workflow covers pull requests and independently reproduces root checks', async () => {
   const workflow = await readFile(new URL('.github/workflows/quality.yml', repositoryRoot), 'utf8');
+  const packageJson = await readJson('package.json');
 
   assert.match(workflow, /^name:\s*Quality$/m);
   assert.match(workflow, /^\s{2}pull_request:\s*$/m);
@@ -17,6 +18,8 @@ test('required Quality workflow covers pull requests and independently reproduce
   assert.match(workflow, /^\s{8}run:\s*pnpm test$/m);
   assert.match(workflow, /^\s{8}run:\s*pnpm build$/m);
   assert.match(workflow, /^\s{8}run:\s*timeout 180s docker pull postgres:16-alpine$/m);
+  assert.match(packageJson.scripts.test, /pnpm test:workspace/);
+  assert.doesNotMatch(packageJson.scripts.test, /turbo run test/);
 });
 
 test('historical PR baseline follows the fixed 20-PR pilot contract', async () => {

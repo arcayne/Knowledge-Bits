@@ -17,7 +17,7 @@ import {
 import { strictLegacyReplacementBrief, strictPackageVersionInput } from '../testing/knowledge-bits-fixture.js';
 
 const apiRoot = fileURLToPath(new URL('../../', import.meta.url));
-const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0;
+const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore', timeout: 30_000 }).status !== 0;
 
 test(
   'local PostgreSQL migration preserves bootstrap, effects, leases, retries, and idempotent results',
@@ -254,7 +254,7 @@ test(
       where: { id: claim!.jobId },
       select: { leaseExpiresAt: true },
     });
-    await delay(10);
+    await delay(100);
     await repository.renewJobLease({ jobId: claim!.jobId, workerId: claim!.claimedBy });
     const leaseAfterHeartbeat = await prisma.job.findUniqueOrThrow({
       where: { id: claim!.jobId },
@@ -989,7 +989,7 @@ async function createDatabase(containerName: string, databaseName: string): Prom
 function applySql(containerName: string, databaseName: string, sql: string, requireSuccess = true) {
   const result = spawnSync('docker', [
     'exec', '-i', containerName, 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', databaseName,
-  ], { input: sql, encoding: 'utf8' });
+  ], { input: sql, encoding: 'utf8', timeout: 30_000 });
   if (requireSuccess && result.status !== 0) {
     throw new Error(`Could not apply PostgreSQL test SQL: ${result.stderr || result.stdout}`);
   }
@@ -1021,12 +1021,14 @@ async function startPostgres(containerName: string, databaseName: string): Promi
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const ready = spawnSync('docker', ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', databaseName], {
       stdio: 'ignore',
+      timeout: 10_000,
     }).status === 0;
     if (ready) {
       // Do not mistake the image entrypoint's temporary initialization server for the final postmaster.
       await delay(750);
       const stable = spawnSync('docker', ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', databaseName], {
         stdio: 'ignore',
+        timeout: 10_000,
       }).status === 0;
       if (!stable) continue;
       const published = run('docker', ['port', containerName, '5432/tcp']);
@@ -1074,7 +1076,7 @@ function createRestrictedRuntimeLogin(containerName: string, databaseName: strin
 }
 
 function removeContainer(containerName: string): void {
-  spawnSync('docker', ['rm', '--force', containerName], { stdio: 'ignore' });
+  spawnSync('docker', ['rm', '--force', containerName], { stdio: 'ignore', timeout: 30_000 });
 }
 
 function run(command: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): string {
@@ -1082,5 +1084,6 @@ function run(command: string, args: string[], options: { cwd?: string; env?: Nod
     ...options,
     encoding: 'utf8',
     stdio: 'pipe',
+    timeout: 60_000,
   }).trim();
 }
