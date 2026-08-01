@@ -54,7 +54,7 @@ const STANDARD_NARRATIVE_RECIPE_BINDINGS: NugletNarrativeGenerationPlan['recipes
   writer: {
     id: 'nuglet.lesson.narrative',
     version: '1.0.0',
-    checksum: 'sha256:89a4107af41836e8da21bb33e014a4b29fc41ae2363e07dca79c40d034ff3828',
+    checksum: 'sha256:5ba879ed08334be93f573fe56e5ae106b6d3a489080a44609797db1bfbf56bb0',
   },
   challenge: {
     id: 'nuglet.challenge',
@@ -79,7 +79,7 @@ const STANDARD_NARRATIVE_RECIPE_BINDINGS: NugletNarrativeGenerationPlan['recipes
   editorialQa: {
     id: 'nuglet.qa.editorial',
     version: '1.0.0',
-    checksum: 'sha256:eb201350fd0451c496ce8a93ceec6e4ea00242b3b9a78e7641661f1dc042f53d',
+    checksum: 'sha256:b01059444709225d061518b426511e5a7291d291dce4a864b3b83ea219968e00',
   },
 };
 

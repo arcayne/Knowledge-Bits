@@ -32,6 +32,7 @@ function recipe(id: string): ResolvedRecipe {
     ? [
         'Write identity.deck as a spoken cold open that a listener can understand the first time she hears it.',
         'Read the deck and first scene sentence together and remove needless repetition.',
+        'Do not stack timestamps, props, gestures, or domestic details to manufacture a scene.',
         'Do not default to a named fictional protagonist or imply that unrelated Nuglets share a recurring character.',
         'Do not use em dashes, en dashes, curly double quotation marks, or spaced double hyphens in authored learner copy.',
       ]
@@ -209,6 +210,7 @@ test('writer prompt makes the single narrative boundary and evidence inputs expl
   assert.match(prompt, /spoken cold open/i);
   assert.match(prompt, /understand the first time she hears it/i);
   assert.match(prompt, /remove needless repetition/i);
+  assert.match(prompt, /Do not stack timestamps, props, gestures, or domestic details/i);
   assert.match(prompt, /Do not default to a named fictional protagonist/i);
   assert.match(prompt, /unrelated Nuglets share a recurring character/i);
   assert.match(prompt, /Do not use em dashes, en dashes/i);
