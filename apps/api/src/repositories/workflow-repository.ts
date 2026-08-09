@@ -2115,7 +2115,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       const updated = await transaction.delivery.update({
         where: { id: delivery.id },
         data: {
-          state: delivery.state === 'needs_human' ? 'waiting' : delivery.state,
+          state: delivery.state === 'succeeded' ? 'queued' : delivery.state === 'needs_human' ? 'waiting' : delivery.state,
           nextAttemptAt: ['failed', 'waiting', 'needs_human'].includes(delivery.state)
             ? now
             : delivery.nextAttemptAt,
@@ -3605,7 +3605,10 @@ class InMemoryWorkflowStore implements WorkflowStore {
     if (!stage) throw new WorkflowConflictError('Delivery stage does not exist');
     stage.state = 'queued';
     stage.reason = null;
-    if (delivery.state === 'failed' || delivery.state === 'waiting' || delivery.state === 'needs_human') {
+    if (delivery.state === 'succeeded') {
+      delivery.state = 'queued';
+      delivery.nextAttemptAt = null;
+    } else if (delivery.state === 'failed' || delivery.state === 'waiting' || delivery.state === 'needs_human') {
       delivery.state = 'waiting';
       delivery.nextAttemptAt = now;
     }
