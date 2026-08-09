@@ -43,7 +43,9 @@ export function materializeStoryPlaybookTarget(input: {
   const semanticTarget = parseSemanticTarget(input.semanticTarget);
   const generationPlan = nugletGenerationPlanSchema.parse(input.generationPlan);
   const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
-  const hero = requiredMedia(input.mediaArtifacts, 'hero', generationInputChecksum, 'image/', input.retainedMediaArtifactIds);
+  const hero = generationPlan.heroMode === 'deferred'
+    ? undefined
+    : requiredMedia(input.mediaArtifacts, 'hero', generationInputChecksum, 'image/', input.retainedMediaArtifactIds);
   const infographic = requiredMedia(input.mediaArtifacts, 'infographic', generationInputChecksum, 'image/', input.retainedMediaArtifactIds);
   const audioBrief = requiredMedia(input.mediaArtifacts, 'audio_brief', generationInputChecksum, 'audio/', input.retainedMediaArtifactIds);
   const audioDiscussion = requiredMedia(input.mediaArtifacts, 'audio_discussion', generationInputChecksum, 'audio/', input.retainedMediaArtifactIds);
@@ -52,7 +54,7 @@ export function materializeStoryPlaybookTarget(input: {
     throw new TypeError('Brief and Discussion audio must be distinct immutable assets');
   }
 
-  const heroMetadata = heroMetadataFor(hero, generationPlan);
+  const heroMetadata = hero ? heroMetadataFor(hero, generationPlan) : undefined;
   const infographicMetadata = imageMetadataFor(infographic, 'infographic');
   const briefMetadata = audioMetadataFor(audioBrief, 'audio_brief');
   const discussionMetadata = audioMetadataFor(audioDiscussion, 'audio_discussion');
@@ -61,14 +63,16 @@ export function materializeStoryPlaybookTarget(input: {
     payload: {
       ...semanticTarget.payload,
       materialization: 'materialized' as const,
-      hero: {
-        ...semanticTarget.payload.hero,
-        asset: toArtifactReference(hero),
-        width: heroMetadata.width,
-        height: heroMetadata.height,
-        focalPoint: heroMetadata.focalPoint,
-        cropSafeArea: heroMetadata.cropSafeArea,
-      },
+      hero: hero && heroMetadata
+        ? {
+          ...semanticTarget.payload.hero,
+          asset: toArtifactReference(hero),
+          width: heroMetadata.width,
+          height: heroMetadata.height,
+          focalPoint: heroMetadata.focalPoint,
+          cropSafeArea: heroMetadata.cropSafeArea,
+        }
+        : semanticTarget.payload.hero,
       visual: {
         ...semanticTarget.payload.visual,
         asset: toArtifactReference(infographic),

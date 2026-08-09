@@ -126,6 +126,14 @@ test('media regeneration accepts a versioned infographic recipe override only wi
     kinds: ['hero'],
     recipeOverrides: { infographic: recipeOverride },
   }).success, false);
+  assert.equal(regenerateMediaRequestSchema.safeParse({
+    kinds: ['infographic', 'audio_brief', 'audio_discussion'],
+    heroMode: 'deferred',
+  }).success, true);
+  assert.equal(regenerateMediaRequestSchema.safeParse({
+    kinds: ['hero'],
+    heroMode: 'deferred',
+  }).success, false);
 });
 
 function validGenerationPlan() {
@@ -563,6 +571,17 @@ test('accepts a fresh Nuglet plan that explicitly generates all media', () => {
   }).success, true);
 });
 
+test('accepts a deferred Nuglet plan while preserving its hero direction and recipe', () => {
+  const plan = validGenerationPlan();
+  delete plan.mediaBaseline;
+  plan.mediaMode = 'generate';
+  plan.heroMode = 'deferred';
+  const parsed = nugletGenerationPlanSchema.parse(plan);
+  assert.equal(parsed.heroMode, 'deferred');
+  assert.deepEqual(parsed.heroDirection, plan.heroDirection);
+  assert.deepEqual(parsed.recipes.hero, plan.recipes.hero);
+});
+
 test('accepts migrated approved media with a checksummed reuse receipt and no invented generation baseline', () => {
   const plan = validGenerationPlan();
   delete plan.mediaBaseline;
@@ -890,6 +909,10 @@ test('accepts semantic and materialized Story Playbook payloads for schema 1.1.0
     schemaVersion: 'knowledge-bits.content.v1',
     target: { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0', payload: materialized },
   }).target.payload.materialization, 'materialized');
+  assert.doesNotThrow(() => storyPlaybookPayloadSchema.parse({
+    ...materialized,
+    hero: draft.hero,
+  }));
 });
 
 test('requires a non-empty canonical terminology list for Story Playbook drafts', () => {

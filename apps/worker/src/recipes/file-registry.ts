@@ -85,7 +85,15 @@ export class FileRecipeRegistry implements RecipeRegistry {
   resolvePlan(plan: NugletGenerationPlan): ResolvedNugletRecipes {
     return Object.fromEntries(Object.entries(plan.recipes).map(([role, binding]) => [
       role,
-      this.resolve({ contentKind: plan.contentKind, ...binding }),
+      plan.heroMode === 'deferred' && role === 'hero'
+        ? {
+          id: binding.id,
+          version: binding.version,
+          checksum: binding.checksum,
+          canonicalBytes: Buffer.from('{}\n'),
+          value: {},
+        }
+        : this.resolve({ contentKind: plan.contentKind, ...binding }),
     ])) as ResolvedNugletRecipes & Record<NugletRecipeRole, ResolvedRecipe>;
   }
 }

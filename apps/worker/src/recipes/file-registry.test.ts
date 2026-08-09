@@ -119,6 +119,45 @@ test('verifies every recipe binding in a Nuglet generation plan against trusted 
   assert.equal(registry.verify(plan as Parameters<FileRecipeRegistry['verify']>[0]), false);
 });
 
+test('allows a deferred plan to retain an unresolvable hero binding without weakening other recipes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'knowledge-bits-recipes-'));
+  const story = { id: 'nuglet.lesson.story', instructions: ['Keep the lesson concrete.'], status: 'approved', version: '1.0.0' };
+  mkdirSync(join(root, 'story'), { recursive: true });
+  writeFileSync(join(root, 'story/1.0.0.json'), JSON.stringify(story, null, 2));
+  writeFileSync(join(root, 'manifest.json'), JSON.stringify({
+    contentKind: 'nuglet.lesson.v1',
+    registryVersion: '1.0.0',
+    recipes: [{
+      id: story.id,
+      version: story.version,
+      status: story.status,
+      path: 'story/1.0.0.json',
+      checksum: checksum(canonicalJsonBytes(story)),
+    }],
+  }, null, 2));
+  const registry = new FileRecipeRegistry({ 'nuglet.lesson.v1': root });
+  const plan = {
+    contentKind: 'nuglet.lesson.v1' as const,
+    schemaVersion: '1.1.0' as const,
+    heroMode: 'deferred' as const,
+    recipes: {
+      story: { id: story.id, version: story.version, checksum: checksum(canonicalJsonBytes(story)) },
+      hero: { id: 'nuglet.hero', version: '9.9.9', checksum: `sha256:${'f'.repeat(64)}` },
+    },
+    heroDirection: {
+      concept: 'A useful idea becomes concrete',
+      metaphor: 'One object moving toward a clear path',
+      compositionFamily: 'asymmetrical-story' as const,
+      mustInclude: ['one focal object'],
+      mustAvoid: ['rigid symmetry'],
+    },
+  };
+
+  const resolved = registry.resolvePlan(plan as Parameters<FileRecipeRegistry['resolvePlan']>[0]);
+  assert.deepEqual(resolved.hero?.value, {});
+  assert.equal(resolved.story?.id, story.id);
+});
+
 test('rejects manifest paths that escape the configured recipe root', () => {
   const root = mkdtempSync(join(tmpdir(), 'knowledge-bits-recipes-'));
   writeFileSync(join(root, 'manifest.json'), JSON.stringify({

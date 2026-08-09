@@ -196,6 +196,7 @@ export const nugletGenerationPlanSchema = z.object({
   schemaVersion: z.literal('1.1.0'),
   recipes: nugletGenerationRecipesSchema,
   heroDirection: nugletHeroDirectionSchema,
+  heroMode: z.enum(['deferred', 'generate']).optional(),
   mediaBaseline: nugletMediaBaselineSchema.optional(),
   mediaMode: z.enum(['generate', 'reuse_legacy']).optional(),
   legacyMediaReuse: legacyMediaReuseSchema.optional(),
@@ -409,12 +410,20 @@ export const regenerateMediaRequestSchema = z.object({
   recipeOverrides: z.object({
     infographic: generationRecipeBindingSchema('nuglet.visual.infographic').optional(),
   }).strict().optional(),
-}).strict().superRefine(({ kinds, recipeOverrides }, context) => {
+  heroMode: z.enum(['deferred', 'generate']).optional(),
+}).strict().superRefine(({ kinds, recipeOverrides, heroMode }, context) => {
   if (recipeOverrides?.infographic && !kinds.includes('infographic')) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'The infographic recipe can only be overridden when regenerating the infographic',
       path: ['recipeOverrides', 'infographic'],
+    });
+  }
+  if (heroMode === 'deferred' && kinds.includes('hero')) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Deferred hero mode cannot regenerate the hero asset',
+      path: ['heroMode'],
     });
   }
 });
@@ -1050,10 +1059,7 @@ function finalAudioSchema(kind: 'audio_brief' | 'audio_discussion') {
   }).strict();
 }
 
-export const storyPlaybookPayloadSchema = z.object({
-  ...storyPlaybookBaseShape,
-  materialization: z.literal('materialized'),
-  hero: z.object({
+const fullMaterializedHeroSchema = z.object({
     ...heroBriefSchema.shape,
     asset: heroArtifactReferenceSchema,
     width: z.number().int().positive(),
@@ -1065,7 +1071,17 @@ export const storyPlaybookPayloadSchema = z.object({
       width: z.number().positive().max(1),
       height: z.number().positive().max(1),
     }).strict(),
-  }).strict(),
+}).strict();
+
+const materializedHeroSchema = z.union([
+  fullMaterializedHeroSchema,
+  heroBriefSchema,
+]).transform((hero) => hero as z.infer<typeof fullMaterializedHeroSchema>);
+
+export const storyPlaybookPayloadSchema = z.object({
+  ...storyPlaybookBaseShape,
+  materialization: z.literal('materialized'),
+  hero: materializedHeroSchema,
   visual: z.object({
     ...visualBriefSchema.shape,
     asset: infographicArtifactReferenceSchema,
