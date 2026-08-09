@@ -154,7 +154,10 @@ export function registerReviewRoutes(
       const run = await dependencies.repository.queueMediaRegeneration(
         context.req.param('id'),
         input.data.kinds,
-        input.data.recipeOverrides,
+        {
+          ...input.data.recipeOverrides,
+          ...(input.data.heroMode ? { heroMode: input.data.heroMode } : {}),
+        },
       );
       const stage = run.stages[run.currentStage];
       return context.json({

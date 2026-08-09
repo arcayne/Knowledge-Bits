@@ -55,19 +55,21 @@ export class ReviewPackageService {
     const run = await this.dependencies.repository.getRun(runId);
     if (!run) throw new ReviewPackageNotFoundError('Run not found');
     const artifacts = await this.dependencies.repository.listArtifactsForSuccessfulStageJobs(run.id, run.currentRevision);
+    const deferredHero = isDeferredHeroPlan(run.brief);
     const packageArtifacts = canonicalPackageArtifacts(artifacts.filter((artifact) => (
       !isReviewAssetKind(artifact.kind)
       || artifact.revision === run.currentRevision
       || artifact.provenance.mediaSource === 'legacy_nuglet'
-    )));
+    ))).filter((artifact) => !(deferredHero && artifact.kind === 'hero'));
     const assets = assetStates(run.id, packageArtifacts);
     const mediaIssues = REVIEW_ASSETS
       .filter(({ kind, key }) => (
         assets[key].state === 'missing'
+        && (kind !== 'hero' || !deferredHero)
         && (kind !== 'public_preview' || publicPreviewPlanned(run.brief))
       ))
       .map(({ kind }) => `Required review media is missing: ${kind}`);
-    let warnings: string[] = [];
+    let warnings: string[] = deferredHero ? ['Hero deferred for batch regeneration.'] : [];
 
     try {
       const qaArtifact = requiredParsedArtifact(packageArtifacts, 'check_content', 'QA');
@@ -86,7 +88,10 @@ export class ReviewPackageService {
       const content = assembled.content;
       const generationExecutions = assembled.generationExecutions;
       const editorialWarningsAllowed = isMaterializedStoryPlaybook(content.target);
-      warnings = editorialWarningsAllowed ? editorialWarnings(qa) : [];
+      warnings = [
+        ...(deferredHero ? ['Hero deferred for batch regeneration.'] : []),
+        ...(editorialWarningsAllowed ? editorialWarnings(qa) : []),
+      ];
       for (const kind of REVIEW_ASSET_KINDS) {
         const artifact = latestArtifact(packageArtifacts, kind);
         if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
@@ -254,6 +259,11 @@ function generationPlanFromBrief(brief: Record<string, unknown>): NugletGenerati
   return parsed.data;
 }
 
+function isDeferredHeroPlan(brief: Record<string, unknown>): boolean {
+  const parsed = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
+  return parsed.success && parsed.data.heroMode === 'deferred';
+}
+
 const GENERATION_ROLE_BINDINGS = [
   { role: 'story', recipeKey: 'story', action: 'create_content', outputKind: 'parsed_output' },
   { role: 'playbook', recipeKey: 'playbook', action: 'create_content', outputKind: 'parsed_output' },
@@ -275,6 +285,7 @@ export function assembleGenerationExecutions(
 ): ReviewGenerationExecutions {
   const result = emptyGenerationExecutions();
   for (const binding of GENERATION_ROLE_BINDINGS) {
+    if (binding.role === 'hero' && generationPlan.heroMode === 'deferred') continue;
     const recipe = generationPlan.recipes[binding.recipeKey];
     const output = latestArtifactForAction(artifacts, binding.outputKind, binding.action);
     if (output?.provenance.mediaSource === 'legacy_nuglet') continue;
