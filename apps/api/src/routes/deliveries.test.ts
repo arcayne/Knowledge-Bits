@@ -57,6 +57,21 @@ test('review-token retry replays a succeeded delivery for adapter repairs', asyn
   });
   assert.equal(secondRun.status, 200, await secondRun.clone().text());
   assert.equal(fixture.adapter.requests, 2);
+
+  const replayedAgain = await fixture.app.request(`/deliveries/${secondClaim.deliveryId}/retry`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer review-token' },
+  });
+  assert.equal(replayedAgain.status, 200, await replayedAgain.clone().text());
+  assert.equal((await replayedAgain.json() as { nextAttempt: number }).nextAttempt, 3);
+  const thirdClaim = await claimDelivery(fixture.app);
+  const thirdRun = await fixture.app.request(`/deliveries/${thirdClaim.deliveryId}/run`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer delivery-worker-token' },
+    body: JSON.stringify({ jobId: thirdClaim.jobId }),
+  });
+  assert.equal(thirdRun.status, 200, await thirdRun.clone().text());
+  assert.equal(fixture.adapter.requests, 3);
 });
 
 test('review-token retry permits failed delivery with unchanged approval and rejects conflicting retries', async () => {
