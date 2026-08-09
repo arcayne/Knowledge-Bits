@@ -22,6 +22,13 @@ Product documentation:
 - [Product and business vision](docs/VISION.md)
 - [Approved V1 design](docs/V1_DESIGN.md)
 
+Engineering delivery controls:
+
+- [System map](docs/engineering/system-map.md)
+- [Change risk map](docs/engineering/risk-map.md)
+- [Independent reviewer-agent pilot](docs/engineering/independent-review.md)
+- [Historical PR baseline](docs/engineering/pr-baseline.csv)
+
 ## Requirements
 
 - Node 24
@@ -149,6 +156,9 @@ pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 Production mode runs NotebookLM, Pi/editorial, and media generation inside the local worker.
 The Nuglet recipe registry, media command, and approved visual style references live in this repository.
 The worker does not depend on `apps/nuglet-lab` or any other Nuglet source checkout.
+Infographic recipe `2.0.0` uses Vertex AI only for a bounded art-direction JSON decision. Nuglet's
+deterministic SVG renderer then typesets the checked lesson copy with bundled fonts and draws the final
+9:16 visual summary. Older recipe versions remain pinned to their historical NotebookLM generation path.
 NotebookLM Shorts are post-processed locally with `ffmpeg`, `ffprobe`, and `pango-view`: the provider
 tail is removed, the real Nuglet footer and Focus Aperture end card are added, and the exact title and
 CTA use bundled Nuglet fonts. The result remains `needs_review` until a human approves it.
@@ -163,21 +173,39 @@ Vertex Google Search grounding to propose a bounded independent source set. The 
 read at the provider boundary because Pi's normalized assistant response does not expose source URLs.
 Candidate URLs are untrusted: the worker permits only public HTTPS targets, resolves and rejects private
 network addresses, retrieves bounded HTML, text, or PDF bytes, and imports only accepted sources into
-NotebookLM. Exact retrieved bytes become immutable source snapshots; NotebookLM selects from that
-verified corpus and later content citations bind back to those snapshots. Provider calls and subprocesses
-use bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
+NotebookLM. Exact retrieved bytes become immutable source snapshots. The worker then reads the notebook's
+source inventory directly from the NotebookLM CLI and records every healthy HTTPS source as an immutable
+receipt. A generative NotebookLM answer cannot silently narrow that authoritative inventory. Later content
+citations bind back to those snapshots before content passes to the local Pi and media adapters. Provider
+moves through bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
 moves the affected stage to `needs_human`; production never falls back to fixture content.
 
 ### Starting a new Nuglet
 
 Start from ordinary text, screenshots, quotes, or source hints with the
 project-local [`$start-nuglet` skill](./.agents/skills/start-nuglet/SKILL.md).
-It drafts the intake, confirms the proposed run, and returns the review link;
+It drafts the intake, checks every existing run for related content, confirms the proposed run,
+creates a fresh dedicated NotebookLM notebook, and returns the review link;
 it never approves, publishes, or delivers content.
 
-Operators can start a research run from the review dashboard at `/`, or use the matching CLI from
-the terminal. Both paths require a dedicated NotebookLM notebook ID and create the same research
-brief:
+Run the non-billable deterministic preflight before creating the notebook. It compares the proposed
+title, learner objective, and concept signals with all in-progress and completed Knowledge Bits runs:
+
+```bash
+ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
+ENGINE_API_TOKEN="..." \
+pnpm check:nuglet-similarity -- \
+  --title "Why you cannot focus after short videos" \
+  --objective "Explain the mechanism and give one kind action to rebuild focus." \
+  --audience "Adults rebuilding attention"
+```
+
+If the result is clear—or the operator explicitly decides that a related idea has a distinct learner
+objective—create a new NotebookLM notebook named `Nuglet: <title>`. A new Nuglet always gets a new
+notebook; an existing notebook remains bound to its existing run.
+
+Operators can then start the research run from the review dashboard at `/`, or use the matching CLI.
+Both paths require that fresh dedicated NotebookLM notebook ID and create the same research brief:
 
 ```bash
 ENGINE_API_BASE_URL="http://127.0.0.1:3000" \
@@ -191,7 +219,9 @@ pnpm new:nuglet -- \
   --source "https://example.com/credible-source"
 ```
 
-The command prints the review URL immediately. The run starts in Research; the worker uses the
+The CLI repeats the similarity preflight. When related runs exist, it stops and prints them unless the
+operator reruns it with `--confirm-distinct`; the API also rejects a stale preflight or an unconfirmed
+related match. The command then prints the review URL immediately. The run starts in Research; the worker uses the
 NotebookLM notebook and any starting URLs, records the accepted source list, and advances the run as
 each stage becomes ready. The dashboard refreshes automatically and has a manual Refresh button.
 The client submits only the research brief and the `story_playbook` intake marker. The trusted API
@@ -232,7 +262,7 @@ same migration-bundle root when running the worker so the local media adapter ca
 
 Supabase is the durable workflow ledger. It does not run NotebookLM, Vertex, or local provider tools.
 On the Mac that has those provider sessions and credentials, install the local supervisor to keep the
-API available and run one worker claim every five minutes:
+API and review UI available and start a bounded worker tick every five minutes:
 
 ```bash
 git clone git@github.com:arcayne/Knowledge-Bits.git ~/Developer/knowledge-bits
@@ -247,14 +277,48 @@ can still run a temporary clock from an interactive terminal, but that temporary
 after a Mac restart.
 
 The API is restarted automatically if it exits. The worker is a one-shot process: each five-minute tick
-claims at most one eligible job and exits. A filesystem lock prevents overlapping ticks when a provider
-call takes longer than five minutes. Provider cooldowns remain in the Supabase ledger as `waiting` jobs;
-later ticks continue with other eligible work.
+selects one eligible run, advances up to `ENGINE_WORKER_MAX_JOBS_PER_TICK` consecutive stages for that
+run, and exits. A recoverable filesystem lock prevents overlapping ticks when a provider call takes
+longer than five minutes. Provider cooldowns remain in the Supabase ledger as `waiting` jobs; later
+ticks continue with other eligible work. The worker log records a `worker_tick_started` and
+`worker_tick_completed` JSON line for every real tick, including the run id, job count, duration, and
+stop reason. On login or reinstall, the worker waits for the local API health probe before claiming
+work, so an API startup race cannot consume the first tick.
+
+The review UI is also restarted automatically and is available at
+`http://127.0.0.1:4323`. Set `REVIEW_LOCAL_OPERATOR_ID` in the supervisor environment file to a stable
+local operator name. The local review service always talks to `KNOWLEDGE_BITS_LOCAL_API_URL`; production
+review authentication remains separate. The supervisor prefers Homebrew's `node@24` runtime, matching
+the repository and Vercel runtime contract, without changing the machine's default interactive Node.
+
+### Branded infographic replacement rounds
+
+Use the operator-only campaign command to move existing Nuglets to the current branded infographic
+recipe in small, review-only rounds. `preflight` reads the checked package and renders it locally without
+calling Vertex. `run` queues and executes one run at a time, pins every worker tick to that run, verifies
+the stored PNG bytes and checksum, and stops each package at Human Review. It never approves or delivers.
+
+```bash
+set -a
+source /absolute/path/to/supervisor.env
+set +a
+
+pnpm infographic:campaign preflight
+pnpm infographic:campaign run --limit 5
+pnpm infographic:campaign status
+```
+
+The resumable state file defaults to
+`.local-supervisor/infographic-replacement-campaign-v2.json`. It contains workflow identifiers,
+checksums, review links, and outcomes only; credentials are never persisted. The command excludes
+already-current, rejected, and active pipeline runs, and stops the entire round on the first failed
+generation or verification.
 
 The supervisor writes only local logs and local filesystem artifacts under the repository:
 
 ```text
 .local-supervisor/api.log
+.local-supervisor/review.log
 .local-supervisor/worker.log
 .local-artifacts/
 ```
@@ -263,6 +327,7 @@ To stop it later:
 
 ```bash
 launchctl bootout "gui/$(id -u)/app.knowledge-bits.api"
+launchctl bootout "gui/$(id -u)/app.knowledge-bits.review"
 launchctl bootout "gui/$(id -u)/app.knowledge-bits.worker-tick"
 ```
 

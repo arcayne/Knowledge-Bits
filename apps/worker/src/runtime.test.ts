@@ -85,7 +85,22 @@ test('legacy provider service URLs do not create production provider dependencie
 test('composes injected production clients and context resolvers without live credentials', async () => {
   const runtime: ProviderRuntime = {
     notebookProcess: {
-      async run() {
+      async run({ args }) {
+        if (args[0] === '--version') {
+          return { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 };
+        }
+        if (args[0] === 'source' && args[1] === 'list') {
+          return {
+            stdout: JSON.stringify([{
+              id: evidence.sources[0]!.sourceId,
+              title: 'Evidence',
+              url: 'https://example.test/evidence',
+              status: 2,
+            }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
         return {
           stdout: JSON.stringify({ conversationId: 'notebook-1', answer: { claims: [], sources: [] } }),
           stderr: '',
@@ -292,6 +307,44 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   const notebook = await resolver.notebook(input('create_content', dependencies, brief));
   const pi = await resolver.pi(input('check_content', dependencies, brief));
   const media = await resolver.media(input('produce_assets', dependencies, brief));
+  const targetedPlan = structuredClone(generationPlan);
+  delete (targetedPlan as Partial<typeof targetedPlan>).mediaBaseline;
+  (targetedPlan as typeof targetedPlan & { mediaMode: 'generate' }).mediaMode = 'generate';
+  targetedPlan.recipes.hero.checksum = `sha256:${'b'.repeat(64)}`;
+  const targetedInput = input('produce_assets', dependencies, {
+    ...brief,
+    generationPlan: targetedPlan,
+    notebookLmNotebookId: generationPlan.mediaBaseline.descriptor.notebookId,
+  });
+  const scopedVerifier = scopedOnlyRecipeVerifier();
+  const scopedResolver = new LeaseScopedJobContextResolver(client, scopedVerifier);
+  const scopedInput = {
+    ...targetedInput,
+    job: {
+      ...targetedInput.job,
+      input: {
+        ...targetedInput.job.input,
+        mediaKinds: ['infographic'],
+      },
+    },
+  };
+  const targetedMedia = await scopedResolver.media(scopedInput);
+  let targetedCalls = 0;
+  const targetedProvider = composeWorkerProviders({
+    env: {},
+    runtime: {
+      recipeBindingVerifier: scopedVerifier,
+      mediaClient: {
+        async generate() {
+          targetedCalls += 1;
+          return [];
+        },
+      },
+      mediaContext: (execution) => scopedResolver.media(execution),
+    },
+  })[2];
+  assert.ok(targetedProvider);
+  await assert.rejects(() => targetedProvider.execute(scopedInput), /media_empty_response/);
 
   assert.deepEqual(notebook.generationPlan, generationPlan);
   assert.deepEqual(pi.generationPlan, generationPlan);
@@ -306,6 +359,9 @@ test('passes a validated generation plan to NotebookLM, editorial QA, and media 
   assert.equal(notebook.resolvedRecipes?.story?.id, generationPlan.recipes.story.id);
   assert.equal(pi.resolvedRecipes?.editorialQa?.id, generationPlan.recipes.editorialQa.id);
   assert.equal(media.resolvedRecipes?.hero?.id, generationPlan.recipes.hero.id);
+  assert.equal(targetedMedia.resolvedRecipes?.infographic?.id, generationPlan.recipes.infographic.id);
+  assert.equal(targetedMedia.resolvedRecipes?.hero, undefined);
+  assert.equal(targetedCalls, 1);
 });
 
 test('passes warning-bearing Story and Playbook QA through the media provider gate', async () => {
@@ -943,23 +999,47 @@ function contextClient(bodies: Map<string, Uint8Array>): WorkerEngineClient {
 }
 
 function acceptingRecipeVerifier(): TrustedRecipeBindingVerifier {
-  return { resolvePlan: (plan) => resolvedRecipesFor(plan) };
+  return {
+    resolve: (binding) => resolvedRecipeFor(binding),
+    resolvePlan: (plan) => resolvedRecipesFor(plan),
+  };
 }
 
 function exactRecipeVerifier(trusted: typeof generationPlan): TrustedRecipeBindingVerifier {
   return {
+    resolve(binding) {
+      const trustedBinding = Object.values(trusted.recipes).find((candidate) => candidate.id === binding.id);
+      if (!trustedBinding) throw new Error(`untrusted recipe: ${binding.id}`);
+      return resolvedRecipeFor(trustedBinding);
+    },
     resolvePlan() {
       return resolvedRecipesFor(trusted);
     },
   };
 }
 
+function scopedOnlyRecipeVerifier(): TrustedRecipeBindingVerifier {
+  return {
+    resolve: (binding) => resolvedRecipeFor(binding),
+    resolvePlan() {
+      throw new Error('full plan resolution is intentionally unavailable');
+    },
+  };
+}
+
 function resolvedRecipesFor(plan: Pick<NugletGenerationPlan, 'recipes'>) {
-  return Object.fromEntries(Object.entries(plan.recipes).map(([role, binding]) => [role, {
+  return Object.fromEntries(Object.entries(plan.recipes).map(([role, binding]) => [
+    role,
+    resolvedRecipeFor(binding),
+  ])) as unknown as ResolvedNugletRecipes;
+}
+
+function resolvedRecipeFor(binding: { id: string; version: string; checksum: string }) {
+  return {
     ...binding,
     canonicalBytes: Buffer.from(JSON.stringify(binding)),
     value: binding,
-  }])) as unknown as ResolvedNugletRecipes;
+  };
 }
 
 async function semanticCandidate() {

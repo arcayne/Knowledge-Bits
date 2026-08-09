@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.3.0";
+export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.4.0";
 
 export function compilePublicPreview(content) {
   const lesson = lessonPayload(content);
@@ -75,7 +75,8 @@ export function compilePublicPreview(content) {
     learningOutcomes,
     visualAnchors,
     editorialGuardrails,
-    emotionalShiftDirection: "Move from self-blame toward calm curiosity.",
+    visualDirection: "Show challenge or tension through objects and environments, not through an upset face: a difficult book, tangled threads, layered pages, a maze, a path, or an unfinished diagram. Human figures may appear only with relaxed features, open curiosity, gentle concentration, recognition, or relief.",
+    emotionalShiftDirection: "Move from thoughtful surprise or puzzlement toward calm curiosity, clarity, and gentle relief.",
     finalInvitation: previewText(
       preview.finalInvitation,
       protectedContent,
@@ -111,6 +112,9 @@ export function renderPublicPreviewSource(brief) {
     "## Visual story anchors",
     ...brief.visualAnchors.map((item) => `- ${item}`),
     "",
+    "## Visual direction",
+    brief.visualDirection,
+    "",
     "## Emotional direction",
     brief.emotionalShiftDirection,
     "",
@@ -143,7 +147,12 @@ export function renderPublicPreviewPrompt(brief, marker) {
     "Narrate in complete, natural sentences. Use cautious qualitative language and explain only the mechanism supported by the curated source.",
     `Editorial guardrails: ${brief.editorialGuardrails.join(" ")}`,
     "Visual casting should generally reflect working adults aged roughly 25-40, with women represented most often. Younger men and people from varied backgrounds should appear naturally too. This is a flexible direction, not an exclusive rule or rigid quota. Avoid repeatedly defaulting to middle-aged or older men, and avoid stereotypes or tokenistic casting.",
-    "Tone: warm, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises. Do not resolve the lesson or repeat its exact practice, reframe, quiz answer, or conclusion.",
+    `Visual direction: ${brief.visualDirection}`,
+    "Make every challenge, tension, or problem beat object-first. Do not use a human face to communicate friction, struggle, confusion, difficulty, failure, or conflict.",
+    "Human figures may appear only during recognition, curiosity, insight, or relief. Keep every visible person relaxed, curious, gently concentrated, or softly smiling.",
+    "Never show furrowed brows, narrowed eyes, downturned mouths, clenched jaws or fists, tense shoulders, glaring, scowling, hostile, distressed, panicked, defeated, or confrontational expressions or posture.",
+    "The emotional arc is thoughtful surprise, curiosity, calm recognition, clarity, and gentle relief. The challenge should feel intellectually intriguing, never emotionally threatening.",
+    "Tone: warm, hopeful, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises. Do not resolve the lesson or repeat its exact practice, reframe, quiz answer, or conclusion.",
   ].join(" ");
 }
 
@@ -197,7 +206,7 @@ function centralProblemFromLesson(lesson, topicLabel) {
   if (typeof watchOut === "string" && watchOut.trim()) {
     return `Show the everyday trap around ${topicLabel}: ${watchOut.trim()}`;
   }
-  return `Show why the ${topicLabel} pattern can feel confusing or personally frustrating.`;
+  return `Show why this ${topicLabel} pattern can feel puzzling or mentally tangled without turning the moment into conflict or distress.`;
 }
 
 function whyItMattersFromLesson(lesson, topicLabel) {

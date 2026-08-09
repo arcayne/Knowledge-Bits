@@ -61,7 +61,7 @@ test("compiles a limited English source without protected lesson answers", () =>
   assert.doesNotMatch(source, /Visible cues make attention easier to pull away/);
   assert.doesNotMatch(source, /Design the setup before relying on effort/);
   assert.match(source, /attention pattern/);
-  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.3.0");
+  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.4.0");
   assert.match(source, /phone on the desk, five open tabs, and a message window/);
   assert.match(source, /Visible cues pull you/);
   assert.match(publicPreviewSourceTitle(brief), /^Nuglet public preview [a-f0-9]{12}$/);

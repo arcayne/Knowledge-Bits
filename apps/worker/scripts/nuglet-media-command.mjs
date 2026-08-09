@@ -3,10 +3,11 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, extname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { GoogleGenAI } from "@google/genai";
+import sharp from "sharp";
 import {
   compilePublicPreview,
   protectedLeakage,
@@ -14,9 +15,24 @@ import {
   renderPublicPreviewPrompt,
   renderPublicPreviewSource,
 } from "./nuglet-public-preview.mjs";
-import { renderPublicPreviewVideo } from "./nuglet-public-preview-renderer.mjs";
+import {
+  PUBLIC_PREVIEW_MAX_SECONDS,
+  renderPublicPreviewVideo,
+} from "./nuglet-public-preview-renderer.mjs";
+import {
+  infographicPlanningPrompt,
+  infographicSource,
+  NUGLET_INFOGRAPHIC_RENDERER_VERSION,
+  parseInfographicArtDirection,
+  renderNugletInfographic,
+} from "./nuglet-infographic.mjs";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
+const DEFAULT_VISUAL_REVIEW_MODEL = "gemini-2.5-flash";
+const DEFAULT_INFOGRAPHIC_PLANNER_MODEL = "gemini-2.5-flash";
+const MAX_HERO_GENERATION_ATTEMPTS = 2;
+const MAX_INFOGRAPHIC_PLANNING_ATTEMPTS = 2;
+const BRANDED_INFOGRAPHIC_RECIPE_VERSION = "2.0.0";
 const DEFAULT_STYLE_REFERENCES = [
   new URL("../assets/nuglet-style/personal-finance-101-hero.png", import.meta.url).pathname,
   new URL("../assets/nuglet-style/not-every-thought-is-your-task-hero.png", import.meta.url).pathname,
@@ -56,28 +72,80 @@ function heroStyleReferencePaths() {
 }
 
 async function heroStyleReferenceChecksums() {
+  return (await heroStyleReferences()).map(({ bytes }) => checksum(bytes));
+}
+
+async function heroStyleReferences() {
   const paths = heroStyleReferencePaths();
   for (const path of paths) {
     if (!existsSync(path)) throw new Error(`hero style reference missing: ${path}`);
   }
-  return Promise.all(paths.map(async (path) => checksum(await readFile(path))));
+  return Promise.all(paths.map(async (path) => ({
+    // Full narrative references caused the image model to copy their subjects
+    // and layouts. A heavily blurred swatch preserves palette and paper
+    // texture while removing notebooks, icons, props, and composition.
+    bytes: await sharp(await readFile(path))
+      .resize(96, 96, { fit: "fill" })
+      .blur(10)
+      .png()
+      .toBuffer(),
+    mediaType: "image/png",
+  })));
 }
 
 function record(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
 
-function contentText(content) {
+function lessonPayload(content) {
   const value = record(content);
+  const payload = record(value.payload);
+  return Object.keys(payload).length ? payload : value;
+}
+
+function contentText(content) {
+  const value = lessonPayload(content);
+  const learning = record(value.learning);
+  const story = record(record(value.read).story);
   return {
-    title: String(value.title ?? "Knowledge Bit"),
-    hook: String(value.hook ?? ""),
-    takeaway: String(value.takeaway ?? ""),
+    title: String(value.title ?? story.title ?? learning.centralIdea ?? "Knowledge Bit"),
+    hook: String(value.hook ?? learning.centralIdea ?? ""),
+    takeaway: String(value.takeaway ?? learning.oneLineToKeep ?? ""),
   };
 }
 
-function visualDirection(content) {
+function checkedHeroDirection(content) {
+  const mediaBrief = record(record(lessonPayload(content).hero).mediaBrief);
+  const concept = typeof mediaBrief.concept === "string" ? mediaBrief.concept.trim() : "";
+  const metaphor = typeof mediaBrief.metaphor === "string" ? mediaBrief.metaphor.trim() : "";
+  const compositionFamily = typeof mediaBrief.compositionFamily === "string"
+    ? mediaBrief.compositionFamily.trim()
+    : "";
+  return concept && metaphor ? { concept, metaphor, compositionFamily } : undefined;
+}
+
+function authoritativeHeroDirection(content, intakeDirection) {
+  return checkedHeroDirection(content) ?? record(intakeDirection);
+}
+
+function visualDirection(content, heroDirection) {
   const { title } = contentText(content);
+  const checkedDirection = checkedHeroDirection(content);
+  const direction = authoritativeHeroDirection(content, heroDirection);
+  const concept = typeof direction.concept === "string" ? direction.concept.trim() : "";
+  const metaphor = typeof direction.metaphor === "string" ? direction.metaphor.trim() : "";
+  const compositionFamily = typeof direction.compositionFamily === "string"
+    ? direction.compositionFamily.trim()
+    : "";
+  if (checkedDirection && concept && metaphor) {
+    return [
+      `Create one physical scene for this exact concept: ${concept}.`,
+      `Use this exact metaphor as the sole narrative idea: ${metaphor}.`,
+      compositionFamily ? `Composition guidance: ${compositionFamily}.` : "",
+      "Do not substitute any other metaphor, object system, or multi-step transition.",
+      "Use one focal action and at most two supporting object types.",
+    ].filter(Boolean).join(" ");
+  }
   if (/you logged off.*your mind did not/i.test(title)) {
     return [
       "Create one integrated editorial moment about attention residue after work.",
@@ -101,15 +169,25 @@ function visualDirection(content) {
   if (/personal finance/i.test(title)) {
     return "For this personal finance lesson, create one asymmetrical editorial still life that tells a small story about moving from saving to growth. Use one central open ceramic vessel as the focal point. Let a loose clay-orange thread travel through a few rounded tokens toward a protected seedling. Add only a few soft stones or restrained leaves for depth. Create gentle visual movement across the frame. Avoid three equal objects arranged in a row, repeated icon-like forms, rigid symmetry, panels, and diagram-like composition.";
   }
+  if (concept && metaphor) {
+    return [
+      `Create one physical scene for this exact concept: ${concept}.`,
+      `Use this exact metaphor as the sole narrative idea: ${metaphor}.`,
+      compositionFamily ? `Composition guidance: ${compositionFamily}.` : "",
+      "Do not substitute any other metaphor, object system, or multi-step transition.",
+      "Use one focal action and at most two supporting object types.",
+    ].filter(Boolean).join(" ");
+  }
   return "Prefer one small narrative action with one focal object and no more than two supporting objects. Do not assemble a decorative lifestyle still life.";
 }
 
 function heroDirectionPrompt(content, heroDirection) {
   const { title } = contentText(content);
-  if (/you logged off.*your mind did not/i.test(title)) {
+  const checkedDirection = checkedHeroDirection(content);
+  if (!checkedDirection && /you logged off.*your mind did not/i.test(title)) {
     return "Run-specific intent: work is closed, but one lingering watercolor thought loop remains and is given a blank notebook page on which to settle. This scene replaces every older metaphor or object requirement. Use only the final scene decision below.";
   }
-  const direction = record(heroDirection);
+  const direction = authoritativeHeroDirection(content, heroDirection);
   if (!Object.keys(direction).length) return "";
   const mustInclude = Array.isArray(direction.mustInclude) ? direction.mustInclude.filter(Boolean) : [];
   const mustAvoid = Array.isArray(direction.mustAvoid) ? direction.mustAvoid.filter(Boolean) : [];
@@ -120,31 +198,95 @@ function heroDirectionPrompt(content, heroDirection) {
     mustAvoid.length ? `Avoid: ${mustAvoid.join("; ")}.` : "",
     "Treat these as an intent hierarchy, not an object checklist. Express them through one physical action and one coherent metaphor.",
     "Collapse overlapping requirements into the same objects. Do not create a separate prop for every noun or phrase.",
-    "The lesson-specific direction above is authoritative when it narrows or simplifies these requirements.",
+    checkedDirection
+      ? "This checked content brief is authoritative. Ignore conflicting intake-time metaphors."
+      : "The lesson-specific direction above is authoritative when it narrows or simplifies these requirements.",
   ].filter(Boolean).join(" ");
 }
 
-function heroPrompt(content) {
+function heroPrompt(content, heroDirection) {
   const { title, hook, takeaway } = contentText(content);
   const usesCuratedScene = /you logged off.*your mind did not/i.test(title);
+  const usesCheckedBrief = Boolean(checkedHeroDirection(content));
   return [
     "Create one single-scene editorial web hero illustration for a calm, source-backed learning lesson.",
     usesCuratedScene ? "" : `Visual subject guidance only: ${title}.`,
     usesCuratedScene ? "" : `Visual concept guidance only: ${hook || takeaway}.`,
     usesCuratedScene ? "" : `Visual action guidance only: ${takeaway}.`,
-    visualDirection(content),
+    visualDirection(content, heroDirection),
     "Use a horizontal 4:3 composition with the subject centered enough to survive a small card crop.",
-    "Match the supplied Nuglet style reference: warm cream paper, pale watercolor or gouache washes with translucent variation, uneven pigment, visible hand-drawn graphite or ink contours, delicate linework, softened painted edges, subtle dry-brush texture, restrained painted grounding shadows, muted clay orange, moss olive, dusty blue, quiet editorial illustration, tactile and human.",
-    "Keep the curated style visibly present at card size. Preserve imperfect contour weight, watercolor variation, paper grain, and soft painted shadows; do not flatten the result into clean vector art, generic clip art, glossy 3D, or photorealism.",
+    "Match the supplied Nuglet palette-and-texture swatches: warm cream paper, pale watercolor or gouache washes with translucent variation and uneven pigment, muted clay orange, moss olive, dusty blue, delicate hand-drawn graphite or ink contours, soft painted edges, subtle paper grain, quiet editorial illustration, tactile and human.",
     "Keep the image airy and low contrast with one clear visual metaphor, one focal composition, and generous open cream space. Use only the objects needed for one readable action, normally two or three object types and never more than four.",
     "Favor the light, whimsical, gently imperfect Explore-page art direction over realism. Avoid dense foliage, full landscapes, dramatic lighting, heavy shadows, saturated colors, dark high-contrast areas, and intricate realistic detail.",
-    "Blank notebooks, closed laptops, and simple human figures are allowed when the approved metaphor needs them. Keep them tactile, simplified, and free of text, interface details, keyboard detail, labels, lists, charts, or readable marks.",
+    usesCheckedBrief
+      ? "Every visible object must be explicitly required by the checked metaphor. Do not add symbolic props, process stages, or decorative storytelling devices."
+      : "Blank notebooks, closed laptops, and simple human figures are allowed when the approved metaphor needs them. Keep them tactile, simplified, and free of text, interface details, keyboard detail, labels, lists, charts, or readable marks.",
     "Build one small narrative moment with asymmetry and foreground-to-background depth. Do not reduce a lesson-specific relationship to unrelated decorative objects.",
     "Translate the guidance into imagery only. Never render any word, phrase, label, title, caption, letter, number, icon glyph, currency symbol, or readable mark from the guidance.",
-    "The reference image is style guidance only. Do not copy its subject, layout, objects, or wording.",
+    "The supplied images are blurred palette-and-texture swatches only. They contain no approved subject or layout.",
     "Do not make an infographic, grid, diptych, triptych, diagram, card layout, poster, or collection of labeled icons.",
     "The image must remain correct if every readable mark is removed. No text, no words, no letters, no numbers, no labels, no captions, no logos, no watermark, no currency symbols, no compass markings, no printed marks on objects, no UI, no black outlined vector icons, no photorealism, no glossy 3D, no neon gradients, no stock-photo look.",
   ].filter(Boolean).join(" ");
+}
+
+function heroVisualReviewPrompt(content, heroDirection) {
+  const direction = authoritativeHeroDirection(content, heroDirection);
+  return [
+    "Act as a strict visual art director for a Nuglet lesson hero.",
+    "Inspect the attached candidate image against every requirement below.",
+    `Required concept: ${String(direction.concept ?? "").trim()}.`,
+    `Required metaphor: ${String(direction.metaphor ?? "").trim()}.`,
+    `Required composition family: ${String(direction.compositionFamily ?? "").trim() || "single-scene editorial"}.`,
+    "The image must be one coherent physical scene with one focal action and at most two supporting object types.",
+    "It must use warm cream paper, pale watercolor or gouache, muted clay orange, moss olive, dusty blue, delicate linework, soft edges, low contrast, and generous breathing room.",
+    "Fail it if it substitutes a generic bridge, path, notebook, tile sequence, before-and-after transition, diagram, icon collection, or unrelated decorative still life.",
+    "Fail it if it contains text, letters, numbers, labels, logos, currency symbols, compass markings, UI, readable icon glyphs, photorealism, glossy 3D, dense foliage, visual clutter, or a copied reference composition.",
+    "Fail it if the focal action would become unclear in a centered wide lesson-header crop or a centered square card crop.",
+    'Return only strict JSON with this shape: {"passed":true,"issues":[]}.',
+    "When failed, passed must be false and issues must contain one to five short, concrete corrections.",
+  ].join(" ");
+}
+
+function parseHeroVisualReview(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const normalized = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  let parsed;
+  try {
+    parsed = record(JSON.parse(normalized));
+  } catch {
+    throw new Error("hero visual review returned invalid JSON");
+  }
+  const issues = Array.isArray(parsed.issues)
+    ? parsed.issues
+      .filter((issue) => typeof issue === "string" && issue.trim())
+      .slice(0, 5)
+      .map((issue) => issue.trim().slice(0, 240))
+    : [];
+  if (typeof parsed.passed !== "boolean" || (parsed.passed === false && issues.length === 0)) {
+    throw new Error("hero visual review returned an invalid decision");
+  }
+  return { passed: parsed.passed, issues };
+}
+
+async function reviewHeroImage(content, heroDirection, imageBytes) {
+  const project = required(process.env.GOOGLE_CLOUD_PROJECT, "GOOGLE_CLOUD_PROJECT");
+  const location = (process.env.GOOGLE_CLOUD_LOCATION || "global").trim();
+  const model = (process.env.GEMINI_VERTEX_MODEL || DEFAULT_VISUAL_REVIEW_MODEL).trim();
+  delete process.env.GEMINI_API_KEY;
+  const ai = new GoogleGenAI({ vertexai: true, project, location });
+  const prompt = heroVisualReviewPrompt(content, heroDirection);
+  const response = await ai.models.generateContent({
+    model,
+    contents: [
+      { inlineData: { data: imageBytes.toString("base64"), mimeType: "image/png" } },
+      { text: prompt },
+    ],
+    config: { responseMimeType: "application/json" },
+  });
+  const text = typeof response.text === "string"
+    ? response.text
+    : response.candidates?.[0]?.content?.parts?.flatMap((part) => part.text ? [part.text] : []).join("\n");
+  return { ...parseHeroVisualReview(text), model, prompt };
 }
 
 async function readInput() {
@@ -265,14 +407,7 @@ async function generateHero(content, heroDirection, expectedReferenceChecksums) 
   const project = required(process.env.GOOGLE_CLOUD_PROJECT_IMAGE || process.env.GOOGLE_CLOUD_PROJECT, "GOOGLE_CLOUD_PROJECT_IMAGE or GOOGLE_CLOUD_PROJECT");
   const location = (process.env.GOOGLE_CLOUD_LOCATION_IMAGE || process.env.GOOGLE_CLOUD_LOCATION || "us-central1").trim();
   const model = (process.env.VERTEX_IMAGE_MODEL || DEFAULT_MODEL).trim();
-  const styleReferencePaths = heroStyleReferencePaths();
-  for (const path of styleReferencePaths) {
-    if (!existsSync(path)) throw new Error(`hero style reference missing: ${path}`);
-  }
-  const styleReferences = await Promise.all(styleReferencePaths.map(async (path) => ({
-    bytes: await readFile(path),
-    mediaType: extname(path).toLowerCase() === ".webp" ? "image/webp" : "image/png",
-  })));
+  const styleReferences = await heroStyleReferences();
   const referenceChecksums = styleReferences.map(({ bytes }) => checksum(bytes));
   if (expectedReferenceChecksums.length > 0
     && JSON.stringify(referenceChecksums) !== JSON.stringify(expectedReferenceChecksums)) {
@@ -281,46 +416,169 @@ async function generateHero(content, heroDirection, expectedReferenceChecksums) 
   // This command authenticates through Vertex ADC. Keep API-key diagnostics out of the JSON stdout contract.
   delete process.env.GEMINI_API_KEY;
   const ai = new GoogleGenAI({ vertexai: true, project, location });
-  const renderedPrompt = [
-    heroPrompt(content),
+  const basePrompt = [
+    heroPrompt(content, heroDirection),
     heroDirectionPrompt(content, heroDirection),
-    `Final scene decision: ${visualDirection(content)}`,
+    `Final scene decision: ${visualDirection(content, heroDirection)}`,
   ].filter(Boolean).join(" ");
-  const contents = [
-    ...styleReferences.map(({ bytes, mediaType }) => ({
-      inlineData: { data: bytes.toString("base64"), mimeType: mediaType },
-    })),
-    { text: renderedPrompt },
-  ];
-  const response = model.startsWith("gemini-")
-    ? await ai.models.generateContent({
+  let priorIssues = [];
+  for (let attempt = 1; attempt <= MAX_HERO_GENERATION_ATTEMPTS; attempt += 1) {
+    const renderedPrompt = [
+      basePrompt,
+      priorIssues.length
+        ? `The previous candidate failed visual review. Correct every issue: ${priorIssues.join("; ")}.`
+        : "",
+    ].filter(Boolean).join(" ");
+    const contents = [
+      ...styleReferences.map(({ bytes, mediaType }) => ({
+        inlineData: { data: bytes.toString("base64"), mimeType: mediaType },
+      })),
+      { text: renderedPrompt },
+    ];
+    const response = model.startsWith("gemini-")
+      ? await ai.models.generateContent({
+        model,
+        contents,
+        config: {
+          responseModalities: ["IMAGE"],
+          imageConfig: { aspectRatio: "4:3", imageSize: "1K" },
+        },
+      })
+      : await ai.models.generateImages({
+        model,
+        prompt: renderedPrompt,
+        config: {
+          numberOfImages: 1,
+          aspectRatio: "4:3",
+          outputMimeType: "image/png",
+          imageSize: "1K",
+          negativePrompt: "text, letters, numbers, logos, watermark, UI, photorealism, neon, glossy 3D, stock photography",
+        },
+      });
+    const imageBytesBase64 = model.startsWith("gemini-")
+      ? response.candidates?.[0]?.content?.parts?.find((part) => part.inlineData?.data)?.inlineData?.data
+      : response.generatedImages?.[0]?.image?.imageBytes;
+    if (!imageBytesBase64) throw new Error("Vertex Imagen returned no image bytes");
+    const imageBytes = Buffer.from(imageBytesBase64, "base64");
+    const visualReview = await reviewHeroImage(content, heroDirection, imageBytes);
+    if (visualReview.passed) {
+      return {
+        bytes: imageBytes,
+        model,
+        prompt: renderedPrompt,
+        referenceChecksums,
+        visualReview: {
+          passed: true,
+          attempts: attempt,
+          provider: "vertex",
+          model: visualReview.model,
+          promptChecksum: checksum(Buffer.from(visualReview.prompt)),
+          issues: [],
+        },
+      };
+    }
+    priorIssues = visualReview.issues;
+  }
+  throw new Error(`hero visual conformance failed: ${priorIssues.join("; ")}`);
+}
+
+function usesBrandedInfographic(input) {
+  return recipeSnapshot(input, "infographic").version === BRANDED_INFOGRAPHIC_RECIPE_VERSION;
+}
+
+function modelResponseText(response) {
+  return typeof response.text === "string"
+    ? response.text.trim()
+    : response.candidates?.[0]?.content?.parts
+      ?.flatMap((part) => part.text ? [part.text] : [])
+      .join("\n")
+      .trim();
+}
+
+async function generateCurrentInfographicAsset(input) {
+  const recipe = recipeSnapshot(input, "infographic");
+  if (recipe.version !== BRANDED_INFOGRAPHIC_RECIPE_VERSION) {
+    throw new Error(`unsupported branded infographic recipe: ${recipe.version}`);
+  }
+  const project = required(
+    process.env.GOOGLE_CLOUD_PROJECT_IMAGE || process.env.GOOGLE_CLOUD_PROJECT,
+    "GOOGLE_CLOUD_PROJECT_IMAGE or GOOGLE_CLOUD_PROJECT",
+  );
+  const location = (
+    process.env.GOOGLE_CLOUD_LOCATION_IMAGE
+      || process.env.GOOGLE_CLOUD_LOCATION
+      || "global"
+  ).trim();
+  const model = (
+    process.env.VERTEX_INFOGRAPHIC_MODEL
+      || process.env.GEMINI_VERTEX_MODEL
+      || DEFAULT_INFOGRAPHIC_PLANNER_MODEL
+  ).trim();
+  const canonicalRecipe = Buffer.from(
+    String(recipe.canonicalBase64 ?? ""),
+    "base64",
+  ).toString("utf8");
+  const prompt = infographicPlanningPrompt(input.content, canonicalRecipe);
+  const source = infographicSource(input.content);
+  delete process.env.GEMINI_API_KEY;
+  const ai = new GoogleGenAI({ vertexai: true, project, location });
+  let artDirection;
+  let lastIssue = "";
+  for (let attempt = 1; attempt <= MAX_INFOGRAPHIC_PLANNING_ATTEMPTS; attempt += 1) {
+    const response = await ai.models.generateContent({
       model,
-      contents,
+      contents: [
+        {
+          text: [
+            prompt,
+            lastIssue
+              ? `The previous response was invalid. Correct only this problem: ${lastIssue}.`
+              : "",
+          ].filter(Boolean).join("\n"),
+        },
+      ],
       config: {
-        responseModalities: ["IMAGE"],
-        imageConfig: { aspectRatio: "4:3", imageSize: "1K" },
-      },
-    })
-    : await ai.models.generateImages({
-      model,
-      prompt: renderedPrompt,
-      config: {
-        numberOfImages: 1,
-        aspectRatio: "4:3",
-        outputMimeType: "image/png",
-        imageSize: "1K",
-        negativePrompt: "text, letters, numbers, logos, watermark, UI, photorealism, neon, glossy 3D, stock photography",
+        responseMimeType: "application/json",
+        temperature: 0.1,
       },
     });
-  const imageBytes = model.startsWith("gemini-")
-    ? response.candidates?.[0]?.content?.parts?.find((part) => part.inlineData?.data)?.inlineData?.data
-    : response.generatedImages?.[0]?.image?.imageBytes;
-  if (!imageBytes) throw new Error("Vertex Imagen returned no image bytes");
+    try {
+      artDirection = parseInfographicArtDirection(
+        modelResponseText(response),
+        source.steps.length,
+      );
+      break;
+    } catch (error) {
+      lastIssue = error instanceof Error ? error.message : String(error);
+    }
+  }
+  if (!artDirection) {
+    throw new Error(`infographic art direction failed: ${lastIssue}`);
+  }
+  const rendered = await renderNugletInfographic(input.content, artDirection);
+  const planChecksum = checksum(Buffer.from(JSON.stringify(artDirection)));
   return {
-    bytes: Buffer.from(imageBytes, "base64"),
-    model,
-    prompt: renderedPrompt,
-    referenceChecksums,
+    kind: "infographic",
+    mediaType: "image/png",
+    bytesBase64: rendered.bytes.toString("base64"),
+    generationInputChecksum: input.generationInputChecksum,
+    metadata: {
+      byteSize: rendered.bytes.byteLength,
+      ...await imageDimensions(rendered.bytes, "image/png"),
+      provider: "vertex",
+      plannerModel: model,
+      rendererVersion: NUGLET_INFOGRAPHIC_RENDERER_VERSION,
+      composition: rendered.composition,
+      planChecksum,
+      checkedTextEquivalent: rendered.source.steps,
+      altText: rendered.source.altText,
+      status: "needs_review",
+    },
+    support: {
+      executions: [
+        executionEvidence(recipe, prompt, { provider: "vertex", model }),
+      ],
+    },
   };
 }
 
@@ -757,6 +1015,7 @@ async function generateCurrentHeroAsset(input) {
       cropSafeArea: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 },
       styleProfileChecksum: recipe.checksum,
       referenceChecksums: generated.referenceChecksums,
+      ...(generated.visualReview ? { visualReview: generated.visualReview } : {}),
     },
     support: { executions: [executionEvidence(recipe, generated.prompt, {
       provider: generated.provider,
@@ -768,29 +1027,37 @@ async function generateCurrentHeroAsset(input) {
 
 async function prepareCurrentMediaLanes(input, kinds, dependencies = {}) {
   const makeHero = dependencies.generateHeroAsset ?? generateCurrentHeroAsset;
+  const makeInfographic = dependencies.generateInfographicAsset ?? generateCurrentInfographicAsset;
   const prepareNotebookLm = dependencies.ensureNotebookLm ?? ensureNotebookLmArtifacts;
-  return Promise.all([
+  const brandedInfographicRequested = kinds.includes("infographic") && usesBrandedInfographic(input);
+  const notebookLmKinds = kinds.filter((kind) => (
+    kind !== "hero" && !(kind === "infographic" && brandedInfographicRequested)
+  ));
+  const [heroAsset, infographicAsset, notebookLm] = await Promise.all([
     kinds.includes("hero") ? makeHero(input) : Promise.resolve(undefined),
-    kinds.some((kind) => kind !== "hero")
-      ? prepareNotebookLm(input, kinds)
+    brandedInfographicRequested ? makeInfographic(input) : Promise.resolve(undefined),
+    notebookLmKinds.length
+      ? prepareNotebookLm(input, notebookLmKinds)
       : Promise.resolve(undefined),
   ]);
+  return { heroAsset, infographicAsset, notebookLm };
 }
 
 async function generateCurrentMedia(input) {
   const kinds = [...new Set(input.kinds)];
   const directory = await mkdtemp(join(tmpdir(), "knowledge-bits-media-"));
   try {
-    const [heroAsset, notebookLm] = await prepareCurrentMediaLanes(input, kinds);
+    const { heroAsset, infographicAsset, notebookLm } = await prepareCurrentMediaLanes(input, kinds);
     const endCardArtwork = kinds.includes("public_preview")
       ? await publicPreviewEndCardArtwork(input, heroAsset)
       : undefined;
     const assetsByKind = new Map();
     if (heroAsset) assetsByKind.set("hero", heroAsset);
+    if (infographicAsset) assetsByKind.set("infographic", infographicAsset);
     for (const kind of kinds) {
       const role = kind === "hero" ? "hero" : kind === "infographic" ? "infographic" : kind === "audio_brief" ? "audioBrief" : "audioDiscussion";
       const recipe = kind === "public_preview" ? undefined : recipeSnapshot(input, role);
-      if (kind === "hero") continue;
+      if (kind === "hero" || assetsByKind.has(kind)) continue;
 
       if (!notebookLm) throw new Error(`NotebookLM preparation missing for ${kind}`);
       const tracked = notebookLm.tracked.get(kind);
@@ -807,7 +1074,7 @@ async function generateCurrentMedia(input) {
         const leaks = protectedLeakage(transcription.transcript, brief);
         const technicalPassed = metadata.hasAudio
           && metadata.durationSeconds >= 40
-          && metadata.durationSeconds <= 65
+          && metadata.durationSeconds <= PUBLIC_PREVIEW_MAX_SECONDS
           && Math.abs(metadata.width / metadata.height - 9 / 16) <= 0.08;
         assetsByKind.set(kind, {
           kind,
@@ -847,7 +1114,7 @@ async function generateCurrentMedia(input) {
               sourceGroundingPassed: null,
               narrativePassed: null,
               issues: [
-                ...(technicalPassed ? [] : ["Video must be 40-65 seconds, near 9:16, and contain audio."]),
+                ...(technicalPassed ? [] : [`Video must be 40-${PUBLIC_PREVIEW_MAX_SECONDS} seconds, near 9:16, and contain audio.`]),
                 ...(leaks.length ? [`Possible protected-content leakage: ${leaks.join(" | ")}`] : []),
               ],
             },
@@ -918,13 +1185,18 @@ function shouldReuseLegacyMedia(input) {
 }
 
 export {
+  authoritativeHeroDirection,
+  checkedHeroDirection,
   heroPrompt,
+  heroVisualReviewPrompt,
+  parseHeroVisualReview,
   heroReplacementPath,
   isNotebookLmArtifactPropagationDelay,
   normalizeLegacyHero,
   notebookLmPrompt,
   prepareCurrentMediaLanes,
   shouldReuseLegacyMedia,
+  usesBrandedInfographic,
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

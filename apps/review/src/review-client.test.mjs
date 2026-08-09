@@ -34,6 +34,8 @@ test('review client renders the complete Story Playbook package in review order'
   assert.match(source, /audioBrief/);
   assert.match(source, /audioDiscussion/);
   assert.match(source, /generationExecutions/);
+  assert.match(source, /fetch\('\/api\/regenerate-infographic'/);
+  assert.match(source, /Queueing one Nuglet infographic/);
 });
 
 test('review client keeps one package decision and requires a change comment', async () => {
@@ -42,6 +44,9 @@ test('review client keeps one package decision and requires a change comment', a
   assert.match(source, /submit\('approve'\)/);
   assert.match(source, /submit\('request_changes'/);
   assert.match(source, /A comment is required to request changes/);
+  assert.match(source, /Recording approval\.\.\./);
+  assert.match(source, /Decision not recorded/);
+  assert.match(source, /if \(submissionInFlight\) return/);
   assert.doesNotMatch(source, /artifactId[^\n]+decision/);
 });
 
@@ -105,6 +110,7 @@ test('review client shows warning details while enabling both overall decisions'
   assert.equal(warnings.children[1]?.children[0]?.textContent, payload.warnings[0]);
   assert.equal(page.approve.disabled, false);
   assert.equal(page.requestChanges.disabled, false);
+  assert.equal(page.querySelector('#regenerate-infographic').disabled, false);
 });
 
 test('review client replaces decision controls with delivery status after approval', async () => {
@@ -152,6 +158,7 @@ test('review client replaces decision controls with delivery status after approv
   assert.equal(page.approve.hidden, true);
   assert.equal(page.requestChanges.hidden, true);
   assert.equal(page.querySelector('#change-form').hidden, true);
+  assert.equal(page.querySelector('#regenerate-infographic').disabled, false);
 });
 
 test('review client replaces decision controls with terminal status after rejection', async () => {
@@ -199,6 +206,7 @@ test('review client replaces decision controls with terminal status after reject
   assert.equal(page.approve.hidden, true);
   assert.equal(page.requestChanges.hidden, true);
   assert.equal(page.querySelector('#change-form').hidden, true);
+  assert.equal(page.querySelector('#regenerate-infographic').disabled, true);
 });
 
 test('review client renders partial generation progress before human review', async () => {
@@ -325,7 +333,8 @@ function reviewPageDocument() {
     '#playbook-title', '#playbook-principle', '#playbook-why', '#playbook-steps', '#playbook-example',
     '#playbook-watch-outs', '#playbook-action', '#hero', '#hero-alt', '#hero-metadata',
     '#hero-lesson-header', '#hero-card', '#hero-thumbnail', '#infographic', '#infographic-alt',
-    '#infographic-text-equivalent', '#audio-brief', '#audio-discussion', '#audio-brief-transcript',
+    '#infographic-text-equivalent', '#regenerate-infographic', '#regenerate-infographic-status',
+    '#audio-brief', '#audio-discussion', '#audio-brief-transcript',
     '#audio-discussion-transcript', '#quiz', '#accepted-sources', '#rejected-sources', '#coverage-gaps',
     '#claims', '#qa', '#qa-findings', '#generation-executions', '#claim-coverage', '#editorial-warnings',
     '#social-post-companion', '#social-post-text', '#copy-social-post',

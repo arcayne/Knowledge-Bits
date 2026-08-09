@@ -320,6 +320,50 @@ export const knowledgeBitsCreateRunRequestSchema = createRunRequestSchema.superR
   }
 });
 
+export const nugletSimilarityRequestSchema = z.object({
+  title: z.string().trim().min(1),
+  objective: z.string().trim().min(1),
+  audience: z.string().trim().min(1).optional(),
+  locale: z.string().trim().min(1),
+}).strict();
+
+export const nugletSimilarityRiskSchema = z.enum([
+  'none',
+  'related',
+  'likely_duplicate',
+]);
+
+export const nugletSimilarityMatchSchema = z.object({
+  runId: packageIdSchema,
+  title: z.string().trim().min(1),
+  objective: z.string().trim().min(1).nullable(),
+  locale: z.string().trim().min(1),
+  currentStage: workflowStageSchema,
+  reviewStatus: reviewStatusSchema,
+  score: z.number().min(0).max(1),
+  reasons: z.array(z.string().trim().min(1)).min(1),
+  reviewPath: z.string().regex(/^\/runs\/[0-9a-f-]+$/),
+}).strict();
+
+export const nugletSimilarityResponseSchema = z.object({
+  method: z.literal('deterministic_intake_v1'),
+  scope: z.literal('all_knowledge_bits_runs'),
+  fingerprint: checksumSchema,
+  risk: nugletSimilarityRiskSchema,
+  matches: z.array(nugletSimilarityMatchSchema).max(5),
+}).strict();
+
+export const nugletSimilarityReviewSchema = z.object({
+  fingerprint: checksumSchema,
+  decision: z.enum(['clear', 'proceed_distinct']),
+}).strict();
+
+export type NugletSimilarityRequest = z.infer<typeof nugletSimilarityRequestSchema>;
+export type NugletSimilarityRisk = z.infer<typeof nugletSimilarityRiskSchema>;
+export type NugletSimilarityMatch = z.infer<typeof nugletSimilarityMatchSchema>;
+export type NugletSimilarityResponse = z.infer<typeof nugletSimilarityResponseSchema>;
+export type NugletSimilarityReview = z.infer<typeof nugletSimilarityReviewSchema>;
+
 export const prepareLegacyRevisionRequestSchema = z.object({
   expectedRevision: z.number().int().positive(),
   expectedPackageChecksum: checksumSchema,
@@ -354,6 +398,10 @@ export const prepareLegacyRevisionRequestSchema = z.object({
     });
   }
 });
+
+export const resumeCreateCandidateRequestSchema = z.object({
+  artifactId: z.string().uuid(),
+}).strict();
 
 export const regenerateMediaRequestSchema = z.object({
   kinds: z.array(z.enum(['hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview']))
@@ -1169,6 +1217,7 @@ export const knowledgeBitsSchema = z.object({
 
 export type KnowledgeBitsEvidence = z.infer<typeof knowledgeBitsEvidenceSchema>;
 export type NugletGenerationPlan = z.infer<typeof nugletGenerationPlanSchema>;
+export type ResumeCreateCandidateRequest = z.infer<typeof resumeCreateCandidateRequestSchema>;
 export type RegenerateMediaRequest = z.infer<typeof regenerateMediaRequestSchema>;
 export type LegacyMediaReuse = z.infer<typeof legacyMediaReuseSchema>;
 export type NugletMigrationInventory = z.infer<typeof nugletMigrationInventorySchema>;

@@ -7,8 +7,12 @@ import {
   knowledgeBitsQaSchema,
   knowledgeBitsSchema,
   knowledgeBitsCreateRunRequestSchema,
+  nugletSimilarityRequestSchema,
+  nugletSimilarityResponseSchema,
+  nugletSimilarityReviewSchema,
   prepareLegacyRevisionRequestSchema,
   prepareLegacyRevisionResponseSchema,
+  resumeCreateCandidateRequestSchema,
   regenerateMediaRequestSchema,
   knowledgeBitsRunBriefSchema,
   nugletGenerationPlanSchema,
@@ -29,6 +33,45 @@ const packageId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const sourceId = '0f8fad5b-d9cb-469f-a165-70867728950f';
 const claimId = '0f8fad5b-d9cb-469f-a165-708677289510';
 const snapshotArtifactId = '0f8fad5b-d9cb-469f-a165-708677289512';
+
+test('similarity preflight contracts are bounded and checksum-bound', () => {
+  const request = {
+    title: "Why You're Predictably Irrational",
+    objective: 'Recognize predictable decision errors.',
+    audience: 'general adult learners',
+    locale: 'en',
+  };
+  assert.deepEqual(nugletSimilarityRequestSchema.parse(request), request);
+  const response = {
+    method: 'deterministic_intake_v1',
+    scope: 'all_knowledge_bits_runs',
+    fingerprint: checksum,
+    risk: 'related',
+    matches: [{
+      runId: packageId,
+      title: 'Why do smart people make bad decisions?',
+      objective: null,
+      locale: 'en',
+      currentStage: 'human_review',
+      reviewStatus: 'pending',
+      score: 0.55,
+      reasons: ['shared concepts: decision_bias'],
+      reviewPath: `/runs/${packageId}`,
+    }],
+  };
+  assert.deepEqual(nugletSimilarityResponseSchema.parse(response), response);
+  assert.deepEqual(nugletSimilarityReviewSchema.parse({
+    fingerprint: checksum,
+    decision: 'proceed_distinct',
+  }), {
+    fingerprint: checksum,
+    decision: 'proceed_distinct',
+  });
+  assert.equal(nugletSimilarityResponseSchema.safeParse({
+    ...response,
+    matches: Array.from({ length: 6 }, () => response.matches[0]),
+  }).success, false);
+});
 
 const recipeIds = {
   story: 'nuglet.lesson.story',
@@ -683,6 +726,13 @@ test('requires a strictly bound Nuglet replacement brief to prepare a legacy rev
     previousRevision: 1,
     previousPackageChecksum: checksum,
   });
+});
+
+test('validates protected Create candidate recovery requests', () => {
+  const artifactId = '7607b16a-161f-4c9d-9230-f1a594267417';
+  assert.deepEqual(resumeCreateCandidateRequestSchema.parse({ artifactId }), { artifactId });
+  assert.equal(resumeCreateCandidateRequestSchema.safeParse({ artifactId: 'latest' }).success, false);
+  assert.equal(resumeCreateCandidateRequestSchema.safeParse({ artifactId, publish: true }).success, false);
 });
 
 test('validates a four-asset Nuglet migration inventory with bounded target paths', () => {

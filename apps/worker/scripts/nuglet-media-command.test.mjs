@@ -8,12 +8,16 @@ import test from "node:test";
 import { promisify } from "node:util";
 
 import {
+  authoritativeHeroDirection,
+  checkedHeroDirection,
   heroPrompt,
+  heroVisualReviewPrompt,
   heroReplacementPath,
   isNotebookLmArtifactPropagationDelay,
   normalizeLegacyHero,
   notebookLmPrompt,
   prepareCurrentMediaLanes,
+  parseHeroVisualReview,
   publicPreviewEndCardArtwork,
   reusableNotebookLmArtifact,
   shouldReuseLegacyMedia,
@@ -34,8 +38,6 @@ test("Knowledge Bits hero prompt preserves the Nuglet hero standard", () => {
   assert.match(prompt, /every readable mark is removed/);
   assert.match(prompt, /warm cream paper/);
   assert.match(prompt, /pale watercolor or gouache washes/);
-  assert.match(prompt, /visible hand-drawn graphite or ink contours/);
-  assert.match(prompt, /Keep the curated style visibly present at card size/);
   assert.match(prompt, /airy and low contrast/);
   assert.match(prompt, /normally two or three object types/);
   assert.match(prompt, /one asymmetrical editorial still life/);
@@ -48,6 +50,106 @@ test("Knowledge Bits hero prompt preserves the Nuglet hero standard", () => {
   assert.match(prompt, /Do not make an infographic/);
   assert.match(prompt, /No text, no words, no letters, no numbers/);
   assert.match(prompt, /no compass markings/);
+});
+
+test("checked nested hero brief overrides the generic intake direction", () => {
+  const content = {
+    kind: "nuglet.lesson.v1",
+    schemaVersion: "1.1.0",
+    payload: {
+      learning: {
+        centralIdea: "Match the message to the customer's state of awareness.",
+        oneLineToKeep: "Channel existing desire instead of manufacturing it.",
+      },
+      read: {
+        story: { title: "Stop Pushing and Start Channeling" },
+      },
+      hero: {
+        mediaBrief: {
+          concept: "Tuning into the customer's exact frequency.",
+          metaphor: "A hand adjusts one radio dial until a single signal becomes clear.",
+          compositionFamily: "single-scene editorial",
+        },
+      },
+    },
+  };
+  const intakeDirection = {
+    concept: "Your Customer Is Not Ready for the Same Message",
+    metaphor: "A clear bridge from uncertainty to practical understanding.",
+    mustInclude: ["a visible transition from uncertainty"],
+  };
+
+  assert.deepEqual(checkedHeroDirection(content), content.payload.hero.mediaBrief);
+  assert.deepEqual(authoritativeHeroDirection(content, intakeDirection), content.payload.hero.mediaBrief);
+  const prompt = heroPrompt(content, intakeDirection);
+  assert.match(prompt, /Stop Pushing and Start Channeling/);
+  assert.match(prompt, /Tuning into the customer's exact frequency/);
+  assert.match(prompt, /hand adjusts one radio dial/);
+  assert.match(prompt, /single-scene editorial/);
+  assert.match(prompt, /Every visible object must be explicitly required/);
+  assert.doesNotMatch(prompt, /Knowledge Bit/);
+  assert.doesNotMatch(prompt, /clear bridge/i);
+  assert.doesNotMatch(prompt, /visible transition from uncertainty/i);
+  assert.doesNotMatch(prompt, /generic bridge, path, notebook/);
+});
+
+test("checked hero brief also overrides older title-specific scene hacks", () => {
+  const prompt = heroPrompt({
+    payload: {
+      read: { story: { title: "You Logged Off. Your Mind Did Not." } },
+      hero: {
+        mediaBrief: {
+          concept: "Close the loop before leaving work.",
+          metaphor: "One hand places a single unfinished card into a quiet holding tray.",
+          compositionFamily: "single-scene editorial",
+        },
+      },
+    },
+  }, {});
+  assert.match(prompt, /single unfinished card/);
+  assert.doesNotMatch(prompt, /plain closed laptop/);
+  assert.doesNotMatch(prompt, /clay-orange watercolor thought loop/);
+});
+
+test("hero prompt retains intake direction only when checked content has no hero brief", () => {
+  const intakeDirection = {
+    concept: "A specific lesson",
+    metaphor: "One hand places a final stone into a stable arch.",
+    compositionFamily: "asymmetrical-story",
+  };
+  assert.deepEqual(authoritativeHeroDirection({
+    payload: { learning: { centralIdea: "A specific lesson" } },
+  }, intakeDirection), intakeDirection);
+});
+
+test("hero visual review checks semantic, style, clutter, and crop conformance", () => {
+  const content = {
+    payload: {
+      hero: {
+        mediaBrief: {
+          concept: "Tune into the customer's exact frequency.",
+          metaphor: "One hand adjusts a radio dial until a single signal becomes clear.",
+          compositionFamily: "single-scene editorial",
+        },
+      },
+    },
+  };
+  const prompt = heroVisualReviewPrompt(content, {});
+  assert.match(prompt, /Tune into the customer's exact frequency/);
+  assert.match(prompt, /one hand adjusts a radio dial/i);
+  assert.match(prompt, /generic bridge/);
+  assert.match(prompt, /readable icon glyphs/);
+  assert.match(prompt, /centered wide lesson-header crop/);
+});
+
+test("hero visual review requires a strict decision with concrete failed corrections", () => {
+  assert.deepEqual(parseHeroVisualReview('{"passed":true,"issues":[]}'), { passed: true, issues: [] });
+  assert.deepEqual(
+    parseHeroVisualReview('```json\n{"passed":false,"issues":["Remove the icon tiles.","Use one radio."]}\n```'),
+    { passed: false, issues: ["Remove the icon tiles.", "Use one radio."] },
+  );
+  assert.throws(() => parseHeroVisualReview('{"passed":false,"issues":[]}'), /invalid decision/);
+  assert.throws(() => parseHeroVisualReview("not json"), /invalid JSON/);
 });
 
 test("Knowledge Bits hero prompt keeps the work and care story specific", () => {
@@ -87,12 +189,15 @@ test("Knowledge Bits hero prompt gives logged-off work one coherent action", () 
   assert.doesNotMatch(prompt, /usually three to six/);
 });
 
-test("Knowledge Bits hero generation declares multiple Nuglet style references", async () => {
+test("Knowledge Bits hero generation converts narrative references into blurred style swatches", async () => {
   const source = await readFile(new URL("./nuglet-media-command.mjs", import.meta.url), "utf8");
   assert.match(source, /personal-finance-101-hero\.png/);
   assert.match(source, /not-every-thought-is-your-task-hero\.png/);
   assert.match(source, /and-then-what-the-question-behind-every-good-decision-hero\.png/);
   assert.match(source, /styleReferences\.map/);
+  assert.equal(source.includes(".resize(96, 96"), true);
+  assert.equal(source.includes(".blur(10)"), true);
+  assert.match(source, /blurred palette-and-texture swatches only/);
 });
 
 test("operator hero replacement is restricted to one explicit run", () => {
@@ -138,13 +243,13 @@ test("public preview marker binds the prompt contract version", () => {
     content: {
       kind: "nuglet.lesson.v1",
       schemaVersion: "1.1.0",
-      payload: {
-        identity: { title: "Protect Your Attention" },
-        socialPost: {
-          platform: "cross-platform",
-          text: "Your attention is shaped by the cues around you. A phone, open tab, or message can quietly pull you into another task. Notice the setup before blaming your focus. #ProtectYourAttention #Focus #WorkHabits",
-        },
-        learning: {
+        payload: {
+          identity: { title: "Protect Your Attention" },
+          socialPost: {
+            platform: "cross-platform",
+            text: "Your attention is shaped by the cues around you. A phone, open tab, or message can quietly pull you into another task. Notice the setup before blaming your focus. #ProtectYourAttention #Focus #WorkHabits",
+          },
+          learning: {
           centralIdea: "Visible cues make attention easier to pull away.",
           oneLineToKeep: "Design the setup before relying on effort.",
           action: { instruction: "Put the phone away for one focus block." },
@@ -156,7 +261,7 @@ test("public preview marker binds the prompt contract version", () => {
 
   assert.match(
     prompt,
-    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.3\.0\]/,
+    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.4\.0\]/,
   );
 });
 
@@ -175,7 +280,7 @@ test("NotebookLM artifact propagation 404s remain retryable", () => {
   assert.equal(isNotebookLmArtifactPropagationDelay("Source URL returned 404"), false);
 });
 
-test("Nuglet infographic recipe reserves a disposable footer and rejects dense poster styling", async () => {
+test("historical NotebookLM infographic recipe keeps its disposable footer contract", async () => {
   const recipePath = new URL(
     "../../../recipes/nuglet.lesson.v1/nuglet.visual.infographic-1.1.0.json",
     import.meta.url,
@@ -197,32 +302,59 @@ test("Nuglet infographic recipe reserves a disposable footer and rejects dense p
   assert.match(adapter, /"--detail", "concise", "--style", "editorial"/);
 });
 
-test("hero and NotebookLM media preparation start concurrently", async () => {
+test("new Nuglet infographic recipe binds Vertex planning to deterministic rendering", async () => {
+  const recipePath = new URL(
+    "../../../recipes/nuglet.lesson.v1/nuglet.visual.infographic-2.0.0.json",
+    import.meta.url,
+  );
+  const visualRecipe = JSON.parse(await readFile(recipePath, "utf8"));
+  const prompt = visualRecipe.instructions.join(" ");
+
+  assert.equal(visualRecipe.version, "2.0.0");
+  assert.match(prompt, /Vertex AI only to choose a bounded art direction/);
+  assert.match(prompt, /deterministic editorial SVG renderer/);
+  assert.match(prompt, /must not rewrite, summarize, spell, or typeset/);
+  assert.match(prompt, /pending human review/);
+  assert.match(prompt, /Recipes before version 2\.0\.0 remain pinned.+footer-crop behavior/);
+});
+
+test("hero and branded infographic generation start concurrently without NotebookLM", async () => {
   let releaseHero;
-  let releaseNotebookLm;
+  let releaseInfographic;
   const started = [];
   const hero = new Promise((resolve) => { releaseHero = resolve; });
-  const notebookLm = new Promise((resolve) => { releaseNotebookLm = resolve; });
+  const infographic = new Promise((resolve) => { releaseInfographic = resolve; });
 
-  const pending = prepareCurrentMediaLanes({}, ["hero", "infographic"], {
+  const pending = prepareCurrentMediaLanes({
+    recipeSnapshots: {
+      infographic: {
+        ...recipe("nuglet.visual.infographic"),
+        version: "2.0.0",
+      },
+    },
+  }, ["hero", "infographic"], {
     generateHeroAsset: async () => {
       started.push("hero");
       return hero;
     },
+    generateInfographicAsset: async () => {
+      started.push("infographic");
+      return infographic;
+    },
     ensureNotebookLm: async () => {
-      started.push("notebooklm");
-      return notebookLm;
+      throw new Error("NotebookLM must not run for a branded infographic");
     },
   });
 
   await Promise.resolve();
-  assert.deepEqual(started.sort(), ["hero", "notebooklm"]);
+  assert.deepEqual(started.sort(), ["hero", "infographic"]);
   releaseHero({ kind: "hero" });
-  releaseNotebookLm({ notebookId: "notebook", tracked: new Map() });
-  assert.deepEqual(await pending, [
-    { kind: "hero" },
-    { notebookId: "notebook", tracked: new Map() },
-  ]);
+  releaseInfographic({ kind: "infographic" });
+  assert.deepEqual(await pending, {
+    heroAsset: { kind: "hero" },
+    infographicAsset: { kind: "infographic" },
+    notebookLm: undefined,
+  });
 });
 
 test("public preview regeneration bypasses retained legacy media", () => {
@@ -275,7 +407,7 @@ test("public preview end card uses the immutable Nuglet hero receipt", async () 
 });
 
 test("forced NotebookLM regeneration creates once, then reuses its current-prompt sidecar", () => {
-  const marker = "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet.public-preview@1.3.0]";
+  const marker = "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet.public-preview@1.4.0]";
   const artifacts = [
     {
       id: "matching-video",

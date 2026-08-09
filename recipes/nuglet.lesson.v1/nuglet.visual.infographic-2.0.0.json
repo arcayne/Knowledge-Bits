@@ -1,0 +1,17 @@
+{
+  "id": "nuglet.visual.infographic",
+  "instructions": [
+    "Create one portrait 9:16 Nuglet visual summary for a curious adult using the checked lesson visual title, objective, text equivalent, and one line to keep as the only learner-facing source copy.",
+    "Use Vertex AI only to choose a bounded art direction: one short label per checked teaching step, one symbol per step from the renderer's approved symbol vocabulary, one restrained accent palette, and one path family.",
+    "Render the final asset with Nuglet's deterministic editorial SVG renderer at 1080 by 1920 pixels. Use the bundled Fraunces display face for literary headlines and Bricolage Grotesque for labels and supporting text.",
+    "Use Nuglet's warm ivory paper, near-black ink, deep teal labels, sparse clay-orange punctuation, and one pale clay, sage, or dusty-blue accent. Keep the composition airy, asymmetrical, tactile, and readable on a phone.",
+    "Build the page around one continuous visual path and two to four teaching stages. Use simple custom line drawings rather than stock icon tiles, equal cards, a dashboard, or a dense poster.",
+    "The model must not rewrite, summarize, spell, or typeset the checked learner-facing copy. The renderer must reproduce that copy deterministically and preserve its order.",
+    "Do not add citations, source names, product marks, provider marks, logos, watermarks, invented claims, interface chrome, gradients, glossy 3D, photorealism, clip art, emoji, or decorative clutter.",
+    "Store the Vertex planning prompt, recipe snapshot, model identity, plan checksum, renderer version, dimensions, and checked text equivalent as generation provenance.",
+    "Every generated asset remains pending human review. Regeneration supersedes any prior approval and never publishes or delivers automatically.",
+    "Recipes before version 2.0.0 remain pinned to their historical NotebookLM generation and footer-crop behavior."
+  ],
+  "status": "approved",
+  "version": "2.0.0"
+}

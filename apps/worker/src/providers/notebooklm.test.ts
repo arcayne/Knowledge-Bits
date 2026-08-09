@@ -38,6 +38,16 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Accepted source',
+          url: 'https://example.edu/research',
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
     ]),
     context: async () => ({
@@ -53,6 +63,7 @@ test('discovers the exact NotebookLM CLI version and records prompt provenance',
   if (result.kind !== 'success') return;
   const report = result.executionReport as { cliVersion: string; promptVersion: string; renderedPrompt: string };
   assert.deepEqual(calls[0]?.args, ['--version']);
+  assert.deepEqual(calls[1]?.args, ['source', 'list', 'notebook_fixture_01', '--json']);
   assert.equal(report.cliVersion, 'nlm 0.9.4');
   assert.equal(report.promptVersion, 'notebooklm-research.v1');
   assert.match(report.renderedPrompt, /returning to focused work/);
@@ -110,6 +121,7 @@ test('verifies Pi-discovered sources before importing only the accepted corpus i
       async verify(value) {
         const sources = (value as { sources: typeof discovered }).sources;
         const accepted = sources.slice(0, 2);
+        const rejected = sources[2];
         return {
           evidence: {
             acceptedSources: accepted.map((source) => ({
@@ -119,12 +131,12 @@ test('verifies Pi-discovered sources before importing only the accepted corpus i
               readability: { passed: true, reason: null },
               credibility: { passed: true, policy: 'public-readable-source.v1', reason: null },
             })),
-            rejectedSources: [{
-              ...sources[2]!,
+            rejectedSources: rejected ? [{
+              ...rejected,
               readability: { passed: false, reason: 'http_403' },
               credibility: { passed: true, policy: 'deterministic-source-policy.v2', reason: null },
-            }],
-            coverageGaps: [{ topic: sources[2]!.title, reason: 'http_403' }],
+            }] : [],
+            coverageGaps: rejected ? [{ topic: rejected.title, reason: 'http_403' }] : [],
           },
           snapshots: accepted.map((source) => ({
             kind: 'source_snapshot' as const,
@@ -140,6 +152,14 @@ test('verifies Pi-discovered sources before importing only the accepted corpus i
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
       { stdout: '[]', stderr: '', exitCode: 0 },
       { stdout: '', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([
+          { id: 'nlm-primary', title: 'Primary source', url: discovered[0]!.url, status: 'ready' },
+          { id: 'nlm-analysis', title: 'Independent analysis', url: discovered[1]!.url, status: 'ready' },
+        ]),
+        stderr: '',
+        exitCode: 0,
+      },
       {
         stdout: JSON.stringify({
           conversationId: 'deep-research-fixture',
@@ -194,6 +214,7 @@ test('verifies Pi-discovered sources before importing only the accepted corpus i
     'source_sync',
     'research_query',
     'research_parse_or_repair',
+    'research_verification',
   ]);
 });
 
@@ -209,6 +230,16 @@ test('does not activate Story recipe semantics before the Story and Playbook tas
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Accepted source',
+          url: 'https://example.edu/research',
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
     ]),
     context: async () => ({
@@ -224,8 +255,8 @@ test('does not activate Story recipe semantics before the Story and Playbook tas
 
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
-  assert.equal(calls.length, 2);
-  const prompt = String(calls[1]?.args[3]);
+  assert.equal(calls.length, 3);
+  const prompt = String(calls[2]?.args[3]);
   assert.doesNotMatch(prompt, /Keep the research grounded/);
   assert.equal(result.supportArtifacts, undefined);
 });
@@ -280,8 +311,6 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
   assert.match(prompt, /Open with one concrete interruption/);
   assert.match(prompt, /Give the learner three usable steps/);
   assert.match(prompt, /Return exactly three application questions/);
-  assert.match(prompt, /socialPost object/);
-  assert.match(prompt, /at least three literal hashtags/);
   assert.match(prompt, /Named inputs:\n\{"topic":"returning to focused work"/);
   assert.match(prompt, /"acceptedSourceIds":\["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222","66666666-6666-4666-8666-666666666666"\]/);
   assert.match(prompt, /"audience":"busy knowledge workers"/);
@@ -305,7 +334,6 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
     schemaVersion: string;
     payload: {
       materialization: string;
-      socialPost: { platform: string; text: string };
       learning: { centralIdea: string; oneLineToKeep: string; action: { instruction: string } };
       read: {
         story: { blocks: Array<{ type: string; claimRefs: string[] }> };
@@ -318,9 +346,6 @@ test('creates a 1.1.0 semantic Story and Playbook draft from resolved recipes', 
   assert.equal(output.kind, 'nuglet.lesson.v1');
   assert.equal(output.schemaVersion, '1.1.0');
   assert.equal(output.payload.materialization, 'draft');
-  assert.equal(output.payload.socialPost.platform, 'cross-platform');
-  assert.match(output.payload.socialPost.text, /#[\p{L}\p{N}]+/u);
-  assert.ok((output.payload.socialPost.text.match(/#[\p{L}\p{N}]+/gu) ?? []).length >= 3);
   assert.deepEqual(output.payload.read.story.blocks.map(({ type }) => type), [
     'opening', 'evidence', 'turning_point', 'practical_bridge',
   ]);
@@ -1185,8 +1210,27 @@ test('accepts the NotebookLM CLI snake_case envelope and verifies run sources wh
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
-      { stdout: '[]', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Accepted source',
+          url: 'https://example.edu/research',
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       { stdout: '', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Personal Finance 101',
+          url: sourceUrl,
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       {
         stdout: JSON.stringify({
           answer: JSON.stringify({
@@ -1211,24 +1255,35 @@ test('accepts the NotebookLM CLI snake_case envelope and verifies run sources wh
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
   assert.equal((result.executionReport as { conversationId: string }).conversationId, 'conversation_snake_case');
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
 });
 
 test('accepts a NotebookLM answer with the CLI dollar-sign escape defect', async () => {
+  const sourceUrl = 'https://example.test/offers';
   const provider = new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,
     process: processWith([], [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
       {
+        stdout: JSON.stringify([{
+          id: '1',
+          title: '$100M Offers Bundle',
+          url: sourceUrl,
+          status: 'ready',
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
+      {
         stdout: JSON.stringify({
-          answer: '{"sources":[{"sourceId":"1","title":"\\$100M Offers Bundle","url":"https://example.test/offers"}]}',
+          answer: `{"sources":[{"sourceId":"1","title":"\\$100M Offers Bundle","url":"${sourceUrl}"}]}`,
           conversation_id: 'conversation_dollar_escape',
         }),
         stderr: '',
         exitCode: 0,
       },
     ]),
-    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: '$100M Offers' }),
+    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [sourceUrl], topic: '$100M Offers' }),
   });
 
   const result = await provider.execute(input('collect_sources'));
@@ -1393,13 +1448,14 @@ test('classifies original-query transport failures without adding a repair query
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: '[]', stderr: '', exitCode: 0 },
       { stdout: '', stderr: 'service unavailable', exitCode: 1 },
     ]),
     context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
   });
 
   await assert.rejects(() => provider.execute(input('collect_sources')), /notebooklm_transport_unavailable/);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
 
 test('classifies semantic-repair transport failures without adding another query', async () => {
@@ -1419,6 +1475,16 @@ test('uses exactly one repair request for malformed structured output', async ()
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([{
+          id: sourceId,
+          title: 'Accepted source',
+          url: 'https://example.edu/research',
+          status: 2,
+        }]),
+        stderr: '',
+        exitCode: 0,
+      },
       { stdout: malformedAnswerEnvelope('conversation_malformed_answer'), stderr: '', exitCode: 0 },
       { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
     ]),
@@ -1428,13 +1494,13 @@ test('uses exactly one repair request for malformed structured output', async ()
   const result = await provider.execute(input('collect_sources'));
 
   assert.equal(result.kind, 'success');
-  assert.equal(calls.length, 3);
-  assert.equal(calls[1]?.args.at(-1), '--json');
+  assert.equal(calls.length, 4);
   assert.equal(calls[2]?.args.at(-1), '--json');
-  assert.equal(calls[1]?.stdin, undefined);
-  assert.deepEqual(calls[2]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
-  assert.match(String(calls[2]?.args[3]), /strict JSON object/);
-  assert.equal(String(calls[2]?.args[3]).includes(String(calls[1]?.args[3])), false);
+  assert.equal(calls[3]?.args.at(-1), '--json');
+  assert.equal(calls[2]?.stdin, undefined);
+  assert.deepEqual(calls[3]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
+  assert.match(String(calls[3]?.args[3]), /strict JSON object/);
+  assert.equal(String(calls[3]?.args[3]).includes(String(calls[2]?.args[3])), false);
 });
 
 test('rejects a malformed repair response without issuing semantic repair', async () => {
@@ -1443,6 +1509,7 @@ test('rejects a malformed repair response without issuing semantic repair', asyn
     sourceVerifier: fakeSourceVerifier,
     process: processWith(calls, [
       { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: '[]', stderr: '', exitCode: 0 },
       { stdout: malformedAnswerEnvelope('conversation_malformed_answer'), stderr: '', exitCode: 0 },
       { stdout: malformedAnswerEnvelope('conversation_malformed_repair'), stderr: '', exitCode: 0 },
       { stdout: await fixture('notebooklm-story-playbook.json'), stderr: '', exitCode: 0 },
@@ -1451,15 +1518,26 @@ test('rejects a malformed repair response without issuing semantic repair', asyn
   });
 
   await assert.rejects(() => provider.execute(input('collect_sources')), /notebooklm_malformed_output/);
-  assert.equal(calls.length, 3);
-  assert.deepEqual(calls[2]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[3]?.args.slice(-3), ['--conversation-id', 'conversation_malformed_answer', '--json']);
 });
 
-test('records the research source list without requiring a second citation mapping', async () => {
+test('records every healthy CLI-listed source without re-adding an attached failed source', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const failedUrl = 'https://example.net/research';
   const provider = new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,
-    process: processWith([], [
+    process: processWith(calls, [
       { stdout: 'nlm 0.9.4\\n', stderr: '', exitCode: 0 },
+      {
+        stdout: JSON.stringify([
+          { id: sourceId, title: 'Accepted source', url: 'https://example.edu/research', status: 2 },
+          { id: secondarySourceId, title: 'Second accepted source', url: 'https://example.org/research', status: 2 },
+          { id: tertiarySourceId, title: 'Failed source', url: failedUrl, status: 3 },
+        ]),
+        stderr: '',
+        exitCode: 0,
+      },
       {
         stdout: JSON.stringify({
           conversationId: 'conversation_fixture_01',
@@ -1472,14 +1550,15 @@ test('records the research source list without requiring a second citation mappi
         exitCode: 0,
       },
     ]),
-    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [], topic: 'focus' }),
+    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [failedUrl], topic: 'focus' }),
   });
 
   const result = await provider.execute(input('collect_sources'));
   assert.equal(result.kind, 'success');
   if (result.kind !== 'success') return;
   const output = result.parsedOutput as { acceptedSources: Array<{ sourceId: string }> };
-  assert.deepEqual(output.acceptedSources.map(({ sourceId: id }) => id), [sourceId]);
+  assert.deepEqual(output.acceptedSources.map(({ sourceId: id }) => id), [sourceId, secondarySourceId]);
+  assert.equal(calls.some(({ args }) => args.includes('add')), false);
 });
 
 test('classifies process timeouts as a typed wait', async () => {

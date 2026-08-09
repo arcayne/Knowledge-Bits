@@ -2,6 +2,13 @@
   "contentKind": "nuglet.lesson.v1",
   "recipes": [
     {
+      "checksum": "sha256:f48e77547bf0d1b1890bc4118902fbcae185d6b55ec21c929410adab02677206",
+      "id": "nuglet.visual.infographic",
+      "path": "nuglet.visual.infographic-2.0.0.json",
+      "status": "approved",
+      "version": "2.0.0"
+    },
+    {
       "checksum": "sha256:759dccde9da000a17644a3eb7a46a1e3cbeac76caaf7530b0676b19465b0e5b3",
       "id": "nuglet.visual.infographic",
       "path": "nuglet.visual.infographic-1.1.0.json",
@@ -65,5 +72,5 @@
       "version": "1.0.0"
     }
   ],
-  "registryVersion": "1.1.0"
+  "registryVersion": "2.0.0"
 }

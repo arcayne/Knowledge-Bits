@@ -77,6 +77,9 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
       button { border: 1px solid transparent; padding: .55rem .8rem; font: inherit; cursor: pointer; }
       button[data-decision="approve"] { background: #d7ee72; color: #202526; }
       button[data-decision="request_changes"] { background: transparent; color: #fff; border-color: #c5d2cd; }
+      .asset-action { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; margin: .75rem 0 1rem; }
+      .asset-action button { background: #0b6664; color: #fff; }
+      .asset-action .muted { margin: 0; }
       #change-form { display: none; flex: 1 1 100%; gap: .5rem; align-items: end; }
       #change-form[data-open="true"] { display: flex; }
       textarea { flex: 1; min-height: 3.5rem; font: inherit; }
@@ -120,6 +123,10 @@ Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
         <section class="review-section" id="infographic-section">
           <h2>Infographic</h2><div class="asset" id="infographic">Missing infographic preview.</div><p id="infographic-alt" class="muted"></p>
           <h4>Text equivalent</h4><ul id="infographic-text-equivalent"></ul>
+          <div class="asset-action">
+            <button type="button" id="regenerate-infographic" disabled>Replace with Nuglet infographic</button>
+            <p class="muted" id="regenerate-infographic-status">Available when a complete package is ready. This queues one new asset and returns it to human review.</p>
+          </div>
         </section>
         <section class="review-section" id="audio-brief-section">
           <h2>Brief audio</h2><div class="audio-layout"><div class="asset" id="audio-brief">Missing Brief audio.</div><div><h4>Transcript</h4><p class="transcript" id="audio-brief-transcript"></p></div></div>

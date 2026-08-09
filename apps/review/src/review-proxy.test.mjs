@@ -40,8 +40,26 @@ test('review proxy returns and submits the exact surface checksum with server au
 
   assert.equal(approved.status, 200);
   assert.equal(calls.length, 2);
+  assert.ok(calls.every(({ url }) => url === 'https://engine.example.test/runs/run-1/review'));
   assert.ok(calls.every(({ init }) => new Headers(init.headers).get('Authorization') === 'Bearer server-review-token'));
   assert.ok(calls.every(({ init }) => new Headers(init.headers).get('X-Knowledge-Bits-Reviewer') === 'operator-123'));
+});
+
+test('review proxy preserves an API base path when forwarding requests', async () => {
+  let requestedUrl = '';
+  const response = await forwardReviewRequest({
+    apiUrl: 'https://engine.example.test/api',
+    token: 'server-review-token',
+    reviewerId: 'operator-123',
+    path: '/runs/similarity',
+    fetch: async (url) => {
+      requestedUrl = String(url);
+      return Response.json({ risk: 'none', matches: [] });
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(requestedUrl, 'https://engine.example.test/api/runs/similarity');
 });
 
 test('review proxy fails closed when its server configuration is missing', async () => {

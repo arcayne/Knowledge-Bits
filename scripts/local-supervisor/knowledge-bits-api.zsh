@@ -10,7 +10,7 @@ if [[ ! -f "$env_file" ]]; then
   exit 1
 fi
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
+export PATH="/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH}"
 set -a
 source "$env_file"
 set +a

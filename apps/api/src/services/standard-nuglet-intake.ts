@@ -20,8 +20,8 @@ const STANDARD_RECIPE_BINDINGS: NugletGenerationPlan['recipes'] = {
   },
   infographic: {
     id: 'nuglet.visual.infographic',
-    version: '1.1.0',
-    checksum: 'sha256:759dccde9da000a17644a3eb7a46a1e3cbeac76caaf7530b0676b19465b0e5b3',
+    version: '2.0.0',
+    checksum: 'sha256:f48e77547bf0d1b1890bc4118902fbcae185d6b55ec21c929410adab02677206',
   },
   audioBrief: {
     id: 'nuglet.audio.brief',
@@ -52,18 +52,17 @@ export function bindStandardNugletIntakePlan(input: {
   if (!isStandardStoryPlaybookIntake(input.brief) || input.brief.generationPlan !== undefined) {
     return input.brief;
   }
-  const objective = stringValue(input.brief.objective) ?? input.title;
   const plan = nugletGenerationPlanSchema.parse({
     contentKind: 'nuglet.lesson.v1',
     schemaVersion: '1.1.0',
     recipes: STANDARD_RECIPE_BINDINGS,
     heroDirection: {
       concept: input.title,
-      metaphor: `A clear bridge from the learner's current understanding to ${objective}`,
+      metaphor: `One physical action that makes ${input.title} immediately understandable`,
       compositionFamily: 'asymmetrical-story',
       mustInclude: [
         `one clear focal metaphor specific to ${input.title}`,
-        'a visible transition from uncertainty to practical understanding',
+        'the final checked lesson hero brief when content generation provides one',
       ],
       mustAvoid: [
         'generic icon grids',

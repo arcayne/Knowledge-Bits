@@ -13,18 +13,18 @@ export class OperatorAuthError extends Error {
 }
 
 export async function authenticateOperator(request, env, dependencies = {}) {
-  const localOperatorId = configured(env.REVIEW_LOCAL_OPERATOR_ID ?? process.env.REVIEW_LOCAL_OPERATOR_ID);
+  const localOperatorId = configuredEnvironment(env, 'REVIEW_LOCAL_OPERATOR_ID');
   if (dependencies.allowLocalOperator && localOperatorId) {
     return { reviewerId: localOperatorId };
   }
 
-  const jwksUrl = configured(env.REVIEW_AUTH_JWKS_URL);
-  const issuer = configured(env.REVIEW_AUTH_ISSUER);
-  const audience = configured(env.REVIEW_AUTH_AUDIENCE);
+  const jwksUrl = configuredEnvironment(env, 'REVIEW_AUTH_JWKS_URL');
+  const issuer = configuredEnvironment(env, 'REVIEW_AUTH_ISSUER');
+  const audience = configuredEnvironment(env, 'REVIEW_AUTH_AUDIENCE');
   if (!jwksUrl || !issuer || !audience) {
     throw new OperatorAuthError('Review operator authentication is not configured', 503);
   }
-  const headerName = configured(env.REVIEW_AUTH_HEADER) ?? 'Cf-Access-Jwt-Assertion';
+  const headerName = configuredEnvironment(env, 'REVIEW_AUTH_HEADER') ?? 'Cf-Access-Jwt-Assertion';
   const token = request.headers.get(headerName)?.trim();
   if (!token) throw new OperatorAuthError('Review operator authentication is required', 401);
 
@@ -32,7 +32,7 @@ export async function authenticateOperator(request, env, dependencies = {}) {
     const jwks = dependencies.jwks ?? createRemoteJWKSet(new URL(jwksUrl));
     const { payload } = await jwtVerify(token, jwks, { issuer, audience });
     if (!payload.sub?.trim()) throw new OperatorAuthError('Review identity has no subject', 403);
-    const requiredGroup = configured(env.REVIEW_AUTH_REQUIRED_GROUP);
+    const requiredGroup = configuredEnvironment(env, 'REVIEW_AUTH_REQUIRED_GROUP');
     if (requiredGroup && !claimValues(payload.groups).includes(requiredGroup)) {
       throw new OperatorAuthError('Review identity is not authorized', 403);
     }
@@ -95,4 +95,8 @@ function claimValues(value) {
 
 function configured(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function configuredEnvironment(env, key) {
+  return configured(env?.[key] ?? process.env[key]);
 }

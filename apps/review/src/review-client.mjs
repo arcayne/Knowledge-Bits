@@ -10,10 +10,13 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
   const changeForm = required('#change-form');
   const commentField = required('#comment');
   const decisionStatus = required('#decision-status');
+  const regenerateInfographic = required('#regenerate-infographic');
+  const regenerateInfographicStatus = required('#regenerate-infographic-status');
   const decisionButtons = [...document.querySelectorAll('[data-decision], #change-form button')];
   const csrfToken = required('meta[name="review-csrf-token"]').content;
   let model;
   let submissionInFlight = false;
+  let regenerationInFlight = false;
 
   const showError = (message) => {
     error.textContent = message;
@@ -24,6 +27,9 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     error.hidden = true;
   };
   const setDecisionAllowed = (allowed) => decisionButtons.forEach((button) => { button.disabled = !allowed; });
+  const setRegenerationAllowed = (allowed) => {
+    regenerateInfographic.disabled = !allowed || regenerationInFlight;
+  };
   const fillList = (selector, values, emptyLabel) => {
     const list = required(selector);
     list.replaceChildren();
@@ -187,6 +193,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
         ? `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}. Human review comes after generation and QA.`
         : `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}.`;
     setDecisionAllowed(false);
+    setRegenerationAllowed(false);
     required('#review').hidden = false;
   };
 
@@ -364,6 +371,10 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
         renderQa(payload.package);
         renderGenerationExecutions(payload.generationExecutions);
         fillList('#claim-coverage', learner.claimCoverage.map((entry) => `${entry.path}: ${entry.claimIds.join(', ')}`), 'No claim coverage.');
+        setRegenerationAllowed(payload.reviewStatus !== 'rejected');
+        regenerateInfographicStatus.textContent = payload.reviewStatus === 'approved'
+          ? 'Replacing this asset clears approval and returns the package to human review.'
+          : 'Queues one Vertex-planned Nuglet infographic and returns the package to human review.';
       } else {
         const previewResponse = await fetch(`/api/preview?runId=${encodeURIComponent(runId)}`);
         const preview = await previewResponse.json();
@@ -371,6 +382,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
         required('#title').textContent = preview.run.title;
         required('#status').textContent = `${preview.run.currentStage.replaceAll('_', ' ')}: ${preview.run.currentState.replaceAll('_', ' ')}`;
         renderProgressive(preview);
+        setRegenerationAllowed(false);
       }
       renderEditorialWarnings(payload.warnings);
       const approved = payload.reviewStatus === 'approved';
@@ -393,6 +405,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     } catch (loadError) {
       required('#status').textContent = 'Review data unavailable';
       setDecisionAllowed(false);
+      setRegenerationAllowed(false);
       showError(loadError instanceof Error ? loadError.message : 'Could not load the review.');
     }
   };
@@ -538,6 +551,39 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     }
   };
 
+  const replaceInfographic = async () => {
+    if (regenerationInFlight || !model?.package || model.reviewStatus === 'rejected') return;
+    regenerationInFlight = true;
+    clearError();
+    setRegenerationAllowed(false);
+    regenerateInfographicStatus.textContent = 'Queueing one Nuglet infographic...';
+    try {
+      const response = await fetch('/api/regenerate-infographic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ runId }),
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+        // Preserve a visible failure state when an upstream proxy returns an empty or non-JSON response.
+      }
+      if (!response.ok) throw new Error(payload.error || 'Could not queue the Nuglet infographic.');
+      regenerateInfographicStatus.textContent = 'Queued. The package is returning to human review.';
+      await load();
+    } catch (regenerationError) {
+      regenerateInfographicStatus.textContent = 'Infographic replacement was not queued.';
+      showError(regenerationError instanceof Error
+        ? regenerationError.message
+        : 'Could not queue the Nuglet infographic.');
+    } finally {
+      regenerationInFlight = false;
+      setRegenerationAllowed(Boolean(model?.package && model.reviewStatus !== 'rejected'));
+    }
+  };
+
+  regenerateInfographic.addEventListener('click', () => void replaceInfographic());
   required('[data-decision="approve"]').addEventListener('click', () => void submit('approve'));
   required('[data-decision="request_changes"]').addEventListener('click', () => {
     changeForm.dataset.open = 'true';

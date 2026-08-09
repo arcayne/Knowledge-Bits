@@ -9,7 +9,7 @@ import { createHttpDeliveryAdapterFromEnv, HttpDeliveryAdapter } from './http.js
 import type { DeliveryAdapterInput } from './types.js';
 import { strictPackageVersionInput } from '../../testing/knowledge-bits-fixture.js';
 
-test('HTTP delivery sends the immutable package identity', async () => {
+test('HTTP delivery sends the immutable package identity to the final delivery boundary', async () => {
   let requestBody: unknown;
   let requestUrl: string | URL | Request = '';
   const adapter = new HttpDeliveryAdapter({
@@ -28,7 +28,7 @@ test('HTTP delivery sends the immutable package identity', async () => {
   assert.equal((requestBody as DeliveryAdapterInput).packageChecksum, input().packageChecksum);
 });
 
-test('HTTP delivery accepts Nuglet publish metadata while returning the portable delivery response', async () => {
+test('HTTP delivery accepts Nuglet delivery metadata while returning the portable delivery response', async () => {
   const adapter = new HttpDeliveryAdapter({
     baseUrl: 'https://destination.example.test/',
     fetch: async () => Response.json({

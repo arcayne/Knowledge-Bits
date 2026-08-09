@@ -354,6 +354,12 @@ export interface RefreshResearchInput {
   operatorId: string;
 }
 
+export interface ResumeCreateCandidateInput {
+  runId: string;
+  artifactId: string;
+  operatorId: string;
+}
+
 type RegenerableMediaKind = 'hero' | 'infographic' | 'audio_brief' | 'audio_discussion' | 'public_preview';
 type MediaRecipeOverrides = {
   infographic?: NugletGenerationPlan['recipes']['infographic'];
@@ -407,6 +413,7 @@ export interface WorkflowStore {
   retryDelivery(deliveryId: string): Promise<RetryDeliveryResult>;
   retryStage(input: RetryStageInput): Promise<WorkflowRun>;
   refreshResearch(input: RefreshResearchInput): Promise<WorkflowRun>;
+  resumeCreateCandidate(input: ResumeCreateCandidateInput): Promise<WorkflowRun>;
   queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun>;
   queueMediaRegeneration(
     runId: string,
@@ -544,6 +551,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   refreshResearch(input: RefreshResearchInput): Promise<WorkflowRun> {
     return this.store.refreshResearch(input);
+  }
+
+  resumeCreateCandidate(input: ResumeCreateCandidateInput): Promise<WorkflowRun> {
+    return this.store.resumeCreateCandidate(input);
   }
 
   queueLegacyAudioReconciliation(runId: string): Promise<WorkflowRun> {
@@ -937,6 +948,144 @@ export class PrismaWorkflowStore implements WorkflowStore {
             brief: input.brief,
             ...(notebookLmNotebookId ? { notebookLmNotebookId } : {}),
             researchRefresh: { requestedBy: input.operatorId },
+          }),
+        },
+      });
+      return toWorkflowRun(await transaction.run.findUniqueOrThrow({
+        where: { id: input.runId },
+        include: {
+          stages: true,
+          jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 },
+        },
+      }));
+    });
+  }
+
+  async resumeCreateCandidate(input: ResumeCreateCandidateInput): Promise<WorkflowRun> {
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
+      const run = await transaction.run.findUnique({
+        where: { id: input.runId },
+        include: { stages: true },
+      });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      const effectKey = resumeCreateCandidateEffectKey(input);
+      const existingEffect = await transaction.workflowEffect.findUnique({ where: { effectKey } });
+      if (existingEffect) {
+        return toWorkflowRun(await transaction.run.findUniqueOrThrow({
+          where: { id: input.runId },
+          include: {
+            stages: true,
+            jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 },
+          },
+        }));
+      }
+      assertCreateCandidateResumeAllowed({
+        currentStage: run.currentStage,
+        reviewStatus: run.reviewStatus,
+        approvedChecksum: run.approvedChecksum,
+        createState: run.stages.find((stage) => stage.name === 'create')?.state,
+        operatorId: input.operatorId,
+      });
+      const activeJobs = await transaction.job.count({
+        where: { runId: input.runId, state: { in: ['queued', 'running'] } },
+      });
+      if (activeJobs > 0) throw new WorkflowConflictError('Create candidate recovery requires no active worker jobs');
+      const artifact = await transaction.artifact.findFirst({
+        where: {
+          id: input.artifactId,
+          runId: input.runId,
+          revision: run.currentRevision,
+          kind: 'parsed_output',
+          stage: 'create',
+          action: ACTION_BY_STAGE.create,
+          mediaType: 'application/json',
+          job: {
+            runId: input.runId,
+            stage: 'create',
+            action: ACTION_BY_STAGE.create,
+            state: 'needs_human',
+          },
+        },
+      });
+      if (!artifact) {
+        throw new WorkflowValidationError(
+          'Selected artifact must be current-revision JSON output from a Create job needing human intervention',
+        );
+      }
+      const researchJob = await transaction.job.findFirst({
+        where: {
+          runId: input.runId,
+          stage: 'research',
+          action: ACTION_BY_STAGE.research,
+          state: 'done',
+          artifacts: { some: { revision: run.currentRevision } },
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      });
+      if (!researchJob) throw new WorkflowConflictError('Create candidate recovery requires successful current Research evidence');
+      const researchArtifacts = await transaction.artifact.findMany({
+        where: { runId: input.runId, revision: run.currentRevision, jobId: researchJob.id },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      });
+      if (!researchArtifacts.some((candidate) => (
+        candidate.kind === 'parsed_output' && candidate.action === ACTION_BY_STAGE.research
+      ))) {
+        throw new WorkflowConflictError('Create candidate recovery requires a current Research evidence manifest');
+      }
+      const dependencies = [
+        ...researchArtifacts.map(toWorkflowArtifact),
+        toWorkflowArtifact(artifact),
+      ].map(toJobArtifactDependency);
+      const now = new Date();
+      await transaction.stage.update({
+        where: { runId_name: { runId: input.runId, name: 'create' } },
+        data: { state: 'done', reason: null },
+      });
+      await transaction.stage.upsert({
+        where: { runId_name: { runId: input.runId, name: 'check' } },
+        update: { state: 'queued', reason: null },
+        create: { runId: input.runId, name: 'check', state: 'queued' },
+      });
+      await transaction.run.update({
+        where: { id: input.runId },
+        data: {
+          currentStage: 'check',
+          packageChecksum: artifact.checksum,
+          approvedChecksum: null,
+          reviewStatus: 'pending',
+        },
+      });
+      await transaction.workflowEffect.create({
+        data: {
+          runId: input.runId,
+          jobId: `operator:${input.operatorId}`,
+          effectKey,
+          type: 'resume_create_candidate',
+          payload: toPrismaJson({
+            artifactId: artifact.id,
+            artifactChecksum: artifact.checksum,
+            revision: run.currentRevision,
+            requestedBy: input.operatorId,
+          }),
+        },
+      });
+      await transaction.job.create({
+        data: {
+          runId: input.runId,
+          stage: 'check',
+          action: ACTION_BY_STAGE.check,
+          state: 'queued',
+          idempotencyKey: resumeCreateCandidateJobIdempotencyKey(input),
+          availableAt: now,
+          input: toPrismaJson({
+            brief: run.brief as JsonObject,
+            ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+            dependencies,
+            createCandidateRecovery: {
+              artifactId: artifact.id,
+              requestedBy: input.operatorId,
+            },
           }),
         },
       });
@@ -1927,7 +2076,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (active) throw new WorkflowConflictError('Delivery execution has an active lease');
       const queued = recoveryJobs.find((job) => job.state === 'queued');
       const expired = recoveryJobs.find((job) => job.state === 'running');
-      const nextAttempt = delivery.attempts + 1;
+      let nextAttempt = delivery.attempts + 1;
       if (queued) {
         if (queued.availableAt <= now) throw new WorkflowConflictError('Delivery recovery is already queued');
         await transaction.job.update({ where: { id: queued.id }, data: { availableAt: now } });
@@ -1949,6 +2098,12 @@ export class PrismaWorkflowStore implements WorkflowStore {
           },
         });
       } else {
+        while (await transaction.job.findUnique({
+          where: { idempotencyKey: deliveryRetryJobIdempotencyKey(delivery.id, nextAttempt) },
+          select: { id: true },
+        })) {
+          nextAttempt += 1;
+        }
         await transaction.job.create({
           data: {
             runId: delivery.runId,
@@ -1967,7 +2122,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       const updated = await transaction.delivery.update({
         where: { id: delivery.id },
         data: {
-          state: delivery.state === 'needs_human' ? 'waiting' : delivery.state,
+          state: delivery.state === 'succeeded' ? 'queued' : delivery.state === 'needs_human' ? 'waiting' : delivery.state,
           nextAttemptAt: ['failed', 'waiting', 'needs_human'].includes(delivery.state)
             ? now
             : delivery.nextAttemptAt,
@@ -2575,6 +2730,118 @@ class InMemoryWorkflowStore implements WorkflowStore {
     };
     this.jobs.set(job.id, job);
     this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
+    return { ...run, nextRetryAt: this.nextRetryAt(run) };
+  }
+
+  async resumeCreateCandidate(input: ResumeCreateCandidateInput): Promise<WorkflowRun> {
+    const run = this.requireRun(input.runId);
+    const effectKey = resumeCreateCandidateEffectKey(input);
+    if (this.effectsByKey.has(effectKey)) return { ...run, nextRetryAt: this.nextRetryAt(run) };
+    assertCreateCandidateResumeAllowed({
+      currentStage: run.currentStage,
+      reviewStatus: run.reviewStatus,
+      approvedChecksum: run.approvedChecksum,
+      createState: run.stages.create?.state,
+      operatorId: input.operatorId,
+    });
+    if ([...this.jobs.values()].some((job) => (
+      job.runId === input.runId && (job.state === 'queued' || job.state === 'running')
+    ))) {
+      throw new WorkflowConflictError('Create candidate recovery requires no active worker jobs');
+    }
+    const artifact = this.artifactsById.get(input.artifactId);
+    const artifactJob = artifact?.jobId ? this.jobs.get(artifact.jobId) : undefined;
+    if (!artifact
+      || artifact.runId !== input.runId
+      || artifact.revision !== run.currentRevision
+      || artifact.kind !== 'parsed_output'
+      || artifact.stage !== 'create'
+      || artifact.action !== ACTION_BY_STAGE.create
+      || artifact.mediaType !== 'application/json'
+      || artifactJob?.runId !== input.runId
+      || artifactJob.stage !== 'create'
+      || artifactJob.action !== ACTION_BY_STAGE.create
+      || artifactJob.state !== 'needs_human') {
+      throw new WorkflowValidationError(
+        'Selected artifact must be current-revision JSON output from a Create job needing human intervention',
+      );
+    }
+    const researchJob = [...this.jobs.values()]
+      .filter((job) => job.runId === input.runId
+        && job.stage === 'research'
+        && job.action === ACTION_BY_STAGE.research
+        && job.state === 'done'
+        && [...this.artifactsById.values()].some((candidate) => (
+          candidate.jobId === job.id && candidate.revision === run.currentRevision
+        )))
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id))[0];
+    if (!researchJob) throw new WorkflowConflictError('Create candidate recovery requires successful current Research evidence');
+    const researchArtifacts = [...this.artifactsById.values()]
+      .filter((candidate) => (
+        candidate.runId === input.runId
+        && candidate.revision === run.currentRevision
+        && candidate.jobId === researchJob.id
+      ))
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+    if (!researchArtifacts.some((candidate) => (
+      candidate.kind === 'parsed_output' && candidate.action === ACTION_BY_STAGE.research
+    ))) {
+      throw new WorkflowConflictError('Create candidate recovery requires a current Research evidence manifest');
+    }
+    const now = this.clock();
+    run.stages.create!.state = 'done';
+    run.stages.create!.reason = null;
+    run.stages.check = {
+      name: 'check',
+      state: 'queued',
+      reason: null,
+      attempt: run.stages.check?.attempt ?? 0,
+      revisionAttempts: run.stages.check?.revisionAttempts ?? 0,
+    };
+    run.currentStage = 'check';
+    run.packageChecksum = artifact.checksum;
+    run.approvedChecksum = null;
+    run.reviewStatus = 'pending';
+    run.updatedAt = now;
+    const job: WorkflowJob = {
+      id: this.idGenerator(),
+      runId: input.runId,
+      stage: 'check',
+      action: ACTION_BY_STAGE.check,
+      state: 'queued',
+      idempotencyKey: resumeCreateCandidateJobIdempotencyKey(input),
+      availableAt: now,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      executionDeadlineAt: null,
+      attempt: 0,
+      input: {
+        brief: run.brief,
+        ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
+        dependencies: [...researchArtifacts, artifact].map(toJobArtifactDependency),
+        createCandidateRecovery: {
+          artifactId: artifact.id,
+          requestedBy: input.operatorId,
+        },
+      },
+      result: null,
+      completionReceipt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.jobs.set(job.id, job);
+    this.jobsByIdempotencyKey.set(job.idempotencyKey, job.id);
+    this.effectsByKey.set(effectKey, {
+      runId: input.runId,
+      jobId: job.id,
+      type: 'resume_create_candidate',
+      payload: {
+        artifactId: artifact.id,
+        artifactChecksum: artifact.checksum,
+        revision: run.currentRevision,
+        requestedBy: input.operatorId,
+      },
+    });
     return { ...run, nextRetryAt: this.nextRetryAt(run) };
   }
 
@@ -3311,7 +3578,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       job.state === 'running' && job.leaseExpiresAt && job.leaseExpiresAt > now
     ));
     if (active) throw new WorkflowConflictError('Delivery execution has an active lease');
-    const nextAttempt = delivery.attempts + 1;
+    let nextAttempt = delivery.attempts + 1;
     const queued = recoveryJobs.find((job) => job.state === 'queued');
     const expired = recoveryJobs.find((job) => job.state === 'running');
     if (queued) {
@@ -3333,6 +3600,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
       expired.availableAt = now;
       expired.updatedAt = now;
     } else {
+      while (this.jobsByIdempotencyKey.has(deliveryRetryJobIdempotencyKey(delivery.id, nextAttempt))) {
+        nextAttempt += 1;
+      }
       await this.queueJob({
         runId: delivery.runId,
         stage: 'deliver',
@@ -3345,7 +3615,10 @@ class InMemoryWorkflowStore implements WorkflowStore {
     if (!stage) throw new WorkflowConflictError('Delivery stage does not exist');
     stage.state = 'queued';
     stage.reason = null;
-    if (delivery.state === 'failed' || delivery.state === 'waiting' || delivery.state === 'needs_human') {
+    if (delivery.state === 'succeeded') {
+      delivery.state = 'queued';
+      delivery.nextAttemptAt = null;
+    } else if (delivery.state === 'failed' || delivery.state === 'waiting' || delivery.state === 'needs_human') {
       delivery.state = 'waiting';
       delivery.nextAttemptAt = now;
     }
@@ -3591,6 +3864,30 @@ function notebookIdFromBrief(brief: JsonObject): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+function assertCreateCandidateResumeAllowed(input: {
+  currentStage: string;
+  reviewStatus: string;
+  approvedChecksum: string | null;
+  createState: string | undefined;
+  operatorId: string;
+}): void {
+  if (!input.operatorId.trim()) throw new WorkflowValidationError('Operator identity is required');
+  if (input.currentStage !== 'create' || input.createState !== 'needs_human') {
+    throw new WorkflowConflictError('Create candidate recovery requires Create to need human intervention');
+  }
+  if (input.reviewStatus !== 'pending' || input.approvedChecksum !== null) {
+    throw new WorkflowConflictError('Create candidate recovery is only available before approval');
+  }
+}
+
+function resumeCreateCandidateEffectKey(input: ResumeCreateCandidateInput): string {
+  return `resume-create-candidate:${input.runId}:${input.artifactId}`;
+}
+
+function resumeCreateCandidateJobIdempotencyKey(input: ResumeCreateCandidateInput): string {
+  return `workflow:${input.runId}:check:resume-create-candidate:${input.artifactId}`;
+}
+
 function assertExecutionSeconds(executionSeconds: number | undefined): void {
   if (executionSeconds !== undefined
     && (!Number.isInteger(executionSeconds) || executionSeconds <= 0 || executionSeconds > 3_600)) {
@@ -3734,8 +4031,10 @@ function briefWithMediaRecipeOverrides(
   if (!parsedPlan.success) {
     throw new WorkflowValidationError('Media recipe override requires a valid Nuglet generation plan');
   }
+  const { mediaBaseline: _mediaBaseline, ...planWithoutMediaBaseline } = parsedPlan.data;
   const nextPlan = nugletGenerationPlanSchema.safeParse({
-    ...parsedPlan.data,
+    ...planWithoutMediaBaseline,
+    mediaMode: 'generate',
     recipes: {
       ...parsedPlan.data.recipes,
       ...(recipeOverrides.infographic ? { infographic: recipeOverrides.infographic } : {}),

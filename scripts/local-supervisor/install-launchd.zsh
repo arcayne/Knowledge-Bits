@@ -6,8 +6,10 @@ root=${KNOWLEDGE_BITS_ROOT:-${script_dir:h:h}}
 env_file=${KNOWLEDGE_BITS_ENV_FILE:-${root}/.env}
 launch_agents_dir="$HOME/Library/LaunchAgents"
 api_label="app.knowledge-bits.api"
+review_label="app.knowledge-bits.review"
 worker_label="app.knowledge-bits.worker-tick"
 api_plist="${launch_agents_dir}/${api_label}.plist"
+review_plist="${launch_agents_dir}/${review_label}.plist"
 worker_plist="${launch_agents_dir}/${worker_label}.plist"
 log_dir="${root}/.local-supervisor"
 uid=$(id -u)
@@ -61,23 +63,41 @@ write_plist() {
   }
 }
 
+bootstrap_service() {
+  local plist=$1
+  if ! launchctl bootstrap "gui/${uid}" "$plist"; then
+    # launchd can briefly retain a just-booted-out label. One bounded retry
+    # avoids leaving the entire local factory offline during reinstall.
+    sleep 1
+    launchctl bootstrap "gui/${uid}" "$plist"
+  fi
+}
+
 write_plist "$api_label" "${script_dir}/knowledge-bits-api.zsh" \
   "${log_dir}/api.log" "${log_dir}/api.error.log" > "$api_plist"
+write_plist "$review_label" "${script_dir}/knowledge-bits-review.zsh" \
+  "${log_dir}/review.log" "${log_dir}/review.error.log" > "$review_plist"
 write_plist "$worker_label" "${script_dir}/knowledge-bits-worker-tick.zsh" \
   "${log_dir}/worker.log" "${log_dir}/worker.error.log" "300" > "$worker_plist"
 
 plutil -lint "$api_plist" >/dev/null
+plutil -lint "$review_plist" >/dev/null
 plutil -lint "$worker_plist" >/dev/null
-chmod 600 "$api_plist" "$worker_plist"
+chmod 600 "$api_plist" "$review_plist" "$worker_plist"
 
 launchctl bootout "gui/${uid}/${api_label}" 2>/dev/null || true
+launchctl bootout "gui/${uid}/${review_label}" 2>/dev/null || true
 launchctl bootout "gui/${uid}/${worker_label}" 2>/dev/null || true
-launchctl bootstrap "gui/${uid}" "$api_plist"
-launchctl bootstrap "gui/${uid}" "$worker_plist"
+bootstrap_service "$api_plist"
+bootstrap_service "$review_plist"
+bootstrap_service "$worker_plist"
 launchctl kickstart -k "gui/${uid}/${api_label}"
+launchctl kickstart -k "gui/${uid}/${review_label}"
 launchctl kickstart -k "gui/${uid}/${worker_label}"
 
 print "Knowledge Bits local supervisor installed."
 print "API log: ${log_dir}/api.log"
+print "Review UI: http://127.0.0.1:${KNOWLEDGE_BITS_REVIEW_PORT:-4323}"
+print "Review log: ${log_dir}/review.log"
 print "Worker log: ${log_dir}/worker.log"
 print "The worker starts at login and then every 5 minutes."

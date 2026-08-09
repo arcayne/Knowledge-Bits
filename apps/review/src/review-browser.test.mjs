@@ -10,6 +10,8 @@ const checksum = 'a'.repeat(64);
 test('browser renders the complete approved payload and submits its displayed checksum', { timeout: 30_000 }, async (t) => {
   let decision;
   let csrf;
+  let releaseDecision;
+  const decisionGate = new Promise((resolve) => { releaseDecision = resolve; });
   const clientSource = await readFile(new URL('./review-client.mjs', import.meta.url), 'utf8');
   const server = createServer(async (request, response) => {
     if (request.url === '/review-client.mjs') {
@@ -27,6 +29,7 @@ test('browser renders the complete approved payload and submits its displayed ch
       for await (const chunk of request) chunks.push(chunk);
       decision = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       csrf = request.headers['x-csrf-token'];
+      await decisionGate;
       response.setHeader('Content-Type', 'application/json');
       response.end(JSON.stringify({ reviewStatus: 'approved' }));
       return;
@@ -40,13 +43,14 @@ test('browser renders the complete approved payload and submits its displayed ch
     response.end(browserFixtureHtml());
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
-  const browser = await chromium.launch({ headless: true });
+  let browser;
   t.after(async () => {
-    await browser.close();
+    await browser?.close();
     await new Promise((resolve) => server.close(resolve));
   });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${address.port}`);
   await page.waitForSelector('#review:not([hidden])');
@@ -67,12 +71,59 @@ test('browser renders the complete approved payload and submits its displayed ch
   assert.match(await page.locator('#claims').textContent() ?? '', /restart decisions/i);
   assert.equal(await page.locator('#checksum').textContent(), checksum);
   await page.getByRole('button', { name: 'Approve' }).click();
+  await page.waitForSelector('#decision-status', { state: 'attached' });
+  assert.equal(await page.locator('#decision-status').textContent(), 'Recording approval...');
+  assert.equal(await page.getByRole('button', { name: 'Approve' }).isDisabled(), true);
+  releaseDecision();
   await page.waitForTimeout(100);
 
   assert.ok(decision);
   assert.equal(decision.packageChecksum, checksum);
   assert.equal(decision.decision, 'approve');
   assert.equal(csrf, 'browser-csrf-token');
+});
+
+test('browser makes a failed approval visible and restores the decision controls', { timeout: 30_000 }, async (t) => {
+  const clientSource = await readFile(new URL('./review-client.mjs', import.meta.url), 'utf8');
+  const server = createServer((request, response) => {
+    if (request.url === '/review-client.mjs') {
+      response.setHeader('Content-Type', 'text/javascript');
+      response.end(clientSource);
+      return;
+    }
+    if (request.url?.startsWith('/api/review') && request.method === 'GET') {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify(reviewModel()));
+      return;
+    }
+    if (request.url === '/api/review' && request.method === 'POST') {
+      response.statusCode = 502;
+      response.setHeader('Content-Type', 'text/plain');
+      response.end('upstream unavailable');
+      return;
+    }
+    response.setHeader('Content-Type', 'text/html');
+    response.end(browserFixtureHtml());
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  let browser;
+  t.after(async () => {
+    await browser?.close();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
+  browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  await page.goto(`http://127.0.0.1:${address.port}`);
+  await page.waitForSelector('#review:not([hidden])');
+
+  await page.getByRole('button', { name: 'Approve' }).click();
+  await page.waitForFunction(() => document.querySelector('#decision-status')?.textContent === 'Decision not recorded');
+
+  assert.equal(await page.locator('#error').textContent(), 'Could not record the review decision.');
+  assert.equal(await page.locator('#error').isVisible(), true);
+  assert.equal(await page.getByRole('button', { name: 'Approve' }).isEnabled(), true);
 });
 
 test('mobile browser bounds long editorial warnings without covering decision controls', { timeout: 30_000 }, async (t) => {
@@ -100,13 +151,14 @@ test('mobile browser bounds long editorial warnings without covering decision co
     response.end(browserFixtureHtml());
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
-  const browser = await chromium.launch({ headless: true });
+  let browser;
   t.after(async () => {
-    await browser.close();
+    await browser?.close();
     await new Promise((resolve) => server.close(resolve));
   });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Browser test server did not bind');
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(`http://127.0.0.1:${address.port}`);
   await page.waitForSelector('#review:not([hidden])');
@@ -267,7 +319,7 @@ function browserFixtureHtml() {
       <section id="story-section"><h3 id="story-title"></h3><p id="story-meta"></p><div id="story-blocks"></div></section>
       <section id="playbook-section"><h3 id="playbook-title"></h3><p id="playbook-principle"></p><p id="playbook-why"></p><div id="playbook-steps"></div><div id="playbook-example"></div><ul id="playbook-watch-outs"></ul><p id="playbook-action"></p></section>
       <div id="hero"></div><p id="hero-alt"></p><p id="hero-metadata"></p><div class="crop-frame" id="hero-lesson-header"></div><div class="crop-frame" id="hero-card"></div><div class="crop-frame" id="hero-thumbnail"></div>
-      <div id="infographic"></div><p id="infographic-alt"></p><ul id="infographic-text-equivalent"></ul>
+      <div id="infographic"></div><p id="infographic-alt"></p><ul id="infographic-text-equivalent"></ul><button id="regenerate-infographic" disabled>Replace with Nuglet infographic</button><p id="regenerate-infographic-status"></p>
       <div id="audio-brief"></div><p id="audio-brief-transcript"></p><div id="audio-discussion"></div><p id="audio-discussion-transcript"></p>
       <div id="quiz"></div><ul id="claim-coverage"></ul><ul id="accepted-sources"></ul><ul id="rejected-sources"></ul><ul id="coverage-gaps"></ul><ul id="claims"></ul>
       <p id="qa"></p><ul id="qa-findings"></ul><details id="generation-provenance"><summary>Generation provenance</summary><div id="generation-executions"></div></details>

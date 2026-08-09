@@ -53,12 +53,12 @@ test('materializes a deferred package with the hero brief but no hero asset', ()
   generationPlan.heroMode = 'deferred';
   const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
   const mediaArtifacts = assets(generationInputChecksum, generationPlan);
-  delete mediaArtifacts.hero;
+  const { hero: _hero, ...deferredMediaArtifacts } = mediaArtifacts;
 
   const materialized = materializeStoryPlaybookTarget({
     semanticTarget,
     generationPlan,
-    mediaArtifacts,
+    mediaArtifacts: deferredMediaArtifacts,
   });
 
   assert.equal(materialized.payload.materialization, 'materialized');

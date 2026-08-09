@@ -27,7 +27,7 @@ const apiRoot = fileURLToPath(new URL('../../apps/api/', import.meta.url));
 const providerRoot = fileURLToPath(new URL('../../apps/worker/src/providers/fixtures/', import.meta.url));
 const requireFromApi = createRequire(new URL('../../apps/api/package.json', import.meta.url));
 const { serve } = requireFromApi('@hono/node-server');
-const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0;
+const dockerUnavailable = spawnSync('docker', ['info'], { stdio: 'ignore', timeout: 30_000 }).status !== 0;
 
 test(
   'schema 1.1.0 fixture becomes one complete checksum-bound Knowledge Bits approval',
@@ -178,8 +178,14 @@ test(
       .filter(({ kind }) => ['hero', 'infographic', 'audio_brief', 'audio_discussion'].includes(kind))
       .every(({ inputChecksum }) => inputChecksum === generationInputChecksum));
     assert.deepEqual(
-      Object.values(review.assets).map(({ state }) => state),
-      ['available', 'available', 'available', 'available'],
+      Object.fromEntries(Object.entries(review.assets).map(([key, { state }]) => [key, state])),
+      {
+        hero: 'available',
+        infographic: 'available',
+        audioBrief: 'available',
+        audioDiscussion: 'available',
+        publicPreview: 'missing',
+      },
     );
     assertCompleteGenerationProvenance(review);
 
@@ -516,6 +522,7 @@ async function startPostgres(containerName) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     if (spawnSync('docker', ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', 'knowledge_bits_fixture'], {
       stdio: 'ignore',
+      timeout: 10_000,
     }).status === 0) {
       const port = run('docker', ['port', containerName, '5432/tcp']).match(/:(\d+)\s*$/m)?.[1];
       assert.ok(port, 'PostgreSQL fixture port should resolve');
@@ -563,7 +570,7 @@ function createRestrictedRuntimeLogin(containerName, ownerUrl) {
 }
 
 function removeContainer(containerName) {
-  spawnSync('docker', ['rm', '--force', containerName], { stdio: 'ignore' });
+  spawnSync('docker', ['rm', '--force', containerName], { stdio: 'ignore', timeout: 30_000 });
 }
 
 function run(command, args, options = {}) {
@@ -572,5 +579,6 @@ function run(command, args, options = {}) {
     env: options.env ?? process.env,
     encoding: 'utf8',
     stdio: 'pipe',
+    timeout: options.timeout ?? 60_000,
   }).trim();
 }

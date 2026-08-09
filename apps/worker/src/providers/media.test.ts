@@ -12,6 +12,7 @@ import {
   cropNotebookLmInfographicFooter,
   type GeneratedMedia,
   MediaProviderAdapter,
+  prepareInfographicForStorage,
   prepareNotebookLmInfographicForStorage,
   type MediaClient,
   type MediaKind,
@@ -72,6 +73,31 @@ test('stores cropped infographic bytes and corrected metadata after validating t
   assert.equal(output?.provenance?.byteSize, output?.body.byteLength);
 });
 
+test('keeps Vertex-rendered Nuglet infographics intact without a NotebookLM footer crop', async () => {
+  const bytes = await sharp({
+    create: { width: 1_080, height: 1_920, channels: 4, background: '#f4efe4' },
+  }).png().toBuffer();
+  const asset: GeneratedMedia = {
+    kind: 'infographic',
+    mediaType: 'image/png',
+    bytes,
+    generationInputChecksum,
+    metadata: {
+      provider: 'vertex',
+      byteSize: bytes.byteLength,
+      width: 1_080,
+      height: 1_920,
+    },
+    supportArtifacts: [],
+  };
+
+  const prepared = await prepareInfographicForStorage(asset);
+
+  assert.equal(prepared.bytes.byteLength, bytes.byteLength);
+  assert.equal(prepared.metadata.width, 1_080);
+  assert.equal(prepared.metadata.height, 1_920);
+});
+
 test('media fails closed unless exactly one current-checksum asset exists for every required kind', async () => {
   const incomplete = providerFor((request) => request.kinds.slice(0, 3).map((kind) => generated(kind)));
   await assert.rejects(() => incomplete.execute(mediaInput()), /media_assets_incomplete/);
@@ -107,10 +133,10 @@ test('media passes four resolved recipe snapshots and per-run hero direction in 
   assert.equal(requests[0]?.generationInputChecksum, generationInputChecksum);
   assert.notEqual(requests[0]?.generationInputChecksum, semanticChecksum);
   assert.deepEqual(requests[0]?.heroDirection, generationPlan.heroDirection);
-  assert.equal(requests[0]?.resolvedRecipes.hero.id, 'nuglet.hero');
-  assert.equal(requests[0]?.resolvedRecipes.infographic.id, 'nuglet.visual.infographic');
-  assert.equal(requests[0]?.resolvedRecipes.audioBrief.id, 'nuglet.audio.brief');
-  assert.equal(requests[0]?.resolvedRecipes.audioDiscussion.id, 'nuglet.audio.discussion');
+  assert.equal(requests[0]?.resolvedRecipes.hero?.id, 'nuglet.hero');
+  assert.equal(requests[0]?.resolvedRecipes.infographic?.id, 'nuglet.visual.infographic');
+  assert.equal(requests[0]?.resolvedRecipes.audioBrief?.id, 'nuglet.audio.brief');
+  assert.equal(requests[0]?.resolvedRecipes.audioDiscussion?.id, 'nuglet.audio.discussion');
 });
 
 test('media regenerates only the explicitly requested review asset', async () => {
@@ -164,6 +190,22 @@ test('media accepts one technically valid public preview and keeps it pending hu
     reviewerId: null,
     reviewedAt: null,
   });
+});
+
+test('media accepts a narration-preserving public preview slightly over 65 seconds', async () => {
+  const provider = providerFor((request) => request.kinds.map((kind) => {
+    const asset = generated(kind);
+    return kind === 'public_preview'
+      ? { ...asset, metadata: { ...asset.metadata, durationSeconds: 65.7 } }
+      : asset;
+  }), generationPlan, {
+    mediaKinds: ['public_preview'],
+    mediaOperation: 'generate',
+  });
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
 });
 
 test('media preserves measured metadata and recipe support evidence on all four outputs', async () => {
