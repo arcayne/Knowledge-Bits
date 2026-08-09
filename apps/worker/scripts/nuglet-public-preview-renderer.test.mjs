@@ -42,7 +42,7 @@ test("title wrapping remains bounded for longer Nuglet names", () => {
 
 test("long provider videos are trimmed to the review duration ceiling", () => {
   const plan = publicPreviewEndCardPlan({
-    durationSeconds: 95.124,
+    durationSeconds: 70.124,
     width: 720,
     height: 1280,
     hasAudio: true,
@@ -50,7 +50,7 @@ test("long provider videos are trimmed to the review duration ceiling", () => {
 
   assert.equal(plan.finalDurationSeconds, PUBLIC_PREVIEW_MAX_SECONDS);
   assert.equal(plan.audioSourceDurationSeconds, PUBLIC_PREVIEW_MAX_SECONDS);
-  assert.equal(plan.contentDurationSeconds, 87);
+  assert.equal(plan.contentDurationSeconds, 62);
   assert.ok(Math.abs(plan.providerTailSeconds - 8.124) < 0.001);
   assert.equal(plan.endCardDurationSeconds, 3);
   assert.ok(Math.abs(plan.audioTailTrimSeconds - 5.124) < 0.001);

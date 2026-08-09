@@ -108,12 +108,17 @@ export function publicPreviewSourceTitle(brief) {
 
 export function protectedLeakage(transcript, brief) {
   const haystack = normalize(transcript);
+  const publicTitle = normalize(brief.title);
   return [
     brief.protectedContent.exactPractice,
     brief.protectedContent.completeReframe,
     ...brief.protectedContent.quizAnswers,
   ].filter((phrase) => {
     const normalized = normalize(phrase);
+    // The title is deliberately spoken/displayed in a public preview. A
+    // lesson whose one-line reframe is also its title must not fail merely
+    // because the narrator names the Nuglet.
+    if (normalized === publicTitle) return false;
     const meaningful = normalized.split(" ").filter((word) => word.length > 3);
     if (meaningful.length < 3) return false;
     const matches = meaningful.filter((word) => haystack.includes(word)).length;

@@ -94,6 +94,25 @@ test("flags obvious practice and quiz-answer leakage", () => {
   assert.deepEqual(protectedLeakage("See why attention can feel scattered.", brief), []);
 });
 
+test("allows the public title when it is also the protected one-line reframe", () => {
+  const brief = compilePublicPreview({
+    ...content,
+    payload: {
+      ...content.payload,
+      identity: { title: "Your mind is your only permanent roommate" },
+      learning: {
+        ...content.payload.learning,
+        oneLineToKeep: "Your mind is your only permanent roommate.",
+      },
+    },
+  });
+
+  assert.deepEqual(
+    protectedLeakage("Your mind is your only permanent roommate.", brief),
+    [],
+  );
+});
+
 test("never places the complete reframe or central idea in the provider source", () => {
   const cases = [
     {
