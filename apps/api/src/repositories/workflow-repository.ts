@@ -2075,7 +2075,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
       if (active) throw new WorkflowConflictError('Delivery execution has an active lease');
       const queued = recoveryJobs.find((job) => job.state === 'queued');
       const expired = recoveryJobs.find((job) => job.state === 'running');
-      const nextAttempt = delivery.attempts + 1;
+      let nextAttempt = delivery.attempts + 1;
       if (queued) {
         if (queued.availableAt <= now) throw new WorkflowConflictError('Delivery recovery is already queued');
         await transaction.job.update({ where: { id: queued.id }, data: { availableAt: now } });
@@ -2097,6 +2097,12 @@ export class PrismaWorkflowStore implements WorkflowStore {
           },
         });
       } else {
+        while (await transaction.job.findUnique({
+          where: { idempotencyKey: deliveryRetryJobIdempotencyKey(delivery.id, nextAttempt) },
+          select: { id: true },
+        })) {
+          nextAttempt += 1;
+        }
         await transaction.job.create({
           data: {
             runId: delivery.runId,
@@ -3571,7 +3577,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
       job.state === 'running' && job.leaseExpiresAt && job.leaseExpiresAt > now
     ));
     if (active) throw new WorkflowConflictError('Delivery execution has an active lease');
-    const nextAttempt = delivery.attempts + 1;
+    let nextAttempt = delivery.attempts + 1;
     const queued = recoveryJobs.find((job) => job.state === 'queued');
     const expired = recoveryJobs.find((job) => job.state === 'running');
     if (queued) {
@@ -3593,6 +3599,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
       expired.availableAt = now;
       expired.updatedAt = now;
     } else {
+      while (this.jobsByIdempotencyKey.has(deliveryRetryJobIdempotencyKey(delivery.id, nextAttempt))) {
+        nextAttempt += 1;
+      }
       await this.queueJob({
         runId: delivery.runId,
         stage: 'deliver',
