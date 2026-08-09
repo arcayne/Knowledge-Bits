@@ -51,6 +51,7 @@ const REVIEW_MEDIA_ARTIFACT_KINDS = new Set([
   'infographic',
   'audio_brief',
   'audio_discussion',
+  'public_preview',
 ]);
 
 export interface WorkflowRun {

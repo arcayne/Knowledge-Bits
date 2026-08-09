@@ -215,7 +215,7 @@ function heroPrompt(content, heroDirection) {
     usesCuratedScene ? "" : `Visual action guidance only: ${takeaway}.`,
     visualDirection(content, heroDirection),
     "Use a horizontal 4:3 composition with the subject centered enough to survive a small card crop.",
-    "Match the supplied Nuglet palette-and-texture swatches: warm cream paper, pale watercolor or gouache washes, muted clay orange, moss olive, dusty blue, delicate linework, soft painted edges, quiet editorial illustration, tactile and human.",
+    "Match the supplied Nuglet palette-and-texture swatches: warm cream paper, pale watercolor or gouache washes with translucent variation and uneven pigment, muted clay orange, moss olive, dusty blue, delicate hand-drawn graphite or ink contours, soft painted edges, subtle paper grain, quiet editorial illustration, tactile and human.",
     "Keep the image airy and low contrast with one clear visual metaphor, one focal composition, and generous open cream space. Use only the objects needed for one readable action, normally two or three object types and never more than four.",
     "Favor the light, whimsical, gently imperfect Explore-page art direction over realism. Avoid dense foliage, full landscapes, dramatic lighting, heavy shadows, saturated colors, dark high-contrast areas, and intricate realistic detail.",
     usesCheckedBrief
@@ -1094,6 +1094,7 @@ async function generateCurrentMedia(input) {
             providerFormat: "short",
             providerArtifactId: tracked.artifactId,
             promptTemplateVersion: brief.promptTemplateVersion,
+            socialPostChecksum: brief.socialPostChecksum,
             providerDurationSeconds: rendered.providerDurationSeconds,
             providerTailTrimSeconds: rendered.providerTailTrimSeconds,
             narrativeDurationSeconds: rendered.narrativeDurationSeconds,

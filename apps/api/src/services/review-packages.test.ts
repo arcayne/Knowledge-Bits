@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { calculateContentChecksum } from '@knowledge-bits/pipeline';
+import { calculateContentChecksum, calculateSocialPostChecksum } from '@knowledge-bits/pipeline';
 import { nugletGenerationPlanSchema, type NugletGenerationPlan, type NugletLessonV1Payload } from '@knowledge-bits/contracts';
 
 import type { ArtifactStorageAdapter } from './artifacts.js';
@@ -237,6 +237,11 @@ test('keeps blocking editorial findings as decision-ready warnings for materiali
   assert.equal(model.decisionAllowed, true);
   assert.equal(model.package?.content.target.schemaVersion, '1.1.0');
   assert.equal(model.package?.content.target.payload.materialization, 'materialized');
+  const publicPreview = model.package?.artifactInventory.find((artifact) => artifact.kind === 'public_preview');
+  assert.ok(publicPreview?.companion);
+  const previewAsset = model.assets.publicPreview;
+  if (!previewAsset || previewAsset.state !== 'available') throw new Error('Expected a public preview companion asset');
+  assert.equal(previewAsset.companion?.socialPostChecksum, publicPreview?.companion?.socialPostChecksum);
   assert.deepEqual(model.issues, []);
   assert.deepEqual(model.warnings, [
     'Editorial warning: unsupported-claim: A claim is unsupported.',
@@ -618,7 +623,7 @@ async function storyPlaybookFixture(options: {
     id: runId,
     title: 'Leave a clear way back',
     locale: 'en-GB',
-    brief: { generationPlan: plan },
+    brief: { generationPlan: plan, mediaRegeneration: { regeneratedKinds: ['public_preview'] } },
     currentStage: 'human_review',
     packageChecksum: workerChecksum,
     stages: [{ name: 'human_review', state: 'needs_human' }],
@@ -639,6 +644,28 @@ async function storyPlaybookFixture(options: {
     storage.objects.set(artifact.storageKey, { body, mediaType });
     await repository.recordArtifact(artifact);
   }
+
+  const publicPreviewBytes = Buffer.from('public-preview-video');
+  storage.objects.set('objects/story-public-preview', { body: publicPreviewBytes, mediaType: 'video/mp4' });
+  await repository.recordArtifact({
+    id: '30000000-0000-4000-8000-000000000003',
+    runId,
+    revision: 1,
+    kind: 'public_preview',
+    mediaType: 'video/mp4',
+    checksum: 'b'.repeat(64),
+    storageKey: 'objects/story-public-preview',
+    byteSize: publicPreviewBytes.byteLength,
+    provenance: {
+      action: 'produce_assets',
+      provider: 'notebooklm',
+      socialPostChecksum: `sha256:${calculateSocialPostChecksum((semantic.payload as Record<string, unknown>).socialPost)}`,
+    },
+    inputChecksum,
+    jobId: '30000000-0000-4000-8000-000000000004',
+    stage: 'produce_assets',
+    action: 'produce_assets',
+  });
 
   await recordStoryArtifact({
     repository,

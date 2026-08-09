@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release a Nuglet"
+  short_description: "Move an approved Nuglet to a production release PR"
+  default_prompt: "Use $release-nuglet to move this approved Knowledge Bits Nuglet through review, delivery, production release, and SEO verification."

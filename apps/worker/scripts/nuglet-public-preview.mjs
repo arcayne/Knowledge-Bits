@@ -14,34 +14,76 @@ export function compilePublicPreview(content) {
     "central idea",
   );
   const oneLineToKeep = required(
-    lesson.learning?.oneLineToKeep ?? lesson.commonMistake ?? centralIdea,
+    lesson.learning?.oneLineToKeep ?? lesson.oneLineToKeep ?? lesson.reframe ?? centralIdea,
     "one line to keep",
   );
   const topicLabel = optional(
     lesson.identity?.topic?.label ?? lesson.topic?.label,
-    "the lesson topic",
+    "lesson topic",
   );
+  const socialPost = record(lesson.socialPost);
+  const socialPostRepresentation = {
+    platform: socialPost.platform === "cross-platform" ? socialPost.platform : "cross-platform",
+    text: typeof socialPost.text === "string" ? socialPost.text.trim() : "",
+  };
+  const protectedContent = {
+    exactPractice: takeaway,
+    completeReframe: oneLineToKeep,
+    quizAnswers: correctQuizAnswers(lesson),
+  };
+  const preview = record(lesson.publicPreview ?? lesson.preview);
+  const recognitionMoment = previewText(
+    preview.recognitionMoment,
+    protectedContent,
+    recognitionMomentFromLesson(lesson, topicLabel),
+  );
+  const centralProblem = previewText(
+    preview.centralProblem,
+    protectedContent,
+    centralProblemFromLesson(lesson, topicLabel),
+  );
+  const whyItMatters = previewText(
+    preview.whyItMatters,
+    protectedContent,
+    whyItMattersFromLesson(lesson, topicLabel),
+  );
+  const learningOutcomes = stringArray(preview.learningOutcomes).length > 0
+    ? stringArray(preview.learningOutcomes)
+      .map((value) => previewText(value, protectedContent, ""))
+      .filter(Boolean)
+    : [
+      `recognize the ${topicLabel} pattern in an ordinary moment`,
+      "understand the mechanism in plain language",
+      "see what the full Nuglet helps you try next",
+    ];
+  const visualAnchors = preview.visualAnchors?.length > 0
+    ? stringArray(preview.visualAnchors)
+      .map((value) => previewText(value, protectedContent, ""))
+      .filter(Boolean)
+    : visualAnchorsFromLesson(lesson, protectedContent, topicLabel);
+  const editorialGuardrails = stringArray(preview.editorialGuardrails).length > 0
+    ? stringArray(preview.editorialGuardrails)
+    : defaultEditorialGuardrails();
   const brief = {
     schemaVersion: "nuglet.public-preview-brief.v1",
     promptTemplateVersion: PUBLIC_PREVIEW_TEMPLATE_VERSION,
     locale: "en",
     title,
-    recognitionMoment: `Introduce the familiar puzzle suggested by "${title}" without explaining how to resolve it.`,
-    centralProblem: `Show why this ${topicLabel} pattern can feel puzzling or mentally tangled without turning the moment into conflict or distress.`,
-    whyItMatters: "Build curiosity about why the pattern matters without stating the lesson's reframe or action.",
-    learningOutcomes: [
-      `recognize the situation behind "${title}"`,
-      "understand why the pattern matters",
-      "see that the full Nuglet contains a practical next step",
-    ],
-    emotionalShiftDirection: "Move from thoughtful surprise or puzzlement toward calm curiosity, clarity, and gentle relief.",
+    recognitionMoment,
+    centralProblem,
+    whyItMatters,
+    learningOutcomes,
+    visualAnchors,
+    editorialGuardrails,
     visualDirection: "Show challenge or tension through objects and environments, not through an upset face: a difficult book, tangled threads, layered pages, a maze, a path, or an unfinished diagram. Human figures may appear only with relaxed features, open curiosity, gentle concentration, recognition, or relief.",
-    finalInvitation: "Learn the practical next step in the full Nuglet.",
-    protectedContent: {
-      exactPractice: takeaway,
-      completeReframe: oneLineToKeep,
-      quizAnswers: correctQuizAnswers(lesson),
-    },
+    emotionalShiftDirection: "Move from thoughtful surprise or puzzlement toward calm curiosity, clarity, and gentle relief.",
+    finalInvitation: previewText(
+      preview.finalInvitation,
+      protectedContent,
+      "Open the full Nuglet to learn the practical next step.",
+    ),
+    protectedContent,
+    socialPostChecksum: prefixedChecksum(Buffer.from(JSON.stringify(socialPostRepresentation))),
   };
   return {
     ...brief,
@@ -67,11 +109,14 @@ export function renderPublicPreviewSource(brief) {
     "## What the full Nuglet helps the viewer understand",
     ...brief.learningOutcomes.map((item) => `- ${item}`),
     "",
-    "## Emotional direction",
-    brief.emotionalShiftDirection,
+    "## Visual story anchors",
+    ...brief.visualAnchors.map((item) => `- ${item}`),
     "",
     "## Visual direction",
     brief.visualDirection,
+    "",
+    "## Emotional direction",
+    brief.emotionalShiftDirection,
     "",
     "## Invitation",
     brief.finalInvitation,
@@ -79,6 +124,9 @@ export function renderPublicPreviewSource(brief) {
     "## Protected boundary",
     "Do not disclose the exact practice, its steps, quiz answers, complete reframe, or conclusion.",
     "Create recognition and curiosity without resolving the lesson.",
+    "",
+    "## Editorial guardrails",
+    ...brief.editorialGuardrails.map((item) => `- ${item}`),
     "",
   ].join("\n");
 }
@@ -90,15 +138,21 @@ export function renderPublicPreviewPrompt(brief, marker) {
     "Treat the selected curated preview source as the only allowed source.",
     "This is a preview, not a summary: do not reveal the exact practice, its steps, quiz answers, complete reframe, or conclusion.",
     "Use NotebookLM Short format: approximately 45-60 seconds, vertical, and mobile-first.",
-    "Open immediately inside the recognition moment. Build gentle intellectual intrigue, explain why it matters, then promise what the full Nuglet helps the viewer understand without giving the answer.",
-    "Use one calm narrative arc.",
+    "Use a three-beat structure: open inside the recognition moment; explain one grounded mechanism; end with an unresolved invitation to learn the practical next step in the full Nuglet.",
+    `Recognition moment: ${brief.recognitionMoment}`,
+    `Central tension: ${brief.centralProblem}`,
+    `Why it matters: ${brief.whyItMatters}`,
+    `Visual anchors: ${brief.visualAnchors.join(" ")}`,
+    "Keep one consistent person or situation across the opening and return; show one concrete cue or object at a time rather than diagrams, dashboards, formulas, or montage overload.",
+    "Narrate in complete, natural sentences. Use cautious qualitative language and explain only the mechanism supported by the curated source.",
+    `Editorial guardrails: ${brief.editorialGuardrails.join(" ")}`,
     "Visual casting should generally reflect working adults aged roughly 25-40, with women represented most often. Younger men and people from varied backgrounds should appear naturally too. This is a flexible direction, not an exclusive rule or rigid quota. Avoid repeatedly defaulting to middle-aged or older men, and avoid stereotypes or tokenistic casting.",
-    "Make every challenge, tension, or problem beat object-first: show a difficult book, tangled threads, layered pages, a maze, a path, an unfinished diagram, or another calm visual metaphor. Do not use a human face to communicate friction, struggle, confusion, difficulty, failure, or conflict.",
-    "Human figures may appear only during recognition, curiosity, insight, or relief. Every visible person must have a relaxed forehead, relaxed eyes and mouth, open curiosity, gentle concentration, or a soft smile.",
-    "Never show furrowed or knitted brows, narrowed eyes, downturned mouths, clenched jaws, clenched fists, tense shoulders, glaring, scowling, hostile, accusatory, distressed, panicked, defeated, or confrontational expressions or posture.",
-    "Do not turn words such as friction, struggle, fight, failure, challenge, hard, difficult, or tangled into anger or emotional distress. Avoid close-up, front-facing portraits during tension or problem beats.",
+    `Visual direction: ${brief.visualDirection}`,
+    "Make every challenge, tension, or problem beat object-first. Do not use a human face to communicate friction, struggle, confusion, difficulty, failure, or conflict.",
+    "Human figures may appear only during recognition, curiosity, insight, or relief. Keep every visible person relaxed, curious, gently concentrated, or softly smiling.",
+    "Never show furrowed brows, narrowed eyes, downturned mouths, clenched jaws or fists, tense shoulders, glaring, scowling, hostile, distressed, panicked, defeated, or confrontational expressions or posture.",
     "The emotional arc is thoughtful surprise, curiosity, calm recognition, clarity, and gentle relief. The challenge should feel intellectually intriguing, never emotionally threatening.",
-    "Tone: warm, hopeful, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises.",
+    "Tone: warm, hopeful, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises. Do not resolve the lesson or repeat its exact practice, reframe, quiz answer, or conclusion.",
   ].join(" ");
 }
 
@@ -132,6 +186,123 @@ function lessonPayload(content) {
     return content.payload ?? {};
   }
   return content ?? {};
+}
+
+function recognitionMomentFromLesson(lesson, topicLabel) {
+  const storyOpening = firstStoryText(lesson);
+  if (storyOpening) return `Open on this ordinary moment: ${firstSentence(storyOpening)}`;
+  const example = firstReadSection(lesson, "example");
+  if (example) return `Open on the concrete situation: ${firstSentence(example)}`;
+  return `Introduce the everyday tension in the ${topicLabel} lesson without explaining how to resolve it.`;
+}
+
+function centralProblemFromLesson(lesson, topicLabel) {
+  const details = lessonDetails(lesson);
+  const commonMistake = lesson.commonMistake;
+  if (typeof commonMistake === "string" && commonMistake.trim()) {
+    return `The tempting but incomplete response is: ${commonMistake.trim()}`;
+  }
+  const watchOut = details.read?.playbook?.watchOuts?.[0];
+  if (typeof watchOut === "string" && watchOut.trim()) {
+    return `Show the everyday trap around ${topicLabel}: ${watchOut.trim()}`;
+  }
+  return `Show why this ${topicLabel} pattern can feel puzzling or mentally tangled without turning the moment into conflict or distress.`;
+}
+
+function whyItMattersFromLesson(lesson, topicLabel) {
+  const details = lessonDetails(lesson);
+  const lessonWhy = lesson.learning?.whyItMatters ?? details.learning?.whyItMatters;
+  if (typeof lessonWhy === "string" && lessonWhy.trim()) return lessonWhy.trim();
+  const idea = firstReadSection(lesson, "idea");
+  if (idea) return firstSentence(idea);
+  return `Build curiosity about why the ${topicLabel} pattern matters without stating the lesson's reframe or action.`;
+}
+
+function visualAnchorsFromLesson(lesson, protectedContent, topicLabel) {
+  const details = lessonDetails(lesson);
+  const anchors = [];
+  const storyOpening = firstStoryText(lesson);
+  if (storyOpening) {
+    const sentence = previewText(firstSentence(storyOpening), protectedContent, "");
+    if (sentence) anchors.push(`Use the ordinary situation in this opening as the recurring scene: ${sentence}`);
+  }
+  const example = firstReadSection(lesson, "example");
+  if (example) {
+    const sentence = previewText(firstSentence(example), protectedContent, "");
+    if (sentence) anchors.push(`Show one or two concrete cues from the example, one at a time: ${sentence}`);
+  }
+  const frames = Array.isArray(details.visual?.frames) ? details.visual.frames : [];
+  for (const frame of frames.filter((candidate) => candidate?.icon !== "action").slice(0, 2)) {
+    const title = typeof frame?.title === "string" ? frame.title.trim() : "";
+    const body = typeof frame?.body === "string" ? previewText(firstSentence(frame.body), protectedContent, "") : "";
+    if (title && body) anchors.push(`Make the mechanism visible through one simple image, not a chart: ${title} — ${body}`);
+  }
+  if (anchors.length > 0) return anchors;
+  return [`Use one ordinary ${topicLabel} situation, one concrete cue, and one visible moment of hesitation or recognition.`];
+}
+
+function firstStoryText(lesson) {
+  const blocks = lessonDetails(lesson).read?.story?.blocks;
+  if (!Array.isArray(blocks)) return "";
+  const opening = blocks.find((block) => block?.type === "opening" && typeof block.text === "string")
+    ?? blocks.find((block) => typeof block?.text === "string");
+  return typeof opening?.text === "string" ? opening.text.trim() : "";
+}
+
+function firstReadSection(lesson, id) {
+  const section = lessonDetails(lesson).read?.sections?.find((candidate) => candidate?.id === id);
+  return typeof section?.body === "string" ? section.body.trim() : "";
+}
+
+function lessonDetails(lesson) {
+  return record(lesson.lessonV2 ?? lesson);
+}
+
+function firstSentence(value) {
+  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  const match = text.match(/^(.+?[.!?])(?:\s|$)/);
+  return (match?.[1] ?? text).trim();
+}
+
+function previewText(value, protectedContent, fallback) {
+  if (typeof value === "string" && value.trim() && !containsProtectedContent(value, protectedContent)) {
+    return value.trim().replace(/\s+/g, " ");
+  }
+  if (typeof fallback === "string" && fallback.trim() && !containsProtectedContent(fallback, protectedContent)) {
+    return fallback.trim().replace(/\s+/g, " ");
+  }
+  return "";
+}
+
+function containsProtectedContent(value, protectedContent) {
+  const normalizedValue = normalize(value);
+  return [
+    protectedContent.exactPractice,
+    protectedContent.completeReframe,
+    ...protectedContent.quizAnswers,
+  ].some((phrase) => {
+    const normalizedPhrase = normalize(phrase);
+    return normalizedPhrase.length >= 12 && normalizedValue.includes(normalizedPhrase);
+  });
+}
+
+function defaultEditorialGuardrails() {
+  return [
+    "Describe the mechanism qualitatively; do not invent equations, formulas, meters, scales, or mathematical consequences.",
+    "Do not intensify the source into complete exhaustion, deep fatigue, inevitability, total depletion, or absolute claims.",
+    "Use complete natural sentences; avoid sentence fragments, stacked labels, and unexplained jargon.",
+    "Keep on-screen labels short, spatially separate, and limited to one label per shot.",
+  ];
+}
+
+function stringArray(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
+    : [];
+}
+
+function record(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
 }
 
 function correctQuizAnswers(lesson) {

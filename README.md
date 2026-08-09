@@ -177,8 +177,7 @@ NotebookLM. Exact retrieved bytes become immutable source snapshots. The worker 
 source inventory directly from the NotebookLM CLI and records every healthy HTTPS source as an immutable
 receipt. A generative NotebookLM answer cannot silently narrow that authoritative inventory. Later content
 citations bind back to those snapshots before content passes to the local Pi and media adapters. Provider
-calls and subprocesses use bounded execution deadlines and propagated abort signals. Missing or invalid
-provider configuration
+moves through bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
 moves the affected stage to `needs_human`; production never falls back to fixture content.
 
 ### Starting a new Nuglet
@@ -348,16 +347,19 @@ worker or API deployment.
 ## Delivery
 
 `DELIVERY_ADAPTER_URL` is the destination's base endpoint. For Nuglet, use
-`https://api.nuglet.app/internal/knowledge-bits`; the adapter calls `/import` and `/verify` beneath it.
+`https://api.nuglet.app/internal/knowledge-bits`; the adapter calls `/deliver` and `/verify` beneath it.
+`/deliver` is the final publish transaction; `/import` remains the explicit dry-run validation endpoint.
 `DELIVERY_ADAPTER_TOKEN` must match Nuglet backend's `KNOWLEDGE_BITS_IMPORT_TOKEN` and authenticates
 only those server-to-server requests. Delivery receives the persisted immutable package version,
-approved checksum, and stable idempotency key. Once an import response is persisted, a reclaimed
-delivery verifies that response instead of issuing another import. Retries from before a persisted
+approved checksum, and stable idempotency key. Once a delivery response is persisted, a reclaimed
+delivery verifies that response instead of issuing another publish. Retries from before a persisted
 response reuse the same idempotency key.
 
-Nuglet delivery remains dry-run only. Every approved Knowledge Bits package must already have an exact
-package-to-lesson mapping in Nuglet. Import validation records an immutable receipt and returns the
-existing canonical lesson preview without changing its slug, SEO metadata, or published content.
+The release CLI (`pnpm release:nuglet`) is the operator-facing control surface around this flow. It
+inspects the approved package, records explicit approval when requested, watches the worker delivery
+state, and verifies the public SEO surface. It does not impersonate the worker or write Nuglet's database.
+Nuglet's `/deliver` route performs the idempotent materialization, public projection, media references,
+and publish receipt transaction.
 
 ## Vercel boundary
 

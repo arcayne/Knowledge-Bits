@@ -45,6 +45,24 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
       : null
   );
 
+  const renderSocialPost = (post, publicPreview) => {
+    const text = required('#social-post-text');
+    const copy = required('#copy-social-post');
+    const companion = required('#social-post-companion');
+    const value = post?.platform === 'cross-platform' && typeof post.text === 'string' ? post.text : '';
+    text.textContent = value || 'Social post is pending for this Nuglet.';
+    copy.disabled = !value;
+    companion.textContent = publicPreview?.companion
+      ? `Bound to this preview and content revision. Social post checksum: ${publicPreview.companion.socialPostChecksum}`
+      : 'This post is the companion copy for the public preview Short.';
+    copy.onclick = async () => {
+      if (!value || !globalThis.navigator?.clipboard) return;
+      await globalThis.navigator.clipboard.writeText(value);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy social post'; }, 1200);
+    };
+  };
+
   const renderRunSummary = (run) => {
     const container = required('#run-summary');
     container.replaceChildren();
@@ -338,6 +356,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           renderAudio('audio-brief', payload.assets.audioBrief, learner.listen.brief);
           renderAudio('audio-discussion', payload.assets.audioDiscussion, learner.listen.discussion);
           renderVideo('public-preview', payload.assets.publicPreview);
+          renderSocialPost(learner.socialPost, payload.assets.publicPreview);
           renderQuiz(learner);
         } else {
           renderLegacyContent(learner);
@@ -346,6 +365,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           renderAudio('audio-brief', payload.assets.audioBrief, null);
           renderAudio('audio-discussion', payload.assets.audioDiscussion, null);
           renderVideo('public-preview', payload.assets.publicPreview);
+          renderSocialPost(learner.socialPost, payload.assets.publicPreview);
         }
         renderEvidence(payload.package);
         renderQa(payload.package);

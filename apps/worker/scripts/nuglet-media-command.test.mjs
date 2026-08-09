@@ -243,9 +243,13 @@ test("public preview marker binds the prompt contract version", () => {
     content: {
       kind: "nuglet.lesson.v1",
       schemaVersion: "1.1.0",
-      payload: {
-        identity: { title: "Protect Your Attention" },
-        learning: {
+        payload: {
+          identity: { title: "Protect Your Attention" },
+          socialPost: {
+            platform: "cross-platform",
+            text: "Your attention is shaped by the cues around you. A phone, open tab, or message can quietly pull you into another task. Notice the setup before blaming your focus. #ProtectYourAttention #Focus #WorkHabits",
+          },
+          learning: {
           centralIdea: "Visible cues make attention easier to pull away.",
           oneLineToKeep: "Design the setup before relying on effort.",
           action: { instruction: "Put the phone away for one focus block." },

@@ -117,6 +117,10 @@ export function calculateContentChecksum(content: unknown): string {
   return createHash('sha256').update(canonicalJson(content)).digest('hex');
 }
 
+export function calculateSocialPostChecksum(socialPost: unknown): string {
+  return createHash('sha256').update(canonicalJson(socialPost)).digest('hex');
+}
+
 export function buildKnowledgeBits(input: BuildKnowledgeBitsInput): KnowledgeBits {
   const content = knowledgeBitsContentSchema.parse(input.content);
   const packageChecksum = calculatePackageChecksum({ ...input, content });

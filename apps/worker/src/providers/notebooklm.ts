@@ -46,6 +46,8 @@ const STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS = [
   '- read.story and read.playbook must each contain every learning.terminology term exactly.',
   '- read.playbook.action must equal learning.action.instruction exactly.',
   '- Story and Playbook must remain distinct and must not be normalized duplicates.',
+  '- Include one socialPost object with platform "cross-platform" and concise, lesson-grounded text containing at least three literal hashtags.',
+  '- Do not invent claims, statistics, or advice outside the accepted evidence and canonical learning fields in the socialPost.',
 ].join('\n');
 
 export interface PromptInputs {
@@ -811,7 +813,7 @@ function mergeMissingSemanticFields(
 const SEMANTIC_REPAIR_PRESERVABLE_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
   '$': new Set(['kind', 'schemaVersion', 'payload']),
   '$.payload': new Set([
-    'contentModel', 'materialization', 'identity', 'learning', 'hero', 'read',
+    'contentModel', 'materialization', 'identity', 'learning', 'hero', 'read', 'socialPost',
     'visual', 'listen', 'quiz', 'publicSources', 'claims', 'claimCoverage',
   ]),
   '$.payload.read': new Set(['story', 'playbook']),
@@ -1063,6 +1065,7 @@ const SAFE_DETERMINISTIC_MESSAGES_BY_CODE: Readonly<Record<DeterministicFinding[
   'citation-source': 'Bind every factual claim to accepted evidence.',
   'citation-excerpt': 'Give every citation a non-empty excerpt.',
   'content-shape': 'Supply every required learner-facing field.',
+  'social-post': 'Add one concise, lesson-grounded cross-platform social post with at least three literal hashtags.',
   'claim-inventory': 'Supply at least one supported claim.',
   'claim-coverage': 'Give every declared learner path and nested factual reference valid claim coverage.',
 };

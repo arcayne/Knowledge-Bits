@@ -44,7 +44,7 @@ test('HTTP delivery accepts Nuglet delivery metadata while returning the portabl
         canonicalPath: '/lessons/example',
         status: 'bound',
       },
-      dryRun: true,
+      dryRun: false,
     }),
   });
 

@@ -687,6 +687,7 @@ export const storyPlaybookDraftContractDescriptor = {
     materialization: 'draft',
     identity: ['locale', 'topic.label', 'topic.categoryId', 'tags', 'title', 'deck', 'slugSuggestion'],
     learning: ['centralIdea', 'whyItMatters', 'oneLineToKeep', 'terminology', 'action.label', 'action.instruction'],
+    socialPost: ['platform', 'text with at least three literal hashtags'],
     hero: ['altText', 'accessibilityPurpose', 'mediaBrief.concept', 'mediaBrief.metaphor', 'mediaBrief.compositionFamily'],
     read: {
       story: ['title', 'estimatedMinutes', 'blocks[].type', 'blocks[].text', 'blocks[].claimRefs'],
@@ -800,6 +801,20 @@ const identitySchema = z.object({
   slugSuggestion: z.string().trim().min(1),
 }).strict();
 
+const socialPostSchema = z.object({
+  platform: z.literal('cross-platform'),
+  text: z.string().trim().min(1),
+}).strict().superRefine(({ text }, context) => {
+  const hashtags = text.match(/#[\p{L}\p{N}]+/gu) ?? [];
+  if (hashtags.length < 3) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Social post requires at least three hashtags.',
+      path: ['text'],
+    });
+  }
+});
+
 const learningSchema = z.object({
   centralIdea: z.string().trim().min(1),
   whyItMatters: z.string().trim().min(1),
@@ -896,6 +911,9 @@ const storyPlaybookBaseShape = {
   contentModel: z.literal('story-playbook.v1'),
   identity: identitySchema,
   learning: learningSchema,
+  // Backwards-compatible for already-delivered lessons; deterministic QA
+  // requires it for new Story/Playbook candidates.
+  socialPost: socialPostSchema.optional(),
   read: z.object({
     story: storySchema,
     playbook: playbookSchema,
@@ -1240,7 +1258,16 @@ export type ReviewPackageVersion = z.infer<typeof reviewPackageVersionSchema>;
 
 export const reviewAssetSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('missing'), artifactId: z.null(), mediaType: z.null(), previewPath: z.null() }).strict(),
-  z.object({ state: z.literal('available'), artifactId: z.string().uuid(), mediaType: z.string().min(1), previewPath: z.string().min(1) }).strict(),
+  z.object({
+    state: z.literal('available'),
+    artifactId: z.string().uuid(),
+    mediaType: z.string().min(1),
+    previewPath: z.string().min(1),
+    companion: z.object({
+      contentChecksum: checksumSchema,
+      socialPostChecksum: checksumSchema,
+    }).strict().optional(),
+  }).strict(),
 ]);
 
 export const reviewGenerationRoleSchema = z.enum([

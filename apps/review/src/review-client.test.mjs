@@ -337,6 +337,7 @@ function reviewPageDocument() {
     '#audio-brief', '#audio-discussion', '#audio-brief-transcript',
     '#audio-discussion-transcript', '#quiz', '#accepted-sources', '#rejected-sources', '#coverage-gaps',
     '#claims', '#qa', '#qa-findings', '#generation-executions', '#claim-coverage', '#editorial-warnings',
+    '#social-post-companion', '#social-post-text', '#copy-social-post',
   ]) add(selector);
 
   return {

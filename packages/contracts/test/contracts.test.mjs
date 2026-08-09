@@ -320,6 +320,10 @@ function storyPlaybookDraft() {
         instruction: 'Set aside one affordable amount today.',
       },
     },
+    socialPost: {
+      platform: 'cross-platform',
+      text: 'A small reserve makes surprise costs easier to absorb. #Saving #Resilience #PersonalFinance',
+    },
     hero: {
       altText: 'A small vessel collecting coins beside a growing seedling.',
       accessibilityPurpose: 'informative',
@@ -923,6 +927,18 @@ test('requires a non-empty canonical terminology list for Story Playbook drafts'
   const empty = storyPlaybookDraft();
   empty.learning.terminology = [];
   assert.equal(storyPlaybookDraftSchema.safeParse(empty).success, false);
+});
+
+test('requires a cross-platform social post with at least three literal hashtags when present', () => {
+  const draft = storyPlaybookDraft();
+  assert.equal(storyPlaybookDraftSchema.safeParse({
+    ...draft,
+    socialPost: { platform: 'cross-platform', text: 'A useful reminder. #Focus #Habits' },
+  }).success, false);
+  assert.equal(storyPlaybookDraftSchema.safeParse({
+    ...draft,
+    socialPost: { platform: 'cross-platform', text: 'A useful reminder. #Focus #Habits #Practice' },
+  }).success, true);
 });
 
 test('exports the versioned Story Playbook draft contract descriptor and terminology normalization', () => {
