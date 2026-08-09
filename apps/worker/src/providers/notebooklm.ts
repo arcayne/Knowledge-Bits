@@ -22,11 +22,13 @@ import {
 import { renderPromptSections } from '../recipes/file-registry.js';
 import { generationSupportArtifacts } from '../recipes/support-artifacts.js';
 import type { ResolvedNugletRecipes, ResolvedRecipe } from '../recipes/types.js';
+import type { ResearchSourceDiscoveryClient, ResearchSourceDiscoveryResult } from './source-discovery.js';
 
 import {
   ProviderNeedsHumanError,
   ProviderWaitingError,
   type ContentProvider,
+  type ProviderBinaryAsset,
   type ProviderExecution,
   type ProviderExecutionInput,
 } from './types.js';
@@ -45,6 +47,8 @@ const STORY_PLAYBOOK_CROSS_FORMAT_REQUIREMENTS = [
   '- read.story and read.playbook must each contain every learning.terminology term exactly.',
   '- read.playbook.action must equal learning.action.instruction exactly.',
   '- Story and Playbook must remain distinct and must not be normalized duplicates.',
+  '- Include one socialPost object with platform "cross-platform" and concise, lesson-grounded text containing at least three literal hashtags.',
+  '- Do not invent claims, statistics, or advice outside the accepted evidence and canonical learning fields in the socialPost.',
 ].join('\n');
 
 export interface PromptInputs {
@@ -88,6 +92,7 @@ export interface ResearchSourceVerifier {
 
 export type NotebookLmPhase =
   | 'cli_version'
+  | 'source_discovery'
   | 'source_sync'
   | 'research_query'
   | 'research_parse_or_repair'
@@ -122,6 +127,9 @@ export class NotebookLmProvider implements ContentProvider {
     process: NotebookLmProcess;
     context: (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
     sourceVerifier?: ResearchSourceVerifier;
+    sourceDiscoverer?: ResearchSourceDiscoveryClient;
+    maxResearchCandidates?: number;
+    minimumAcceptedSources?: number;
     separateReadQueries?: boolean;
     phaseReporter?: (event: NotebookLmPhaseEvent) => void;
     now?: () => Date;
@@ -168,12 +176,18 @@ export class NotebookLmProvider implements ContentProvider {
         ? 'story_parse_or_repair'
         : 'create_parse_or_repair';
     const cliVersion = await this.runPhase('cli_version', phaseTimings, () => this.version(input.signal));
-    await this.runPhase('source_sync', phaseTimings, () => this.importSources(context, input.signal));
+    const researchPreparation = input.action === 'collect_sources' && this.options.sourceDiscoverer
+      ? await this.prepareResearch(context, input, phaseTimings)
+      : undefined;
+    const executionContext = researchPreparation
+      ? { ...context, sourceUrls: researchPreparation.verified.evidence.acceptedSources.map(({ url }) => url) }
+      : context;
+    await this.runPhase('source_sync', phaseTimings, () => this.importSources(executionContext, input.signal));
     const response = await this.runPhase(queryPhase, phaseTimings, () => (
-      this.query(context.notebookId, prompt, input.signal)
+      this.query(executionContext.notebookId, prompt, input.signal)
     ));
     let parsed = await this.runPhase(parsePhase, phaseTimings, () => (
-      this.parseOrRepair(context.notebookId, prompt, response, input.signal)
+      this.parseOrRepair(executionContext.notebookId, prompt, response, input.signal)
     ));
     let rawResponse = parsed.raw;
     if (recipeExecution && this.options.separateReadQueries) {
@@ -269,9 +283,11 @@ export class NotebookLmProvider implements ContentProvider {
     }
     if (!this.options.separateReadQueries) rawResponse = parsed.raw;
     const verified = input.action === 'collect_sources'
-      ? await this.runPhase('research_verification', phaseTimings, () => (
-        this.verifyResearch(parsed.answer, context, input.signal)
-      ))
+      ? researchPreparation
+        ? selectPreparedResearch(parsed.answer, executionContext.sourceUrls, researchPreparation.verified)
+        : await this.runPhase('research_verification', phaseTimings, () => (
+          this.verifyResearch(parsed.answer, executionContext, input.signal)
+        ))
       : undefined;
     const parsedOutput = verified?.evidence
       ?? parseCreateOutput(parsed.answer, context.evidence, context.generationPlan);
@@ -288,6 +304,12 @@ export class NotebookLmProvider implements ContentProvider {
         renderedPrompt: prompt,
         renderedPrompts: parsed.prompts,
         sourceIds: sourceIds(parsed.answer),
+        ...(researchPreparation ? {
+          sourceDiscovery: {
+            ...researchPreparation.discovery.report,
+            candidates: researchPreparation.discovery.candidates,
+          },
+        } : {}),
         phaseTimings,
       },
       ...(recipeExecution ? {
@@ -347,6 +369,44 @@ export class NotebookLmProvider implements ContentProvider {
       throw new ProviderNeedsHumanError('research_no_accepted_sources', 'quality');
     }
     return verified;
+  }
+
+  private async prepareResearch(
+    context: NotebookLmContext,
+    input: ProviderExecutionInput,
+    phaseTimings: NotebookLmPhaseTiming[],
+  ): Promise<{
+    discovery: ResearchSourceDiscoveryResult;
+    verified: Awaited<ReturnType<ResearchSourceVerifier['verify']>>;
+  }> {
+    if (!this.options.sourceDiscoverer || !this.options.sourceVerifier) {
+      throw new ProviderNeedsHumanError('source_discovery_unconfigured');
+    }
+    const maxCandidates = Math.max(3, Math.min(12, this.options.maxResearchCandidates ?? 8));
+    const seedCandidates = seedResearchCandidates(context.sourceUrls).slice(0, Math.max(0, maxCandidates - 3));
+    const discovery = await this.runPhase('source_discovery', phaseTimings, () => (
+      this.options.sourceDiscoverer!.discoverSources({
+        topic: context.topic,
+        audience: context.audience ?? 'general adult learners',
+        objective: context.objective ?? context.topic,
+        seedUrls: context.sourceUrls,
+        maxCandidates: maxCandidates - seedCandidates.length,
+        idempotencyKey: input.idempotencyKey,
+        signal: input.signal,
+      })
+    ));
+    const candidates = uniqueResearchCandidates([
+      ...seedCandidates,
+      ...discovery.candidates,
+    ]).slice(0, maxCandidates);
+    const verified = await this.runPhase('research_verification', phaseTimings, () => (
+      this.options.sourceVerifier!.verify({ sources: candidates }, input.signal)
+    ));
+    const minimumAcceptedSources = Math.max(1, this.options.minimumAcceptedSources ?? 3);
+    if (verified.evidence.acceptedSources.length < minimumAcceptedSources) {
+      throw new ProviderNeedsHumanError('research_insufficient_accepted_sources', 'quality');
+    }
+    return { discovery, verified };
   }
 
   private async version(signal: AbortSignal): Promise<string> {
@@ -473,7 +533,7 @@ function parseStructuredResponse(raw: string): { raw: string; conversationId: st
   const envelope = parseResponseEnvelope(raw);
   if (!envelope) return null;
   try {
-    const answer = typeof envelope.answer === 'string' ? JSON.parse(envelope.answer) : envelope.answer;
+    const answer = typeof envelope.answer === 'string' ? parseNotebookLmAnswer(envelope.answer) : envelope.answer;
     if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
     return { raw, conversationId: envelope.conversationId, answer: answer as Record<string, unknown> };
   } catch {
@@ -481,11 +541,28 @@ function parseStructuredResponse(raw: string): { raw: string; conversationId: st
   }
 }
 
+function parseNotebookLmAnswer(answer: string): unknown {
+  try {
+    return JSON.parse(answer);
+  } catch {
+    // The CLI can serialize dollar-prefixed titles (for example "$100M Offers")
+    // with a non-JSON `\$` escape. Treat that provider-specific defect as a
+    // literal dollar sign, while leaving every other invalid JSON escape strict.
+    return JSON.parse(answer.replace(/\\\$/g, '$'));
+  }
+}
+
 function renderMalformedOutputRepairPrompt(): string {
   return 'The prior answer was not valid JSON. Return the same answer again as one strict JSON object with no markdown fences.';
 }
 
-function researchCandidates(answer: Record<string, unknown>, sourceUrls: readonly string[]) {
+interface ResearchCandidate {
+  sourceId: string;
+  title: string;
+  url: string;
+}
+
+function researchCandidates(answer: Record<string, unknown>, sourceUrls: readonly string[]): ResearchCandidate[] {
   const directSources = Array.isArray(answer.sources) ? answer.sources : [];
   const candidates = directSources.flatMap((source) => {
     if (!source || typeof source !== 'object' || Array.isArray(source)) return [];
@@ -503,6 +580,95 @@ function researchCandidates(answer: Record<string, unknown>, sourceUrls: readonl
     title: sourceTitle(url),
     url,
   }));
+}
+
+function seedResearchCandidates(sourceUrls: readonly string[]): ResearchCandidate[] {
+  return [...new Set(sourceUrls)].map((url) => ({
+    sourceId: `run-source-${createHash('sha256').update(url).digest('hex').slice(0, 16)}`,
+    title: sourceTitle(url),
+    url,
+  }));
+}
+
+function uniqueResearchCandidates(candidates: readonly ResearchCandidate[]): ResearchCandidate[] {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const normalized = normalizedSourceUrl(candidate.url);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function selectPreparedResearch(
+  answer: Record<string, unknown>,
+  sourceUrls: readonly string[],
+  verified: Awaited<ReturnType<ResearchSourceVerifier['verify']>>,
+): Awaited<ReturnType<ResearchSourceVerifier['verify']>> {
+  const acceptedByUrl = new Map(verified.evidence.acceptedSources.flatMap((source) => {
+    const normalized = normalizedSourceUrl(source.url);
+    return normalized ? [[normalized, source] as const] : [];
+  }));
+  const snapshotsByUrl = new Map(verified.snapshots.flatMap((snapshot) => {
+    const sourceUrl = snapshot.provenance?.sourceUrl;
+    const normalized = typeof sourceUrl === 'string' ? normalizedSourceUrl(sourceUrl) : null;
+    return normalized ? [[normalized, snapshot] as const] : [];
+  }));
+  const selectedSources = uniqueResearchCandidates(researchCandidates(answer, sourceUrls));
+  const acceptedSources: VerifiedResearchEvidence['acceptedSources'] = [];
+  const snapshots: ProviderBinaryAsset[] = [];
+  const rejectedSources = [...verified.evidence.rejectedSources];
+
+  for (const selected of selectedSources) {
+    const normalized = normalizedSourceUrl(selected.url);
+    const accepted = normalized ? acceptedByUrl.get(normalized) : undefined;
+    const snapshot = normalized ? snapshotsByUrl.get(normalized) : undefined;
+    if (!accepted || !snapshot) {
+      rejectedSources.push({
+        ...selected,
+        readability: { passed: false, reason: 'not_in_verified_corpus' },
+        credibility: { passed: false, policy: 'verified-corpus-selection.v1', reason: 'not_in_verified_corpus' },
+      });
+      continue;
+    }
+    acceptedSources.push({
+      ...accepted,
+      sourceId: selected.sourceId,
+      title: selected.title,
+    });
+    snapshots.push({
+      ...snapshot,
+      provenance: {
+        ...snapshot.provenance,
+        sourceId: selected.sourceId,
+        sourceUrl: accepted.url,
+      },
+    });
+  }
+  if (acceptedSources.length === 0) {
+    throw new ProviderNeedsHumanError('research_no_accepted_sources', 'quality');
+  }
+  return {
+    evidence: {
+      acceptedSources,
+      rejectedSources,
+      coverageGaps: rejectedSources.map((source) => ({
+        topic: source.title,
+        reason: source.readability.reason ?? source.credibility.reason ?? 'source_rejected',
+      })),
+    },
+    snapshots,
+  };
+}
+
+function normalizedSourceUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function sourceTitle(value: string): string {
@@ -649,26 +815,40 @@ function mergeSemanticRepairAnswer(
 ): Record<string, unknown> {
   const previous = normalizeStoryPlaybookAnswer(previousAnswer);
   const repaired = normalizeStoryPlaybookAnswer(repairedAnswer);
-  const previousPayload = objectValue(previous.payload);
-  const repairedPayload = objectValue(repaired.payload);
-  if (!previousPayload || !repairedPayload) return repaired;
-
-  const previousRead = objectValue(previousPayload.read);
-  const repairedRead = objectValue(repairedPayload.read);
-  const previousPlaybook = objectValue(previousRead?.playbook);
-  if (!previousPlaybook || objectValue(repairedRead?.playbook)) return repaired;
-
-  return {
-    ...repaired,
-    payload: {
-      ...repairedPayload,
-      read: {
-        ...repairedRead,
-        playbook: previousPlaybook,
-      },
-    },
-  };
+  return mergeMissingSemanticFields(previous, repaired, '$');
 }
+
+function mergeMissingSemanticFields(
+  previous: Record<string, unknown>,
+  repaired: Record<string, unknown>,
+  path: string,
+): Record<string, unknown> {
+  const merged = { ...repaired };
+  for (const [key, previousValue] of Object.entries(previous)) {
+    const repairedValue = repaired[key];
+    if (objectValue(previousValue) && objectValue(repairedValue)) {
+      merged[key] = mergeMissingSemanticFields(
+        previousValue as Record<string, unknown>,
+        repairedValue as Record<string, unknown>,
+        `${path}.${key}`,
+      );
+      continue;
+    }
+    if (!(key in repaired) && SEMANTIC_REPAIR_PRESERVABLE_FIELDS[path]?.has(key)) {
+      merged[key] = previousValue;
+    }
+  }
+  return merged;
+}
+
+const SEMANTIC_REPAIR_PRESERVABLE_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  '$': new Set(['kind', 'schemaVersion', 'payload']),
+  '$.payload': new Set([
+    'contentModel', 'materialization', 'identity', 'learning', 'hero', 'read',
+    'socialPost', 'visual', 'listen', 'quiz', 'publicSources', 'claims', 'claimCoverage',
+  ]),
+  '$.payload.read': new Set(['story', 'playbook']),
+};
 
 function normalizeStoryPlaybookAnswer(answer: Record<string, unknown>): Record<string, unknown> {
   const payload = objectValue(answer.payload);
@@ -729,8 +909,11 @@ function normalizeGroundedStoryPlaybookAnswer(
     const claim = objectValue(value);
     return claim && typeof claim.claimId === 'string' ? [claim.claimId] : [];
   }));
-  const filterClaimRefs = (value: unknown): unknown => Array.isArray(value)
+  const validClaimRefs = (value: unknown): string[] => Array.isArray(value)
     ? value.filter((claimId): claimId is string => typeof claimId === 'string' && claimIds.has(claimId))
+    : [];
+  const filterClaimRefs = (value: unknown): unknown => Array.isArray(value)
+    ? validClaimRefs(value)
     : value;
   const normalizeClaimRefList = (values: unknown): unknown => Array.isArray(values)
     ? values.map((value) => {
@@ -745,11 +928,28 @@ function normalizeGroundedStoryPlaybookAnswer(
   const example = objectValue(playbook?.example);
   const visual = objectValue(payload.visual);
   const quiz = objectValue(payload.quiz);
+  const nestedClaimRefsByPath = new Map<string, string[]>([
+    ['read.story', Array.isArray(story?.blocks)
+      ? story.blocks.flatMap((value) => validClaimRefs(objectValue(value)?.claimRefs))
+      : []],
+    ['read.playbook', [
+      ...(Array.isArray(playbook?.steps)
+        ? playbook.steps.flatMap((value) => validClaimRefs(objectValue(value)?.claimRefs))
+        : []),
+      ...validClaimRefs(example?.claimRefs),
+    ]],
+    ['visual', validClaimRefs(visual?.claimRefs)],
+    ['quiz', Array.isArray(quiz?.questions)
+      ? quiz.questions.flatMap((value) => validClaimRefs(objectValue(value)?.claimRefs))
+      : []],
+  ]);
   const claimCoverage = Array.isArray(payload.claimCoverage) ? payload.claimCoverage.flatMap((value) => {
     const coverage = objectValue(value);
     if (!coverage) return [];
-    const filtered = filterClaimRefs(coverage.claimIds);
-    return Array.isArray(filtered) && filtered.length > 0 ? [{ ...coverage, claimIds: filtered }] : [];
+    const filtered = validClaimRefs(coverage.claimIds);
+    const nested = typeof coverage.path === 'string' ? nestedClaimRefsByPath.get(coverage.path) ?? [] : [];
+    const normalized = [...new Set([...filtered, ...nested])];
+    return normalized.length > 0 ? [{ ...coverage, claimIds: normalized }] : [];
   }) : payload.claimCoverage;
 
   return {
@@ -898,6 +1098,7 @@ const SAFE_DETERMINISTIC_MESSAGES_BY_CODE: Readonly<Record<DeterministicFinding[
   'content-shape': 'Supply every required learner-facing field.',
   'claim-inventory': 'Supply at least one supported claim.',
   'claim-coverage': 'Give every declared learner path and nested factual reference valid claim coverage.',
+  'social-post': 'Add one concise, lesson-grounded cross-platform social post with at least three literal hashtags.',
 };
 
 interface StoryPlaybookSemanticIssues {

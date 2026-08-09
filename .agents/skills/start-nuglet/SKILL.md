@@ -19,12 +19,14 @@ Build this draft:
 - `objective`: what the learner should understand or do
 - `audience`: who it is for; use `general adult learners` only when no audience is given
 - `locale`: use `en` unless the operator specifies another locale
-- `notebookLmNotebookId`: the NotebookLM notebook assigned to this Nuglet
+- `notebookLmNotebookId`: the dedicated NotebookLM notebook created for this Nuglet, unless the operator explicitly supplies an existing notebook to reuse
 - `sourceUrls`: any URLs explicitly supplied by the operator
 - `researchQuestions`: unresolved questions and claims that research should investigate
 - `evidenceNotes`: observations from the supplied text or screenshots, clearly marked as intake evidence
 
 The API brief currently accepts the first five fields plus optional `sourceUrls`; keep `researchQuestions` and `evidenceNotes` in the brief only when the API contract accepts them. Never put raw image data or secrets in the brief.
+
+By default, plan a new NotebookLM notebook named `Nuglet: <title>` for every new Nuglet. Do not ask the operator for a notebook ID unless they explicitly want to reuse an existing notebook.
 
 ### 2. Ask only for blockers
 
@@ -32,13 +34,11 @@ Before creating a run, ask for the missing information only if it is required to
 
 - missing working title
 - missing learner objective
-- missing NotebookLM notebook ID
-
 Do not block on optional sources or polished wording. Propose a sensible draft and let the operator correct it.
 
 ### 3. Confirm the run
 
-Show the operator the proposed title, objective, audience, NotebookLM notebook ID, research direction, and any source URLs. Say clearly that confirmation starts research and that no approval, publication, or delivery will happen automatically.
+Show the operator the proposed title, objective, audience, the plan to create a dedicated NotebookLM notebook, research direction, and any source URLs. If the operator supplied an existing notebook ID, show that explicit reuse instead. Say clearly that confirmation creates the notebook if needed and starts research; no approval, publication, or delivery will happen automatically.
 
 Do not create the run until the operator confirms. A confirmation such as `start it`, `create it`, or `go ahead` is sufficient after the draft has been shown.
 
@@ -46,13 +46,15 @@ Do not create the run until the operator confirms. A confirmation such as `start
 
 Prefer the review app's **Start a new Nuglet** form when operating as a human. It uses the review operator identity and is the easiest path to follow the new run.
 
-For CLI creation, from the Knowledge Bits repository run:
+After confirmation, create the dedicated NotebookLM notebook through the available NotebookLM UI or connector, using `Nuglet: <title>` as its display name, and capture the returned notebook ID. If the operator explicitly supplied an existing notebook ID, use that ID and do not create another notebook.
+
+For CLI run creation, from the Knowledge Bits repository run with the newly created ID:
 
 ```bash
-pnpm new:nuglet -- \
+pnpm new:nuglet \
   --title "Working title" \
   --objective "What the learner should understand or do" \
-  --notebook "NOTEBOOKLM_ID"
+  --notebook "CREATED_NOTEBOOK_ID"
 ```
 
 Add optional values when known:
@@ -63,7 +65,9 @@ Add optional values when known:
   --source "https://example.com/source"
 ```
 
-The CLI needs `ENGINE_API_BASE_URL` and `ENGINE_API_TOKEN`. It prints the created run ID and review URL. The local review app normally runs at `http://127.0.0.1:4325/` when started with `REVIEW_LOCAL_OPERATOR_ID`.
+The CLI needs `ENGINE_API_BASE_URL` and `ENGINE_API_TOKEN`; it does not create the NotebookLM notebook itself, so create the notebook first when using this path. It prints the created run ID and review URL. The local review app normally runs at `http://127.0.0.1:4325/` when started with `REVIEW_LOCAL_OPERATOR_ID`.
+
+If no NotebookLM UI, connector, or other configured creation mechanism is available, stop before creating the run and report that concrete blocker. Never fabricate a notebook ID or silently reuse another run's notebook.
 
 The intake must remain a research brief. Do not set a final content kind or fabricate a signed generation plan. The trusted API binds the standard `story_playbook` marker to the approved generation recipes before it persists the Research job.
 
@@ -74,14 +78,16 @@ Return:
 1. the run ID
 2. the review link
 3. the dashboard link, if available
-4. a one-line summary of the next automated stage
-5. any missing provider or configuration blocker
+4. the NotebookLM notebook ID and whether it was newly created or explicitly reused
+5. a one-line summary of the next automated stage
+6. any missing provider or configuration blocker
 
 Do not claim that NotebookLM has researched, drafted, or generated media until the run evidence says so. Do not approve, publish, or deliver the run.
 
 ## Guardrails
 
-- One NotebookLM notebook ID belongs to one Nuglet run. Require an explicit ID instead of silently reusing another run's notebook.
+- Create a fresh NotebookLM notebook for each Nuglet by default. One NotebookLM notebook ID belongs to one Nuglet run.
+- Reusing an existing notebook requires the operator to provide or explicitly approve that notebook ID; never infer or silently reuse one from another run.
 - Preserve operator wording and screenshot-derived context as intake notes, not as sourced facts.
 - Keep source URLs optional at intake; the research worker can discover sources later.
 - If the API rejects the brief, report the exact validation error and do not retry with invented fields.

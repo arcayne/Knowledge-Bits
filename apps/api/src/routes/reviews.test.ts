@@ -164,6 +164,43 @@ test('infographic regeneration supersedes queued delivery and requires approval 
   });
 });
 
+test('deferred hero migration queues non-hero media and preserves the hero recipe', async () => {
+  const { app, repository, storage } = createTestApp();
+  const regenerationBrief = strictLegacyReplacementBrief();
+  const generationPlan = regenerationBrief.generationPlan as Record<string, unknown>;
+  delete generationPlan.mediaBaseline;
+  generationPlan.mediaMode = 'generate';
+  const { runId, packageChecksum } = await reviewReadyRun(repository, storage, checksumA, regenerationBrief);
+
+  const approved = await app.request(`/runs/${runId}/review`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify({ decision: 'approve', packageChecksum }),
+  });
+  assert.equal(approved.status, 200, await approved.clone().text());
+
+  const migrated = await app.request(`/runs/${runId}/regenerate-media`, {
+    method: 'POST',
+    headers: { ...reviewHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kinds: ['infographic', 'audio_brief', 'audio_discussion'],
+      heroMode: 'deferred',
+    }),
+  });
+
+  assert.equal(migrated.status, 202, await migrated.clone().text());
+  const media = await repository.claimJob({
+    workerId: 'asset-worker',
+    capabilities: ['produce_assets'],
+    leaseSeconds: 60,
+  });
+  assert.deepEqual(media?.input.mediaKinds, ['infographic', 'audio_brief', 'audio_discussion']);
+  const updatedRun = await repository.getRun(runId);
+  const updatedPlan = updatedRun?.brief.generationPlan as Record<string, unknown>;
+  assert.equal(updatedPlan.heroMode, 'deferred');
+  assert.deepEqual(updatedPlan.recipes, generationPlan.recipes);
+});
+
 test('public preview regeneration queues exactly one Short and requires approval again', async () => {
   const { app, repository, storage } = createTestApp();
   const regenerationBrief = strictLegacyReplacementBrief();

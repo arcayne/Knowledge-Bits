@@ -47,6 +47,27 @@ test('materializes the checked Story Playbook target with immutable media metada
   assert.equal(materialized.payload.hero.asset.inputChecksum, generationInputChecksum);
 });
 
+test('materializes a deferred package with the hero brief but no hero asset', () => {
+  const semanticTarget = target();
+  const generationPlan = plan();
+  generationPlan.heroMode = 'deferred';
+  const generationInputChecksum = calculateStoryPlaybookGenerationInputChecksum(semanticTarget, generationPlan);
+  const mediaArtifacts = assets(generationInputChecksum, generationPlan);
+  delete mediaArtifacts.hero;
+
+  const materialized = materializeStoryPlaybookTarget({
+    semanticTarget,
+    generationPlan,
+    mediaArtifacts,
+  });
+
+  assert.equal(materialized.payload.materialization, 'materialized');
+  assert.equal('asset' in materialized.payload.hero, false);
+  assert.equal(materialized.payload.hero.mediaBrief.metaphor, semanticTarget.payload.hero.mediaBrief.metaphor);
+  assert.equal(materialized.payload.visual.asset.artifactId, mediaArtifacts.infographic.id);
+  assert.equal(materialized.payload.listen.brief.asset.artifactId, mediaArtifacts.audio_brief.id);
+});
+
 test('rejects materialization when any required media role is missing', () => {
   const semanticTarget = target();
   const generationPlan = plan();

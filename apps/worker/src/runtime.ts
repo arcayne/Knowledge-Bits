@@ -14,7 +14,7 @@ import { calculateContentChecksum } from '@knowledge-bits/pipeline';
 
 import { parseProductRecipeRoots } from './config.js';
 import type { ContentCandidate, EvidenceManifest } from './checks/deterministic.js';
-import { NotebookLmSourceRecorder } from './checks/notebooklm-source-recorder.js';
+import { DeterministicSourceVerifier, publicUrlRejectionReason } from './checks/source-verifier.js';
 import type { WorkerEngineClient } from './engine-client.js';
 import { FixtureProvider } from './providers/fixture.js';
 import {
@@ -28,7 +28,15 @@ import {
 } from './providers/media.js';
 import { generationSupportArtifacts } from './recipes/support-artifacts.js';
 import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess, type ResearchSourceVerifier } from './providers/notebooklm.js';
-import { PiEditorialProvider, type PiSdkClient } from './providers/pi.js';
+import {
+  PiEditorialProvider,
+  type PiSdkClient,
+} from './providers/pi.js';
+import type {
+  ResearchSourceCandidate,
+  ResearchSourceDiscoveryClient,
+  ResearchSourceDiscoveryResult,
+} from './providers/source-discovery.js';
 import {
   ProviderNeedsHumanError,
   ProviderWaitingError,
@@ -68,6 +76,7 @@ export interface ProviderRuntime {
   notebookProcess?: NotebookLmProcess;
   notebookContext?: NotebookContextResolver;
   sourceVerifier?: ResearchSourceVerifier;
+  sourceDiscoverer?: ResearchSourceDiscoveryClient;
   piClient?: PiSdkClient;
   piContext?: PiContextResolver;
   mediaClient?: MediaClient;
@@ -97,6 +106,9 @@ export function composeWorkerProviders(options: {
         process: runtime.notebookProcess,
         context: trustedContextResolver(runtime.notebookContext, runtime.recipeBindingVerifier),
         sourceVerifier: runtime.sourceVerifier,
+        ...(runtime.sourceDiscoverer ? { sourceDiscoverer: runtime.sourceDiscoverer } : {}),
+        maxResearchCandidates: configuredPositiveInteger(env, 'PI_SOURCE_DISCOVERY_MAX_CANDIDATES', 8),
+        minimumAcceptedSources: configuredPositiveInteger(env, 'PI_SOURCE_DISCOVERY_MIN_ACCEPTED', 3),
         separateReadQueries: true,
         phaseReporter: (event) => console.info(JSON.stringify({ event: 'notebooklm_phase', ...event })),
         timeoutMs: configuredPositiveInteger(env, 'NOTEBOOKLM_TIMEOUT_MS', 180_000),
@@ -121,7 +133,7 @@ export function composeWorkerProviders(options: {
 function configuredRuntime(
   env: NodeJS.ProcessEnv,
   engineClient: WorkerEngineClient | undefined,
-  _request: typeof fetch,
+  request: typeof fetch,
 ): ProviderRuntime {
   const recipeRoots = parseProductRecipeRoots(env.PRODUCT_RECIPE_ROOTS);
   if (!engineClient) return {};
@@ -129,6 +141,15 @@ function configuredRuntime(
   const contexts = new LeaseScopedJobContextResolver(engineClient, recipeBindingVerifier);
   const piProvider = configuredValue(env, 'PI_PROVIDER');
   const piModel = configuredValue(env, 'PI_MODEL');
+  const googleCloudProject = configuredValue(env, 'GOOGLE_CLOUD_PROJECT');
+  const googleCloudLocation = configuredValue(env, 'GOOGLE_CLOUD_LOCATION');
+  const piClient = piProvider && piModel
+    ? new LocalPiSdkClient({
+      provider: piProvider,
+      model: piModel,
+      timeoutMs: configuredPositiveInteger(env, 'PI_TIMEOUT_MS', 60_000),
+    })
+    : undefined;
   const mediaCommand = configuredValue(env, 'MEDIA_GENERATION_COMMAND');
   let mediaArgs: string[] = [];
   let mediaConfigurationIssue: string | undefined;
@@ -144,9 +165,24 @@ function configuredRuntime(
     ...(mediaConfigurationIssue ? { configurationIssues: { media: mediaConfigurationIssue } } : {}),
     notebookProcess: new SpawnNotebookLmProcess(),
     notebookContext: (input: ProviderExecutionInput) => contexts.notebook(input),
-    sourceVerifier: new NotebookLmSourceRecorder(),
-    ...(piProvider && piModel ? {
-      piClient: new LocalPiSdkClient({ provider: piProvider, model: piModel }),
+    sourceVerifier: new DeterministicSourceVerifier({
+      trustedHosts: commaSeparated(env.SOURCE_TRUSTED_HOSTS),
+      allowPublicHosts: true,
+      fetch: request,
+      timeoutMs: configuredPositiveInteger(env, 'SOURCE_FETCH_TIMEOUT_MS', 20_000),
+      maxBytes: configuredPositiveInteger(env, 'SOURCE_SNAPSHOT_MAX_BYTES', 2_000_000),
+      maxPdfBytes: configuredPositiveInteger(env, 'SOURCE_PDF_SNAPSHOT_MAX_BYTES', 10_000_000),
+    }),
+    ...(piClient ? {
+      ...(piProvider === 'google-vertex' && googleCloudProject && googleCloudLocation ? {
+        sourceDiscoverer: new GoogleGroundedSourceDiscoveryClient({
+          model: piModel!,
+          project: googleCloudProject,
+          location: googleCloudLocation,
+          timeoutMs: configuredPositiveInteger(env, 'PI_TIMEOUT_MS', 60_000),
+        }),
+      } : {}),
+      piClient,
       piContext: (input: ProviderExecutionInput) => contexts.pi(input),
     } : {}),
     ...(mediaCommand && !mediaConfigurationIssue ? {
@@ -319,6 +355,117 @@ export interface PiModelsAdapter {
   }): Promise<string>;
 }
 
+export interface GoogleGroundedSearchAdapter {
+  search(input: {
+    model: string;
+    project: string;
+    location: string;
+    query: string;
+    signal: AbortSignal;
+  }): Promise<{
+    queries: string[];
+    sources: Array<{ title: string; url: string }>;
+  }>;
+}
+
+export class GoogleGroundedSourceDiscoveryClient implements ResearchSourceDiscoveryClient {
+  constructor(private readonly options: {
+    model: string;
+    project: string;
+    location: string;
+    timeoutMs?: number;
+    search?: GoogleGroundedSearchAdapter;
+  }) {}
+
+  async discoverSources(input: {
+    topic: string;
+    audience: string;
+    objective: string;
+    seedUrls: readonly string[];
+    maxCandidates: number;
+    idempotencyKey: string;
+    signal: AbortSignal;
+  }): Promise<ResearchSourceDiscoveryResult> {
+    const maxCandidates = Math.max(1, Math.min(12, Math.floor(input.maxCandidates)));
+    const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 60_000);
+    const signal = AbortSignal.any([input.signal, timeout]);
+    const query = [
+      `Find independent, primary, official, or academic sources for: ${input.topic}.`,
+      `Research objective: ${input.objective}.`,
+      `Audience: ${input.audience}.`,
+      'Prioritize original material, official documentation, reputable analysis, and practical worksheets.',
+      input.seedUrls.length ? `Known source URLs to complement, not duplicate: ${input.seedUrls.join(', ')}` : '',
+    ].filter(Boolean).join('\n');
+    try {
+      const result = await (this.options.search ?? new GoogleGenAiGroundedSearchAdapter()).search({
+        model: this.options.model,
+        project: this.options.project,
+        location: this.options.location,
+        query,
+        signal,
+      });
+      const candidates = groundedSourceCandidates(result.sources, input.seedUrls, maxCandidates);
+      return {
+        candidates,
+        report: {
+          schemaVersion: 'research-source-discovery.v1',
+          provider: 'google-vertex-grounding',
+          model: this.options.model,
+          topic: input.topic,
+          seedSourceCount: input.seedUrls.length,
+          requestedCandidateCount: maxCandidates,
+          returnedCandidateCount: candidates.length,
+          searchQueries: result.queries.slice(0, 20),
+        },
+      };
+    } catch (error) {
+      if (error instanceof ProviderNeedsHumanError || input.signal.aborted) throw error;
+      if (timeout.aborted) {
+        throw new ProviderWaitingError('pi_source_discovery_timeout', new Date(Date.now() + 60_000).toISOString());
+      }
+      if (googleCredentialsRequireReauthentication(error)) {
+        throw new ProviderNeedsHumanError('google_credentials_reauthentication_required');
+      }
+      throw new ProviderWaitingError('pi_source_discovery_unavailable', new Date(Date.now() + 60_000).toISOString());
+    }
+  }
+}
+
+class GoogleGenAiGroundedSearchAdapter implements GoogleGroundedSearchAdapter {
+  async search(input: {
+    model: string;
+    project: string;
+    location: string;
+    query: string;
+    signal: AbortSignal;
+  }) {
+    const { GoogleGenAI } = await import('@google/genai');
+    const client = new GoogleGenAI({
+      vertexai: true,
+      project: input.project,
+      location: input.location,
+    });
+    const response = await client.models.generateContent({
+      model: input.model,
+      contents: input.query,
+      config: {
+        abortSignal: input.signal,
+        temperature: 0.1,
+        tools: [{ googleSearch: {} }],
+      },
+    });
+    const grounding = response.candidates?.[0]?.groundingMetadata;
+    return {
+      queries: grounding?.webSearchQueries?.filter((query): query is string => typeof query === 'string') ?? [],
+      sources: grounding?.groundingChunks?.flatMap((chunk) => (
+        typeof chunk.web?.uri === 'string' && chunk.web.uri.trim()
+          ? [{ title: chunk.web.title?.trim() || safeSourceLabel(chunk.web.uri), url: chunk.web.uri.trim() }]
+          : []
+      )) ?? [],
+    };
+  }
+}
+
 export class LocalPiSdkClient implements PiSdkClient {
   constructor(private readonly options: {
     provider: string;
@@ -362,6 +509,7 @@ export class LocalPiSdkClient implements PiSdkClient {
       throw new ProviderWaitingError('pi_editorial_unavailable', new Date(Date.now() + 60_000).toISOString());
     }
   }
+
 }
 
 function googleCredentialsRequireReauthentication(error: unknown): boolean {
@@ -386,10 +534,84 @@ class PiSdkModelsAdapter implements PiModelsAdapter {
     const response = await models.complete(model, {
       systemPrompt: input.systemPrompt,
       messages: [{ role: 'user', content: input.userPrompt, timestamp: Date.now() }],
-    }, { signal: input.signal, sessionId: input.sessionId });
+    }, {
+      signal: input.signal,
+      sessionId: input.sessionId,
+    });
     if (response.stopReason === 'aborted') throw input.signal.reason;
     if (response.stopReason === 'error') throw new Error(response.errorMessage ?? 'Pi request failed');
     return response.content.flatMap((block) => block.type === 'text' ? [block.text] : []).join('\n');
+  }
+}
+
+function groundedSourceCandidates(
+  sources: readonly { title: string; url: string }[],
+  seedUrls: readonly string[],
+  maxCandidates: number,
+): ResearchSourceCandidate[] {
+  const seedHosts = new Set(seedUrls.flatMap((value) => {
+    try {
+      return [new URL(value).hostname.toLowerCase().replace(/^www\./, '')];
+    } catch {
+      return [];
+    }
+  }));
+  const lowSignalHosts = new Set([
+    'ebay.com',
+    'goodreads.com',
+    'lobehub.com',
+    'medium.com',
+    'reddit.com',
+    'scribd.com',
+  ]);
+  const ranked = sources.flatMap((source, index) => {
+    let url: URL;
+    try {
+      url = new URL(source.url);
+    } catch {
+      return [];
+    }
+    if (publicUrlRejectionReason(url)) return [];
+    const title = source.title.trim().replace(/^www\./, '').toLowerCase();
+    const official = [...seedHosts].some((host) => title === host || title.endsWith(`.${host}`));
+    const lowSignal = [...lowSignalHosts].some((host) => title === host || title.endsWith(`.${host}`));
+    return [{
+      index,
+      rank: official ? 0 : lowSignal ? 2 : 1,
+      official,
+      title: source.title.trim() || sourceLabel(url),
+      url: url.toString(),
+    }];
+  }).sort((left, right) => left.rank - right.rank || left.index - right.index);
+  const candidates: ResearchSourceCandidate[] = [];
+  const seenUrls = new Set<string>();
+  const seenTitles = new Set<string>();
+  for (const source of ranked) {
+    const titleKey = source.title.toLowerCase();
+    if (seenUrls.has(source.url) || seenTitles.has(titleKey)) continue;
+    seenUrls.add(source.url);
+    seenTitles.add(titleKey);
+    candidates.push({
+      sourceId: `google-grounded-source-${createHash('sha256').update(source.url).digest('hex').slice(0, 16)}`,
+      title: source.title.slice(0, 240),
+      url: source.url,
+      sourceType: source.official ? 'official' : 'independent-analysis',
+      rationale: 'Google Search grounding candidate; deterministic retrieval and source review are still required.',
+    });
+    if (candidates.length >= maxCandidates) break;
+  }
+  return candidates;
+}
+
+function sourceLabel(url: URL): string {
+  return `${url.hostname.replace(/^www\./, '')}${url.pathname.replace(/\/$/, '')}`;
+}
+
+function safeSourceLabel(value: string): string {
+  try {
+    return sourceLabel(new URL(value));
+  } catch {
+    return value;
   }
 }
 

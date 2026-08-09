@@ -40,6 +40,7 @@ export interface DeterministicFinding {
     | 'citation-source'
     | 'citation-excerpt'
     | 'content-shape'
+    | 'social-post'
     | 'claim-inventory'
     | 'claim-coverage';
   message: string;
@@ -51,7 +52,7 @@ export interface DeterministicCheckReport {
   findings: readonly DeterministicFinding[];
 }
 
-const PLACEHOLDER = /\b(?:todo|tbd|placeholder|opportunity score|competitor)\b/i;
+const PLACEHOLDER = /\b(?:todo|tbd|placeholder|opportunity score)\b/i;
 const LEGACY_LEARNER_PATHS = ['title', 'takeaway', 'action', 'depths.quick', 'depths.core', 'depths.deep'] as const;
 
 export function runDeterministicChecks(input: {
@@ -111,9 +112,18 @@ function checkStoryPlaybook(payload: StoryPlaybookDraft, findings: Deterministic
     visual: payload.visual,
     listen: payload.listen,
     quiz: payload.quiz,
+    socialPost: payload.socialPost,
   });
   if (learnerText.some((value) => PLACEHOLDER.test(value))) {
     findings.push({ code: 'placeholder', message: 'Candidate contains a placeholder or internal metadata label.' });
+  }
+
+  const hashtags = payload.socialPost?.text.match(/#[\p{L}\p{N}]+/gu) ?? [];
+  if (!payload.socialPost || payload.socialPost.platform !== 'cross-platform' || hashtags.length < 3) {
+    findings.push({
+      code: 'social-post',
+      message: 'New Story/Playbook content requires one cross-platform social post with at least three hashtags.',
+    });
   }
 
   const story = payload.read.story;

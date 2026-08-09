@@ -201,6 +201,88 @@ test('review client replaces decision controls with terminal status after reject
   assert.equal(page.querySelector('#change-form').hidden, true);
 });
 
+test('review client renders partial generation progress before human review', async () => {
+  const page = reviewPageDocument();
+  const claimId = '11111111-1111-4111-8111-111111111111';
+  const review = {
+    package: null,
+    warnings: [],
+    reviewStatus: 'pending',
+    decisionAllowed: false,
+  };
+  const preview = {
+    run: {
+      title: 'Offer engineering',
+      currentStage: 'produce_assets',
+      currentState: 'waiting',
+      currentRevision: 2,
+      reviewStatus: 'pending',
+      reason: 'notebooklm_artifact_propagating',
+    },
+    documents: {
+      evidence: {
+        state: 'available',
+        data: { acceptedSources: [], rejectedSources: [], coverageGaps: [] },
+      },
+      content: {
+        state: 'available',
+        data: {
+          payload: {
+            hero: { altText: 'A draft hero scene.' },
+            visual: { altText: 'A draft visual.', textEquivalent: ['Choose value.', 'Reduce risk.'] },
+            read: {
+              playbook: {
+                title: 'Build the offer',
+                principle: 'Increase value before cutting price.',
+                whyItMatters: 'Value changes the buying decision.',
+                steps: [
+                  { title: 'Choose', body: 'Choose the result.' },
+                  { title: 'Reduce', body: 'Reduce delay.' },
+                  { title: 'Support', body: 'Support confidence.' },
+                ],
+                example: { title: 'A clear bundle', body: 'Package the result.' },
+                watchOuts: ['Do not rely on discounts.'],
+                action: 'Write the offer.',
+              },
+            },
+            quiz: {
+              questions: [{
+                prompt: 'What changes first?',
+                options: [{ id: 'a', text: 'Value' }, { id: 'b', text: 'Logo' }, { id: 'c', text: 'Color' }],
+                correctOptionId: 'a',
+                rationale: 'Value changes the decision.',
+              }],
+            },
+            claims: [{ claimId, statement: 'A stronger offer can reduce price sensitivity.' }],
+            claimCoverage: [{ path: 'read.playbook', claimIds: [claimId] }],
+          },
+        },
+      },
+      qa: { state: 'missing', data: null },
+    },
+    media: [
+      { kind: 'hero', state: 'missing' },
+      { kind: 'infographic', state: 'missing' },
+      { kind: 'audio_brief', state: 'missing' },
+      { kind: 'audio_discussion', state: 'missing' },
+    ],
+  };
+  const responses = [review, preview];
+
+  await mountReviewPage({
+    document: page,
+    fetch: async () => ({ ok: true, json: async () => responses.shift() }),
+  });
+
+  assert.match(page.querySelector('#story-blocks').children[0]?.textContent ?? '', /Story has not been generated/);
+  assert.equal(page.querySelector('#playbook-title').textContent, 'Build the offer');
+  assert.equal(page.querySelector('#playbook-steps').children.length, 3);
+  assert.equal(page.querySelector('#quiz').children.length, 1);
+  assert.match(page.querySelector('#claims').children[0]?.textContent ?? '', /stronger offer/);
+  assert.match(page.querySelector('#hero-alt').textContent, /Draft brief/);
+  assert.match(page.querySelector('#decision-status').textContent, /Human review comes after generation and QA/);
+});
+
 class ReviewElement {
   children = [];
   content = '';
@@ -239,11 +321,14 @@ function reviewPageDocument() {
   selectors.set('[data-decision="request_changes"]', requestChanges);
   add('meta[name="review-csrf-token"]', { content: 'csrf-token' });
   for (const selector of [
-    '#title', '#status', '#checksum', '#review', '#story-title', '#story-meta', '#story-blocks',
-    '#playbook-title', '#playbook-principle', '#hero', '#infographic', '#audio-brief',
-    '#audio-discussion', '#audio-brief-transcript', '#audio-discussion-transcript', '#accepted-sources',
-    '#rejected-sources', '#coverage-gaps', '#claims', '#qa', '#qa-findings',
-    '#generation-executions', '#claim-coverage', '#editorial-warnings',
+    '#title', '#status', '#checksum', '#review', '#run-summary', '#story-title', '#story-meta', '#story-blocks',
+    '#playbook-title', '#playbook-principle', '#playbook-why', '#playbook-steps', '#playbook-example',
+    '#playbook-watch-outs', '#playbook-action', '#hero', '#hero-alt', '#hero-metadata',
+    '#hero-lesson-header', '#hero-card', '#hero-thumbnail', '#infographic', '#infographic-alt',
+    '#infographic-text-equivalent', '#audio-brief', '#audio-discussion', '#audio-brief-transcript',
+    '#audio-discussion-transcript', '#quiz', '#accepted-sources', '#rejected-sources', '#coverage-gaps',
+    '#claims', '#qa', '#qa-findings', '#generation-executions', '#claim-coverage', '#editorial-warnings',
+    '#social-post-companion', '#social-post-text', '#copy-social-post',
   ]) add(selector);
 
   return {

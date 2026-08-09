@@ -34,6 +34,8 @@ test("Knowledge Bits hero prompt preserves the Nuglet hero standard", () => {
   assert.match(prompt, /every readable mark is removed/);
   assert.match(prompt, /warm cream paper/);
   assert.match(prompt, /pale watercolor or gouache washes/);
+  assert.match(prompt, /visible hand-drawn graphite or ink contours/);
+  assert.match(prompt, /Keep the curated style visibly present at card size/);
   assert.match(prompt, /airy and low contrast/);
   assert.match(prompt, /normally two or three object types/);
   assert.match(prompt, /one asymmetrical editorial still life/);
@@ -138,6 +140,10 @@ test("public preview marker binds the prompt contract version", () => {
       schemaVersion: "1.1.0",
       payload: {
         identity: { title: "Protect Your Attention" },
+        socialPost: {
+          platform: "cross-platform",
+          text: "Your attention is shaped by the cues around you. A phone, open tab, or message can quietly pull you into another task. Notice the setup before blaming your focus. #ProtectYourAttention #Focus #WorkHabits",
+        },
         learning: {
           centralIdea: "Visible cues make attention easier to pull away.",
           oneLineToKeep: "Design the setup before relying on effort.",
@@ -150,7 +156,7 @@ test("public preview marker binds the prompt contract version", () => {
 
   assert.match(
     prompt,
-    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.2\.0\]/,
+    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.3\.0\]/,
   );
 });
 
@@ -269,7 +275,7 @@ test("public preview end card uses the immutable Nuglet hero receipt", async () 
 });
 
 test("forced NotebookLM regeneration creates once, then reuses its current-prompt sidecar", () => {
-  const marker = "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet.public-preview@1.2.0]";
+  const marker = "[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet.public-preview@1.3.0]";
   const artifacts = [
     {
       id: "matching-video",

@@ -32,6 +32,10 @@
           "instruction": "Write the next visible step and work on it for five minutes."
         }
       },
+      "socialPost": {
+        "platform": "cross-platform",
+        "text": "A visible next step makes it easier to return to interrupted work without starting over. #Focus #WorkHabits #Productivity"
+      },
       "hero": {
         "altText": "A single marked step beside an unfinished path.",
         "accessibilityPurpose": "informative",

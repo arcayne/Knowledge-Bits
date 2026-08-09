@@ -14,7 +14,11 @@ import {
   type ReviewGenerationRole,
   type ReviewReadModel,
 } from '@knowledge-bits/contracts';
-import { calculateContentChecksum, calculatePackageChecksum } from '@knowledge-bits/pipeline';
+import {
+  calculateContentChecksum,
+  calculatePackageChecksum,
+  calculateSocialPostChecksum,
+} from '@knowledge-bits/pipeline';
 
 import type {
   WorkflowArtifact,
@@ -55,19 +59,21 @@ export class ReviewPackageService {
     const run = await this.dependencies.repository.getRun(runId);
     if (!run) throw new ReviewPackageNotFoundError('Run not found');
     const artifacts = await this.dependencies.repository.listArtifactsForSuccessfulStageJobs(run.id, run.currentRevision);
+    const deferredHero = isDeferredHeroPlan(run.brief);
     const packageArtifacts = canonicalPackageArtifacts(artifacts.filter((artifact) => (
       !isReviewAssetKind(artifact.kind)
       || artifact.revision === run.currentRevision
       || artifact.provenance.mediaSource === 'legacy_nuglet'
-    )));
-    const assets = assetStates(run.id, packageArtifacts);
+    ))).filter((artifact) => !(deferredHero && artifact.kind === 'hero'));
+    let assets = assetStates(run.id, packageArtifacts);
     const mediaIssues = REVIEW_ASSETS
       .filter(({ kind, key }) => (
         assets[key].state === 'missing'
+        && (kind !== 'hero' || !deferredHero)
         && (kind !== 'public_preview' || publicPreviewPlanned(run.brief))
       ))
       .map(({ kind }) => `Required review media is missing: ${kind}`);
-    let warnings: string[] = [];
+    let warnings: string[] = deferredHero ? ['Hero deferred for batch regeneration.'] : [];
 
     try {
       const qaArtifact = requiredParsedArtifact(packageArtifacts, 'check_content', 'QA');
@@ -85,8 +91,12 @@ export class ReviewPackageService {
       const assembled = assembleContent(run.brief, contentOutput, packageArtifacts, retainedMediaArtifactIds);
       const content = assembled.content;
       const generationExecutions = assembled.generationExecutions;
+      assets = withPublicPreviewCompanion(assets, content, packageArtifacts);
       const editorialWarningsAllowed = isMaterializedStoryPlaybook(content.target);
-      warnings = editorialWarningsAllowed ? editorialWarnings(qa) : [];
+      warnings = [
+        ...(deferredHero ? ['Hero deferred for batch regeneration.'] : []),
+        ...(editorialWarningsAllowed ? editorialWarnings(qa) : []),
+      ];
       for (const kind of REVIEW_ASSET_KINDS) {
         const artifact = latestArtifact(packageArtifacts, kind);
         if (artifact) await readArtifactStorageObject(this.dependencies.storage, artifact.storageKey);
@@ -95,11 +105,12 @@ export class ReviewPackageService {
       if (publicPreview) await readArtifactStorageObject(this.dependencies.storage, publicPreview.storageKey);
       const evidenceOutput = await this.readJson(evidenceArtifact, 'evidence');
       const evidence = normalizeEvidence(evidenceOutput, evidenceArtifact, packageArtifacts, content.target.payload.claims);
-      const artifactInventory = packageArtifacts.map(toArtifactReference);
+      const artifactInventory = packageArtifacts.map((artifact) => toArtifactReference(artifact, content));
       const approvalIssues = [
         ...mediaIssues,
         ...qaApprovalIssues(qa, assembled.semanticChecksum, editorialWarningsAllowed),
         ...assetChecksumIssues(packageArtifacts, assembled.generationInputChecksum, retainedMediaArtifactIds),
+        ...publicPreviewCompanionIssues(content, packageArtifacts),
       ];
       const packageChecksum = calculatePackageChecksum({
         content,
@@ -254,6 +265,11 @@ function generationPlanFromBrief(brief: Record<string, unknown>): NugletGenerati
   return parsed.data;
 }
 
+function isDeferredHeroPlan(brief: Record<string, unknown>): boolean {
+  const parsed = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
+  return parsed.success && parsed.data.heroMode === 'deferred';
+}
+
 const GENERATION_ROLE_BINDINGS = [
   { role: 'story', recipeKey: 'story', action: 'create_content', outputKind: 'parsed_output' },
   { role: 'playbook', recipeKey: 'playbook', action: 'create_content', outputKind: 'parsed_output' },
@@ -275,6 +291,7 @@ export function assembleGenerationExecutions(
 ): ReviewGenerationExecutions {
   const result = emptyGenerationExecutions();
   for (const binding of GENERATION_ROLE_BINDINGS) {
+    if (binding.role === 'hero' && generationPlan.heroMode === 'deferred') continue;
     const recipe = generationPlan.recipes[binding.recipeKey];
     const output = latestArtifactForAction(artifacts, binding.outputKind, binding.action);
     if (output?.provenance.mediaSource === 'legacy_nuglet') continue;
@@ -518,8 +535,49 @@ function assetStates(runId: string, artifacts: readonly WorkflowArtifact[]) {
   }>;
 }
 
-function toArtifactReference(artifact: WorkflowArtifact): ArtifactReference {
-  return artifactReferenceSchema.parse({
+function withPublicPreviewCompanion(
+  assets: ReturnType<typeof assetStates>,
+  content: ReturnType<typeof knowledgeBitsContentSchema.parse>,
+  artifacts: readonly WorkflowArtifact[],
+) {
+  const preview = assets.publicPreview;
+  const socialPost = content.target.kind === 'nuglet.lesson.v1'
+    && content.target.schemaVersion === '1.1.0'
+    ? content.target.payload.socialPost
+    : undefined;
+  const artifact = latestArtifact(artifacts, 'public_preview');
+  if (preview?.state !== 'available' || !socialPost || !artifact) return assets;
+  return {
+    ...assets,
+    publicPreview: {
+      ...preview,
+      companion: {
+        contentChecksum: calculateContentChecksum(content.target),
+        socialPostChecksum: calculateSocialPostChecksum(socialPost),
+      },
+    },
+  };
+}
+
+function publicPreviewCompanionIssues(
+  content: ReturnType<typeof knowledgeBitsContentSchema.parse>,
+  artifacts: readonly WorkflowArtifact[],
+): string[] {
+  if (content.target.kind !== 'nuglet.lesson.v1' || content.target.schemaVersion !== '1.1.0') return [];
+  const socialPost = content.target.payload.socialPost;
+  const preview = latestArtifact(artifacts, 'public_preview');
+  if (!socialPost || !preview) return [];
+  const expected = calculateSocialPostChecksum(socialPost);
+  return preview.provenance.socialPostChecksum === `sha256:${expected}`
+    ? []
+    : ['Public preview is not bound to the canonical social post.'];
+}
+
+function toArtifactReference(
+  artifact: WorkflowArtifact,
+  content?: ReturnType<typeof knowledgeBitsContentSchema.parse>,
+): ArtifactReference {
+  const reference = {
     artifactId: artifact.id,
     kind: artifact.kind,
     mediaType: artifact.mediaType,
@@ -531,7 +589,17 @@ function toArtifactReference(artifact: WorkflowArtifact): ArtifactReference {
       ? artifact.provenance.provider
       : 'unknown',
     inputChecksum: artifact.inputChecksum,
-  });
+    ...(artifact.kind === 'public_preview' && content?.target.kind === 'nuglet.lesson.v1'
+      && content.target.schemaVersion === '1.1.0' && content.target.payload.socialPost
+      ? {
+        companion: {
+          contentChecksum: calculateContentChecksum(content.target),
+          socialPostChecksum: calculateSocialPostChecksum(content.target.payload.socialPost),
+        },
+      }
+      : {}),
+  };
+  return artifactReferenceSchema.parse(reference);
 }
 
 function normalizeEvidence(

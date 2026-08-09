@@ -16,7 +16,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-test("end-card plan trims the provider tail and adds a three-second review outro", () => {
+test("end-card plan replaces the provider tail without cutting its narration", () => {
   const plan = publicPreviewEndCardPlan({
     durationSeconds: 63.39,
     width: 720,
@@ -27,8 +27,10 @@ test("end-card plan trims the provider tail and adds a three-second review outro
   assert.deepEqual(plan.titleLines, ["Protect Your", "Attention"]);
   assert.equal(plan.providerTailSeconds, 8);
   assert.equal(plan.contentDurationSeconds, 55.39);
-  assert.equal(plan.endCardDurationSeconds, 3);
-  assert.equal(plan.finalDurationSeconds, 58.39);
+  assert.equal(plan.audioSourceDurationSeconds, 63.39);
+  assert.equal(plan.audioTailTrimSeconds, 0);
+  assert.equal(plan.endCardDurationSeconds, 8);
+  assert.equal(plan.finalDurationSeconds, 63.39);
 });
 
 test("title wrapping remains bounded for longer Nuglet names", () => {
@@ -40,15 +42,18 @@ test("title wrapping remains bounded for longer Nuglet names", () => {
 
 test("long provider videos are trimmed to the review duration ceiling", () => {
   const plan = publicPreviewEndCardPlan({
-    durationSeconds: 70.124,
+      durationSeconds: 70.124,
     width: 720,
     height: 1280,
     hasAudio: true,
   }, "The hard book was teaching me how to think slowly");
 
   assert.equal(plan.finalDurationSeconds, PUBLIC_PREVIEW_MAX_SECONDS);
-  assert.equal(plan.contentDurationSeconds, 62);
+    assert.equal(plan.audioSourceDurationSeconds, PUBLIC_PREVIEW_MAX_SECONDS);
+    assert.equal(plan.contentDurationSeconds, 62);
   assert.ok(Math.abs(plan.providerTailSeconds - 8.124) < 0.001);
+  assert.equal(plan.endCardDurationSeconds, 3);
+    assert.ok(Math.abs(plan.audioTailTrimSeconds - 5.124) < 0.001);
 });
 
 test("renderer creates a branded vertical review artifact without provider generation", async () => {
@@ -84,6 +89,8 @@ test("renderer creates a branded vertical review artifact without provider gener
     assert.equal(rendered.endCardVersion, PUBLIC_PREVIEW_END_CARD_VERSION);
     assert.equal(rendered.providerTailTrimSeconds, 1);
     assert.equal(rendered.narrativeDurationSeconds, 2);
+    assert.equal(rendered.audioSourceDurationSeconds, 3);
+    assert.equal(rendered.audioTailTrimSeconds, 0);
     assert.equal(rendered.endCardTransitionSeconds, 0.45);
     assert.equal(rendered.endCardVoiceOverlapSeconds, 0.65);
     assert.ok(Math.abs(rendered.metadata.durationSeconds - 3) < 0.1);
@@ -93,6 +100,18 @@ test("renderer creates a branded vertical review artifact without provider gener
     assert.match(rendered.endCardBackgroundChecksum, /^sha256:[a-f0-9]{64}$/);
     assert.match(rendered.endCardArtworkChecksum, /^sha256:[a-f0-9]{64}$/);
     assert.match(rendered.logoChecksum, /^sha256:[a-f0-9]{64}$/);
+
+    const audioCheck = await execFileAsync("ffmpeg", [
+      "-i", finalPath,
+      "-af", "silencedetect=noise=-35dB:d=0.2",
+      "-f", "null",
+      "-",
+    ], { timeout: 120_000 });
+    assert.doesNotMatch(
+      audioCheck.stderr,
+      /silence_start/,
+      "provider audio should continue through the rendered end card",
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -51,6 +51,7 @@ const REVIEW_MEDIA_ARTIFACT_KINDS = new Set([
   'infographic',
   'audio_brief',
   'audio_discussion',
+  'public_preview',
 ]);
 
 export interface WorkflowRun {
@@ -356,6 +357,7 @@ export interface RefreshResearchInput {
 type RegenerableMediaKind = 'hero' | 'infographic' | 'audio_brief' | 'audio_discussion' | 'public_preview';
 type MediaRecipeOverrides = {
   infographic?: NugletGenerationPlan['recipes']['infographic'];
+  heroMode?: 'deferred' | 'generate';
 };
 
 export interface PrepareLegacyRevisionInput {
@@ -1064,6 +1066,9 @@ export class PrismaWorkflowStore implements WorkflowStore {
     recipeOverrides?: MediaRecipeOverrides,
   ): Promise<WorkflowRun> {
     assertRegenerableMediaKinds(kinds);
+    if (recipeOverrides?.heroMode === 'deferred' && kinds.includes('hero')) {
+      throw new WorkflowValidationError('Deferred hero mode cannot regenerate the hero asset');
+    }
     return this.prisma.$transaction(async (transaction) => {
       await lockRun(transaction, runId);
       const run = await transaction.run.findUnique({ where: { id: runId }, include: { stages: true } });
@@ -1558,7 +1563,7 @@ export class PrismaWorkflowStore implements WorkflowStore {
               input: {
                 brief: job.run.brief as JsonObject,
                 ...(job.run.notebookLmNotebookId ? { notebookLmNotebookId: job.run.notebookLmNotebookId } : {}),
-                ...legacyMediaJobInput(job.run.brief as JsonObject, effect.stage),
+                ...mediaJobInputForStage(job.run.brief as JsonObject, effect.stage),
                 dependencies: nextJobDependencies(job.input as JsonObject, completedArtifacts, effect.stage),
               },
             });
@@ -2666,6 +2671,9 @@ class InMemoryWorkflowStore implements WorkflowStore {
     recipeOverrides?: MediaRecipeOverrides,
   ): Promise<WorkflowRun> {
     assertRegenerableMediaKinds(kinds);
+    if (recipeOverrides?.heroMode === 'deferred' && kinds.includes('hero')) {
+      throw new WorkflowValidationError('Deferred hero mode cannot regenerate the hero asset');
+    }
     const run = this.requireRun(runId);
     const reviewStage = run.stages.human_review;
     const pendingReview = run.currentStage === 'human_review' && reviewStage?.state === 'needs_human';
@@ -3053,7 +3061,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
           input: {
             brief: run.brief,
             ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
-            ...legacyMediaJobInput(run.brief, effect.stage),
+            ...mediaJobInputForStage(run.brief, effect.stage),
             dependencies: nextJobDependencies(job.input, completedArtifacts, effect.stage),
           },
         });
@@ -3445,7 +3453,7 @@ class InMemoryWorkflowStore implements WorkflowStore {
           input: {
             brief: run.brief,
             ...(run.notebookLmNotebookId ? { notebookLmNotebookId: run.notebookLmNotebookId } : {}),
-            ...legacyMediaJobInput(run.brief, effect.stage),
+            ...mediaJobInputForStage(run.brief, effect.stage),
             dependencies: packageVersion.artifactInventory
               .flatMap((reference) => {
                 const artifact = this.artifactsById.get(reference.artifactId);
@@ -3615,16 +3623,23 @@ function nextJobDependencies(
   return [...new Map(filtered.map((dependency) => [dependency.artifactId, dependency])).values()];
 }
 
-function legacyMediaJobInput(
+function mediaJobInputForStage(
   brief: JsonObject,
   stage: Exclude<WorkflowStage, 'human_review' | 'deliver'>,
 ): JsonObject {
   if (stage !== 'produce_assets') return {};
   const generationPlan = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
-  if (!generationPlan.success || generationPlan.data.mediaMode !== 'reuse_legacy') return {};
+  if (!generationPlan.success) return {};
+  if (generationPlan.data.mediaMode === 'reuse_legacy') {
+    return {
+      mediaOperation: 'attach_existing',
+      mediaKinds: ['hero', 'infographic', 'audio_brief', 'audio_discussion'],
+    };
+  }
+  if (generationPlan.data.heroMode !== 'deferred') return {};
   return {
-    mediaOperation: 'attach_existing',
-    mediaKinds: ['hero', 'infographic', 'audio_brief', 'audio_discussion'],
+    mediaOperation: 'generate',
+    mediaKinds: ['infographic', 'audio_brief', 'audio_discussion'],
   };
 }
 
@@ -3714,7 +3729,7 @@ function briefWithMediaRecipeOverrides(
   brief: JsonObject,
   recipeOverrides?: MediaRecipeOverrides,
 ): JsonObject {
-  if (!recipeOverrides?.infographic) return brief;
+  if (!recipeOverrides?.infographic && !recipeOverrides?.heroMode) return brief;
   const parsedPlan = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
   if (!parsedPlan.success) {
     throw new WorkflowValidationError('Media recipe override requires a valid Nuglet generation plan');
@@ -3723,8 +3738,9 @@ function briefWithMediaRecipeOverrides(
     ...parsedPlan.data,
     recipes: {
       ...parsedPlan.data.recipes,
-      infographic: recipeOverrides.infographic,
+      ...(recipeOverrides.infographic ? { infographic: recipeOverrides.infographic } : {}),
     },
+    ...(recipeOverrides.heroMode ? { heroMode: recipeOverrides.heroMode } : {}),
   });
   if (!nextPlan.success) {
     throw new WorkflowValidationError('The requested media recipe override is incompatible with this run');

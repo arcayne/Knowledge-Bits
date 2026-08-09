@@ -1,0 +1,55 @@
+{
+  "workflow": "agentic-delivery-playbook v0.2",
+  "phase": "implementation",
+  "status": "complete",
+  "taskFit": "broad-ticket",
+  "specPath": "specs/20260809-1212-notebooklm-public-preview-flow/spec.md",
+  "activeRole": "primary",
+  "modelLedger": { "source": "runtime-default" },
+  "approval": "User explicitly requested finishing the video creation flow for reuse across other Nuglets.",
+  "reviewGates": ["tests-first", "implementation-qa", "verification"],
+  "changedFiles": [
+    "apps/api/src/repositories/workflow-repository.ts",
+    "apps/api/src/repositories/workflow-repository.test.ts",
+    "specs/20260809-1212-notebooklm-public-preview-flow/spec.md",
+    "specs/20260809-1212-notebooklm-public-preview-flow/run.json",
+    "specs/20260809-1212-notebooklm-public-preview-flow/notes.md"
+  ],
+  "validation": [
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/api exec tsx --test src/repositories/workflow-repository.test.ts src/routes/reviews.test.ts src/services/review-packages.test.ts",
+      "result": "Passed: 72 tests, including public_preview queueing, review assembly, and completed Short retention."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/worker test:media-command && node --test scripts/nuglet-public-preview.test.mjs scripts/nuglet-public-preview-renderer.test.mjs",
+      "result": "Passed: 14 media-command tests and 10 public-preview source/renderer tests."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/review test",
+      "result": "Passed: 22 review tests, including browser video-capable review rendering."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/contracts typecheck && pnpm --filter @knowledge-bits/contracts build && pnpm --filter @knowledge-bits/contracts test",
+      "result": "Passed: typecheck, build, and 38 contract tests."
+    },
+    {
+      "phase": "green",
+      "command": "pnpm --filter @knowledge-bits/worker typecheck && pnpm --filter @knowledge-bits/review typecheck",
+      "result": "Passed: worker TypeScript check and review Astro check with zero diagnostics."
+    },
+    {
+      "phase": "blocked",
+      "command": "pnpm --filter @knowledge-bits/api typecheck",
+      "result": "Blocked by pre-existing dirty test code at apps/api/src/services/nuglet-package-materializer.test.ts:56, where delete targets a required hero property."
+    }
+  ],
+  "knownGaps": [
+    "The Nuglet public lesson page still needs a separate rendering change after the video pipeline is accepted.",
+    "The checkout contains unrelated pre-existing changes; they are not included in this repair."
+  ],
+  "nextAction": "Run focused package validation and update notes with evidence."
+}

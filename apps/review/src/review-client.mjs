@@ -13,10 +13,15 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
   const decisionButtons = [...document.querySelectorAll('[data-decision], #change-form button')];
   const csrfToken = required('meta[name="review-csrf-token"]').content;
   let model;
+  let submissionInFlight = false;
 
   const showError = (message) => {
     error.textContent = message;
     error.hidden = false;
+  };
+  const clearError = () => {
+    error.textContent = '';
+    error.hidden = true;
   };
   const setDecisionAllowed = (allowed) => decisionButtons.forEach((button) => { button.disabled = !allowed; });
   const fillList = (selector, values, emptyLabel) => {
@@ -33,6 +38,24 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
       ? `/api/artifact?runId=${encodeURIComponent(runId)}&artifactId=${encodeURIComponent(asset.artifactId)}`
       : null
   );
+
+  const renderSocialPost = (post, publicPreview) => {
+    const text = required('#social-post-text');
+    const copy = required('#copy-social-post');
+    const companion = required('#social-post-companion');
+    const value = post?.platform === 'cross-platform' && typeof post.text === 'string' ? post.text : '';
+    text.textContent = value || 'Social post is pending for this Nuglet.';
+    copy.disabled = !value;
+    companion.textContent = publicPreview?.companion
+      ? `Bound to this preview and content revision. Social post checksum: ${publicPreview.companion.socialPostChecksum}`
+      : 'This post is the companion copy for the public preview Short.';
+    copy.onclick = async () => {
+      if (!value || !globalThis.navigator?.clipboard) return;
+      await globalThis.navigator.clipboard.writeText(value);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy social post'; }, 1200);
+    };
+  };
 
   const renderRunSummary = (run) => {
     const container = required('#run-summary');
@@ -61,7 +84,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     container.append(note);
   };
 
-  const renderProgressiveMedia = (media = []) => {
+  const renderProgressiveMedia = (media = [], candidate = null) => {
     const byKind = new Map(media.filter((item) => item.state !== 'missing').map((item) => [item.kind, item]));
     const hero = byKind.get('hero');
     const heroSource = renderAsset('hero', hero, 'Verified legacy hero');
@@ -74,9 +97,22 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
       image.alt = 'Verified legacy hero crop preview';
       container.append(image);
     }
-    required('#hero-alt').textContent = hero ? 'Verified production hero, pending package attachment.' : '';
+    required('#hero-alt').textContent = candidate?.hero?.altText
+      ? `Draft brief: ${candidate.hero.altText}`
+      : hero
+        ? 'Verified production hero, pending package attachment.'
+        : '';
     renderAsset('infographic', byKind.get('infographic'), 'Verified legacy infographic');
-    required('#infographic-alt').textContent = byKind.has('infographic') ? 'Verified production infographic, pending package attachment.' : '';
+    required('#infographic-alt').textContent = candidate?.visual?.altText
+      ? `Draft brief: ${candidate.visual.altText}`
+      : byKind.has('infographic')
+        ? 'Verified production infographic, pending package attachment.'
+        : '';
+    fillList(
+      '#infographic-text-equivalent',
+      Array.isArray(candidate?.visual?.textEquivalent) ? candidate.visual.textEquivalent : [],
+      'Infographic text will appear after the visual brief is generated.',
+    );
 
     renderProgressiveAudio('audio-brief', byKind.get('audio_brief'));
     renderProgressiveAudio('audio-discussion', byKind.get('audio_discussion'));
@@ -100,16 +136,22 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     container.append(control);
   };
 
-  const renderProgressiveEvidence = (documentModel) => {
+  const renderProgressiveEvidence = (documentModel, candidate = null) => {
     const evidence = documentModel?.state === 'available' ? documentModel.data : null;
     const accepted = Array.isArray(evidence?.acceptedSources) ? evidence.acceptedSources : [];
     const rejected = Array.isArray(evidence?.rejectedSources) ? evidence.rejectedSources : [];
     const gaps = Array.isArray(evidence?.coverageGaps) ? evidence.coverageGaps : [];
+    const claims = Array.isArray(candidate?.claims) ? candidate.claims : [];
+    const coverage = Array.isArray(candidate?.claimCoverage) ? candidate.claimCoverage : [];
     fillList('#accepted-sources', accepted.map((source) => `${source.title} - ${source.url}`), 'Research has not produced accepted sources yet.');
     fillList('#rejected-sources', rejected.map((source) => `${source.title}: ${source.readability?.reason || source.credibility?.reason || 'rejected'}`), 'No rejected sources.');
     fillList('#coverage-gaps', gaps.map((gap) => `${gap.topic}: ${gap.reason}`), 'No recorded coverage gaps.');
-    fillList('#claims', [], 'Claims will appear after Story and Playbook generation.');
-    fillList('#claim-coverage', [], 'Claim coverage will appear after content generation.');
+    fillList('#claims', claims.map((claim) => claim.statement), 'Claims will appear after Story and Playbook generation.');
+    fillList(
+      '#claim-coverage',
+      coverage.map((entry) => `${entry.path}: ${entry.claimIds.length} claim${entry.claimIds.length === 1 ? '' : 's'}`),
+      'Claim coverage will appear after content generation.',
+    );
   };
 
   const renderProgressive = (payload) => {
@@ -117,25 +159,33 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
     const candidate = payload.documents.content.state === 'available'
       ? payload.documents.content.data?.payload
       : null;
-    if (candidate?.read?.story && candidate?.read?.playbook) {
+    if (candidate?.read?.story) {
       renderStory(candidate);
-      renderPlaybook(candidate);
     } else {
       renderPendingDocument('#story-blocks', payload.documents.content.state === 'unavailable'
         ? `Story generation exists but cannot be read: ${payload.documents.content.issue}`
         : 'Story has not been generated yet. It is scheduled in the Create stage.');
+    }
+    if (candidate?.read?.playbook) {
+      renderPlaybook(candidate);
+    } else {
       renderPendingDocument('#playbook-steps', payload.documents.content.state === 'unavailable'
         ? `Playbook generation exists but cannot be read: ${payload.documents.content.issue}`
         : 'Playbook has not been generated yet. It is scheduled as a separate Create request.');
     }
-    renderProgressiveMedia(payload.media);
-    renderProgressiveEvidence(payload.documents.evidence);
+    if (candidate?.quiz?.questions) renderQuiz(candidate);
+    renderProgressiveMedia(payload.media, candidate);
+    renderProgressiveEvidence(payload.documents.evidence, candidate);
     required('#qa').textContent = payload.documents.qa.state === 'available'
       ? 'QA evidence is available and will be shown with the completed package.'
       : 'QA is pending until Story and Playbook are generated.';
     fillList('#qa-findings', [], 'No QA findings yet.');
     required('#checksum').textContent = 'Package pending';
-    decisionStatus.textContent = `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}.`;
+    decisionStatus.textContent = payload.run.currentState === 'needs_human' && payload.run.currentStage !== 'human_review'
+      ? `Automated ${payload.run.currentStage.replaceAll('_', ' ')} is blocked: ${payload.run.reason || 'operator attention required'}. Human review comes after generation and QA.`
+      : payload.run.currentStage !== 'human_review'
+        ? `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}. Human review comes after generation and QA.`
+        : `Not ready for approval. ${payload.run.currentStage.replaceAll('_', ' ')} is ${payload.run.currentState.replaceAll('_', ' ')}.`;
     setDecisionAllowed(false);
     required('#review').hidden = false;
   };
@@ -276,6 +326,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
 
   const load = async () => {
     try {
+      clearError();
       if (!runId) throw new Error('A run id is required.');
       const reviewResponse = await fetch(`/api/review?runId=${encodeURIComponent(runId)}`);
       const payload = await reviewResponse.json();
@@ -298,6 +349,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           renderAudio('audio-brief', payload.assets.audioBrief, learner.listen.brief);
           renderAudio('audio-discussion', payload.assets.audioDiscussion, learner.listen.discussion);
           renderVideo('public-preview', payload.assets.publicPreview);
+          renderSocialPost(learner.socialPost, payload.assets.publicPreview);
           renderQuiz(learner);
         } else {
           renderLegacyContent(learner);
@@ -306,6 +358,7 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
           renderAudio('audio-brief', payload.assets.audioBrief, null);
           renderAudio('audio-discussion', payload.assets.audioDiscussion, null);
           renderVideo('public-preview', payload.assets.publicPreview);
+          renderSocialPost(learner.socialPost, payload.assets.publicPreview);
         }
         renderEvidence(payload.package);
         renderQa(payload.package);
@@ -439,20 +492,50 @@ export function mountReviewPage({ document = globalThis.document, fetch = global
   };
 
   const submit = async (decision, comment) => {
+    if (submissionInFlight) return;
     const packageChecksum = model?.package?.packageChecksum;
     if (!model?.decisionAllowed || !packageChecksum || packageChecksum !== model.currentPackageChecksum) {
       return showError('A complete current package is required.');
     }
-    const response = await fetch('/api/review', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ runId, decision, packageChecksum, ...(comment ? { comment } : {}) }),
-    });
-    const payload = await response.json();
-    if (!response.ok) return showError(payload.error || 'Could not record the review decision.');
-    decisionStatus.textContent = `Recorded: ${payload.reviewStatus}`;
-    changeForm.dataset.open = 'false';
-    return load();
+    submissionInFlight = true;
+    clearError();
+    setDecisionAllowed(false);
+    decisionStatus.textContent = decision === 'approve' ? 'Recording approval...' : 'Sending changes...';
+    let submitted = false;
+    try {
+      const response = await fetch('/api/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ runId, decision, packageChecksum, ...(comment ? { comment } : {}) }),
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+        // Preserve a visible failure state when an upstream proxy returns an empty or non-JSON response.
+      }
+      if (!response.ok) throw new Error(payload.error || 'Could not record the review decision.');
+      submitted = true;
+      decisionStatus.textContent = `Recorded: ${payload.reviewStatus || decision}`;
+      changeForm.dataset.open = 'false';
+      await load();
+    } catch (submitError) {
+      decisionStatus.textContent = 'Decision not recorded';
+      showError(submitError instanceof Error ? submitError.message : 'Could not record the review decision.');
+    } finally {
+      submissionInFlight = false;
+      if (!submitted) {
+        const currentChecksum = model?.package?.packageChecksum;
+        const allowed = Boolean(
+          model?.decisionAllowed
+          && currentChecksum
+          && currentChecksum === model.currentPackageChecksum
+          && model.reviewStatus !== 'approved'
+          && model.reviewStatus !== 'rejected'
+        );
+        setDecisionAllowed(allowed);
+      }
+    }
   };
 
   required('[data-decision="approve"]').addEventListener('click', () => void submit('approve'));

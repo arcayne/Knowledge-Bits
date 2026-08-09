@@ -23,12 +23,12 @@ test('HTTP delivery sends the immutable package identity', async () => {
   });
 
   await assert.rejects(adapter.deliver(input()), DeliveryTransientError);
-  assert.equal(String(requestUrl), 'https://destination.example.test/import');
+  assert.equal(String(requestUrl), 'https://destination.example.test/deliver');
   assert.equal((requestBody as DeliveryAdapterInput).packageVersionId, input().packageVersionId);
   assert.equal((requestBody as DeliveryAdapterInput).packageChecksum, input().packageChecksum);
 });
 
-test('HTTP delivery accepts Nuglet import metadata while returning the portable delivery response', async () => {
+test('HTTP delivery accepts Nuglet publish metadata while returning the portable delivery response', async () => {
   const adapter = new HttpDeliveryAdapter({
     baseUrl: 'https://destination.example.test/',
     fetch: async () => Response.json({
@@ -44,7 +44,7 @@ test('HTTP delivery accepts Nuglet import metadata while returning the portable 
         canonicalPath: '/lessons/example',
         status: 'bound',
       },
-      dryRun: true,
+      dryRun: false,
     }),
   });
 

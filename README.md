@@ -158,9 +158,14 @@ The control API supplies lease-scoped job inputs and permits reads only for decl
 Each run must carry its own `notebookLmNotebookId`; the engine rejects assigning one NotebookLM notebook
 to multiple runs. Do not configure a global NotebookLM notebook ID. Existing local manifests should be
 reconciled into the run records before they are processed.
-The worker records NotebookLM's accepted HTTPS source list as immutable source receipts, binds
-learner-facing citations during content generation, and passes content to the local Pi and media adapters. Provider calls and subprocesses use
-bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
+When Pi is configured for Google Vertex, the Research task reuses that model and ADC configuration with
+Vertex Google Search grounding to propose a bounded independent source set. The grounding metadata is
+read at the provider boundary because Pi's normalized assistant response does not expose source URLs.
+Candidate URLs are untrusted: the worker permits only public HTTPS targets, resolves and rejects private
+network addresses, retrieves bounded HTML, text, or PDF bytes, and imports only accepted sources into
+NotebookLM. Exact retrieved bytes become immutable source snapshots; NotebookLM selects from that
+verified corpus and later content citations bind back to those snapshots. Provider calls and subprocesses
+use bounded execution deadlines and propagated abort signals. Missing or invalid provider configuration
 moves the affected stage to `needs_human`; production never falls back to fixture content.
 
 ### Starting a new Nuglet
@@ -277,16 +282,19 @@ worker or API deployment.
 ## Delivery
 
 `DELIVERY_ADAPTER_URL` is the destination's base endpoint. For Nuglet, use
-`https://api.nuglet.app/internal/knowledge-bits`; the adapter calls `/import` and `/verify` beneath it.
+`https://api.nuglet.app/internal/knowledge-bits`; the adapter calls `/deliver` and `/verify` beneath it.
+`/deliver` is the final publish transaction; `/import` remains the explicit dry-run validation endpoint.
 `DELIVERY_ADAPTER_TOKEN` must match Nuglet backend's `KNOWLEDGE_BITS_IMPORT_TOKEN` and authenticates
 only those server-to-server requests. Delivery receives the persisted immutable package version,
-approved checksum, and stable idempotency key. Once an import response is persisted, a reclaimed
-delivery verifies that response instead of issuing another import. Retries from before a persisted
+approved checksum, and stable idempotency key. Once a delivery response is persisted, a reclaimed
+delivery verifies that response instead of issuing another publish. Retries from before a persisted
 response reuse the same idempotency key.
 
-Nuglet delivery remains dry-run only. Every approved Knowledge Bits package must already have an exact
-package-to-lesson mapping in Nuglet. Import validation records an immutable receipt and returns the
-existing canonical lesson preview without changing its slug, SEO metadata, or published content.
+The release CLI (`pnpm release:nuglet`) is the operator-facing control surface around this flow. It
+inspects the approved package, records explicit approval when requested, watches the worker delivery
+state, and verifies the public SEO surface. It does not impersonate the worker or write Nuglet's database.
+Nuglet's `/deliver` route performs the idempotent materialization, public projection, media references,
+and publish receipt transaction.
 
 ## Vercel boundary
 

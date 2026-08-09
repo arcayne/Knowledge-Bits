@@ -72,6 +72,7 @@ export function bindStandardNugletIntakePlan(input: {
         'literal corporate stock imagery',
       ],
     },
+    heroMode: 'deferred',
     mediaMode: 'generate',
   });
   return {

@@ -1,0 +1,60 @@
+{
+  "workflow": "agentic-delivery-playbook",
+  "workflowVersion": "0.2",
+  "phase": "closeout",
+  "status": "in_progress",
+  "taskFit": "broad-ticket",
+  "objective": "Add a canonical hashtag-bearing social post to each Nuglet and expose it through review, delivery, and public-preview context.",
+  "specPath": "specs/20260809-1750-nuglet-social-post/spec.md",
+  "activeRole": "implementer",
+  "activeModel": "runtime-default",
+  "reviewGates": {
+    "specApproval": "approved",
+    "implementation": "complete",
+    "qa": "complete"
+  },
+  "modelLedger": [
+    {
+      "role": "spec-author",
+      "source": "runtime-default"
+    }
+  ],
+  "changedFiles": [
+    "packages/contracts/src/knowledge-bits.ts",
+    "packages/contracts/src/workflow.ts",
+    "packages/pipeline/src/package-builder.ts",
+    "apps/worker/src/checks/deterministic.ts",
+    "apps/worker/src/providers/notebooklm.ts",
+    "apps/worker/scripts/nuglet-public-preview.mjs",
+    "apps/worker/scripts/nuglet-media-command.mjs",
+    "apps/api/src/services/review-packages.ts",
+    "apps/review/src/pages/runs/[runId].astro",
+    "apps/review/src/review-client.mjs",
+    "apps/api/src/services/review-packages.test.ts",
+    "apps/worker/scripts/nuglet-media-command.test.mjs",
+    "apps/worker/scripts/nuglet-public-preview.test.mjs",
+    "apps/worker/src/checks/checks.test.ts",
+    "apps/worker/src/providers/notebooklm.test.ts",
+    "packages/contracts/test/contracts.test.mjs",
+    "specs/20260809-1750-nuglet-social-post/spec.md",
+    "specs/20260809-1750-nuglet-social-post/notes.md",
+    "specs/20260809-1750-nuglet-social-post/run.json"
+  ],
+  "validation": [
+    "contracts build and 39 contract tests pass",
+    "worker typecheck passes",
+    "focused deterministic, NotebookLM, media-command, public-preview, review-client, and review-package tests pass",
+    "git diff --check passed",
+    "root contract/security tests pass",
+    "release-nuglet tests pass",
+    "full worker suite: 173 passed and 3 cancelled by existing engine-client pending-promise behavior",
+    "review browser suite has an existing 30-second timeout",
+    "API typecheck is blocked by the existing delete-on-required-property error in apps/api/src/services/nuglet-package-materializer.test.ts"
+  ],
+  "findings": [],
+  "knownGaps": [
+    "Whether platform-specific variants are needed remains open; current proposal assumes one cross-platform post.",
+    "The already-approved Protect Your Attention package is unchanged. Its strict content needs a safe new content-revision workflow before a grounded social post can be backfilled and reviewed without mutating history."
+  ],
+  "nextAction": "Merge the PR; continue video generation from the clean main branch. Plan Protect Your Attention historical backfill separately."
+}

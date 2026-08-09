@@ -127,6 +127,26 @@ test('media regenerates only the explicitly requested review asset', async () =>
   if (result.kind === 'success') assert.deepEqual(result.assets?.map((asset) => asset.kind), ['hero']);
 });
 
+test('deferred hero mode never asks the provider for a hero asset', async () => {
+  const requests: Array<Parameters<MediaClient['generate']>[0]> = [];
+  const deferredPlan = structuredClone(generationPlan);
+  deferredPlan.heroMode = 'deferred';
+  const kinds = ['infographic', 'audio_brief', 'audio_discussion'] as const;
+  const provider = providerFor((request) => {
+    requests.push(request);
+    return request.kinds.map((kind) => generated(kind));
+  }, deferredPlan, { mediaKinds: [...kinds], mediaOperation: 'generate' });
+
+  const result = await provider.execute(mediaInput());
+
+  assert.equal(result.kind, 'success');
+  assert.deepEqual(requests[0]?.kinds, kinds);
+  if (result.kind === 'success') {
+    assert.deepEqual(result.assets?.map((asset) => asset.kind), kinds);
+    assert.equal(result.assets?.some((asset) => asset.kind === 'hero'), false);
+  }
+});
+
 test('media accepts one technically valid public preview and keeps it pending human review', async () => {
   const provider = providerFor((request) => request.kinds.map((kind) => generated(kind)), generationPlan, {
     mediaKinds: ['public_preview'],

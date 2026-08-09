@@ -36,6 +36,10 @@ export const artifactReferenceSchema = z.object({
   createdAt: z.string().datetime(),
   provider: z.string().min(1),
   inputChecksum: checksumSchema.nullable(),
+  companion: z.object({
+    contentChecksum: checksumSchema,
+    socialPostChecksum: checksumSchema,
+  }).strict().optional(),
 }).strict();
 
 export const jobClaimSchema = z.object({

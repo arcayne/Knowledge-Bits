@@ -9,7 +9,7 @@ import sharp from "sharp";
 
 const execFileAsync = promisify(execFile);
 
-export const PUBLIC_PREVIEW_END_CARD_VERSION = "nuglet.short-end-card@2.0.0";
+export const PUBLIC_PREVIEW_END_CARD_VERSION = "nuglet.short-end-card@2.2.0";
 export const PUBLIC_PREVIEW_END_CARD_SECONDS = 3;
 export const PUBLIC_PREVIEW_END_CARD_TRANSITION_SECONDS = 0.45;
 export const PUBLIC_PREVIEW_END_CARD_VOICE_OVERLAP_SECONDS = 0.65;
@@ -77,7 +77,7 @@ export function publicPreviewEndCardPlan(metadata, title, options = {}) {
   const providerTailSeconds = Number.isFinite(options.providerTailSeconds)
     ? Math.max(0, Number(options.providerTailSeconds))
     : PUBLIC_PREVIEW_PROVIDER_TAIL_SECONDS;
-  const endCardDurationSeconds = Number.isFinite(options.endCardDurationSeconds)
+  const minimumEndCardDurationSeconds = Number.isFinite(options.endCardDurationSeconds)
     ? Math.min(PUBLIC_PREVIEW_MAX_SECONDS - 1, Math.max(0.25, Number(options.endCardDurationSeconds)))
     : PUBLIC_PREVIEW_END_CARD_SECONDS;
   const endCardTransitionSeconds = Number.isFinite(options.endCardTransitionSeconds)
@@ -89,20 +89,25 @@ export function publicPreviewEndCardPlan(metadata, title, options = {}) {
   const contentDurationSeconds = Math.max(
     1,
     Math.min(
-      providerDurationSeconds - providerTailSeconds,
-      PUBLIC_PREVIEW_MAX_SECONDS - endCardDurationSeconds,
+      providerDurationSeconds - Math.max(providerTailSeconds, minimumEndCardDurationSeconds),
+      PUBLIC_PREVIEW_MAX_SECONDS - minimumEndCardDurationSeconds,
     ),
   );
   const titleLines = wrapEndCardTitle(title);
   const titleFontSize = titleLines.length === 1 ? 96 : titleLines.length === 2 ? 90 : 66;
+  const finalDurationSeconds = Math.min(providerDurationSeconds, PUBLIC_PREVIEW_MAX_SECONDS);
+  const audioSourceDurationSeconds = Math.min(providerDurationSeconds, finalDurationSeconds);
+  const endCardDurationSeconds = finalDurationSeconds - contentDurationSeconds;
   return {
     providerDurationSeconds,
     providerTailSeconds: providerDurationSeconds - contentDurationSeconds,
     contentDurationSeconds,
+    audioSourceDurationSeconds,
+    audioTailTrimSeconds: providerDurationSeconds - audioSourceDurationSeconds,
     endCardDurationSeconds,
     endCardTransitionSeconds,
     endCardVoiceOverlapSeconds,
-    finalDurationSeconds: contentDurationSeconds + endCardDurationSeconds,
+    finalDurationSeconds,
     width,
     height,
     titleLines,
@@ -135,6 +140,7 @@ export async function renderPublicPreviewVideo(bytes, title, options = {}) {
     const width = plan.width;
     const height = plan.height;
     const content = plan.contentDurationSeconds.toFixed(3);
+    const audioSource = plan.audioSourceDurationSeconds.toFixed(3);
     const total = plan.finalDurationSeconds.toFixed(3);
     const footerHeight = Math.max(34, Math.round(height * 0.04));
     const footerLogoWidth = Math.max(74, Math.round(width * 0.12));
@@ -168,10 +174,10 @@ export async function renderPublicPreviewVideo(bytes, title, options = {}) {
         - plan.endCardTransitionSeconds
         - plan.endCardVoiceOverlapSeconds,
     ).toFixed(3);
-    const audioFadeDuration = Math.min(0.12, plan.contentDurationSeconds).toFixed(3);
+    const audioFadeDuration = Math.min(0.04, plan.audioSourceDurationSeconds).toFixed(3);
     const audioFadeStart = Math.max(
       0,
-      plan.contentDurationSeconds - Number(audioFadeDuration),
+      plan.audioSourceDurationSeconds - Number(audioFadeDuration),
     ).toFixed(3);
     const filter = [
       `[2:v]scale=${footerLogoWidth}:-1[footerLogo];`,
@@ -182,9 +188,9 @@ export async function renderPublicPreviewVideo(bytes, title, options = {}) {
       `fade=t=in:st=0:d=${transition}:alpha=1,setpts=PTS+${transitionStart}/TB[card];`,
       `[contentBranded]tpad=stop_mode=clone:stop_duration=${plan.endCardDurationSeconds}[base];`,
       `[base][card]overlay=x=0:y=0:eof_action=pass:shortest=0[v];`,
-      `[0:a]atrim=duration=${content},asetpts=PTS-STARTPTS,`,
+      `[0:a]atrim=duration=${audioSource},asetpts=PTS-STARTPTS,`,
       `afade=t=out:st=${audioFadeStart}:d=${audioFadeDuration},`,
-      `apad=pad_dur=${plan.endCardDurationSeconds}[a]`,
+      `apad=whole_dur=${total}[a]`,
     ].join("");
 
     await execFileAsync(ffmpeg, [
@@ -216,6 +222,8 @@ export async function renderPublicPreviewVideo(bytes, title, options = {}) {
       providerDurationSeconds: plan.providerDurationSeconds,
       providerTailTrimSeconds: plan.providerTailSeconds,
       narrativeDurationSeconds: plan.contentDurationSeconds,
+      audioSourceDurationSeconds: plan.audioSourceDurationSeconds,
+      audioTailTrimSeconds: plan.audioTailTrimSeconds,
       endCardDurationSeconds: plan.endCardDurationSeconds,
       endCardTransitionSeconds: plan.endCardTransitionSeconds,
       endCardVoiceOverlapSeconds: plan.endCardVoiceOverlapSeconds,

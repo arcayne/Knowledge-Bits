@@ -269,6 +269,58 @@ test('claimJob gives produce_assets enough time for NotebookLM media generation'
   assert.equal(claim?.executionDeadlineAt, '2026-07-12T12:20:00.000Z');
 });
 
+test('keeps a completed public preview Short in the successful media set', async () => {
+  const { repository, now } = createRepository();
+  await repository.createRun({
+    id: runId,
+    title: 'Public preview Short',
+    locale: 'en',
+    brief: { lessonSlug: 'public-preview-short' },
+    currentStage: 'produce_assets',
+    stages: [{ name: 'produce_assets', state: 'queued' }],
+  });
+  const job = await repository.queueJob({
+    runId,
+    stage: 'produce_assets',
+    action: 'produce_assets',
+    idempotencyKey: 'public-preview-short',
+    input: { mediaKinds: ['public_preview'] },
+  });
+  const claim = await repository.claimJob({ workerId: 'short-worker', capabilities: ['produce_assets'], leaseSeconds: 60 });
+  assert.equal(claim?.jobId, job.id);
+
+  const artifact = await repository.recordArtifactForActiveLease({
+    workerId: 'short-worker',
+    jobId: job.id,
+    id: '7d14d6af-22d6-4fd8-930b-9e19ea2a1f51',
+    runId,
+    revision: 1,
+    kind: 'public_preview',
+    mediaType: 'video/mp4',
+    checksum,
+    storageKey: 'runs/public-preview-short/public_preview.mp4',
+    byteSize: 128,
+    provenance: { provider: 'notebooklm' },
+    inputChecksum: checksum,
+  });
+  await repository.completeJob({
+    workerId: 'short-worker',
+    result: {
+      jobId: job.id,
+      packageId: runId,
+      stage: 'produce_assets',
+      state: 'done',
+      completedAt: now.toISOString(),
+      outputChecksum: checksum,
+      error: null,
+    },
+  });
+
+  const successful = await repository.listArtifactsForSuccessfulStageJobs(runId, 1);
+  assert.deepEqual(successful.map((candidate) => candidate.id), [artifact.id]);
+  assert.equal(successful[0]?.kind, 'public_preview');
+});
+
 test('renewJobLease extends the active lease by its original duration', async () => {
   const { repository, setNow } = createRepository();
   await createRun(repository);

@@ -85,6 +85,114 @@ test('deterministic checks reject empty and incomplete learner claim inventories
   assert.ok(incomplete.findings.some(({ code }) => code === 'claim-coverage'));
 });
 
+test('deterministic checks allow ordinary discussion of competitors', () => {
+  const report = runDeterministicChecks({
+    candidate: {
+      ...candidate,
+      depths: {
+        ...candidate.depths,
+        deep: 'Compare the offer with a competitor before choosing the clearest next step.',
+      },
+    },
+    evidence,
+  });
+
+  assert.equal(report.findings.some(({ code }) => code === 'placeholder'), false);
+});
+
+test('deterministic checks require a hashtagged social post for Story Playbook content', () => {
+  const basePayload = {
+    identity: {
+      locale: 'en-GB',
+      topic: { label: 'focus', categoryId: null },
+      tags: ['focus'],
+      title: 'Return to one task',
+      deck: 'Make returning easier.',
+      slugSuggestion: 'return-to-one-task',
+    },
+    learning: {
+      centralIdea: 'A written next step makes returning easier.',
+      whyItMatters: 'Restarting is easier when the next move is visible.',
+      oneLineToKeep: 'Leave yourself a visible next step.',
+      terminology: ['restart friction'],
+      action: { label: 'Write the next step', instruction: 'Write one next task on paper.' },
+    },
+    socialPost: { platform: 'cross-platform', text: 'Return to your next step. #Focus #WorkHabits #Productivity' },
+    read: {
+      story: {
+        title: 'The interruption',
+        estimatedMinutes: 2,
+        blocks: [
+          { type: 'opening', text: 'The interruption arrived mid-task.', claimRefs: [] },
+          { type: 'evidence', text: 'A visible next step reduces restart friction.', claimRefs: [claimId] },
+          { type: 'turning_point', text: 'The next move was already written.', claimRefs: [claimId] },
+          { type: 'practical_bridge', text: 'Write the next step before switching.', claimRefs: [claimId] },
+        ],
+      },
+      playbook: {
+        title: 'Leave a restart cue',
+        estimatedMinutes: 2,
+        principle: 'Make the next move visible.',
+        whyItMatters: 'A visible cue lowers the cost of returning.',
+        steps: [
+          { id: 'one', title: 'Pause', body: 'Pause before switching.', claimRefs: [claimId] },
+          { id: 'two', title: 'Name', body: 'Name the next move.', claimRefs: [claimId] },
+          { id: 'three', title: 'Return', body: 'Use the cue when you return.', claimRefs: [claimId] },
+        ],
+        example: { title: 'A short note', body: 'Write the next sentence.', claimRefs: [claimId] },
+        watchOuts: ['Do not turn the cue into a long planning session.'],
+        action: 'Write one next task on paper.',
+      },
+    },
+    visual: { title: 'The restart cue', altText: 'A visible next step.', textEquivalent: ['Name the next move.'], claimRefs: [claimId] },
+    listen: {
+      brief: { editorialBrief: { objective: 'Explain the cue.', tone: 'Clear.', keyPoints: ['Name the next move.'], claimRefs: [claimId] } },
+      discussion: { editorialBrief: { objective: 'Discuss the cue.', tone: 'Practical.', keyPoints: ['Name the next move.'], claimRefs: [claimId] } },
+    },
+    quiz: { questions: [
+      { id: 'q1', prompt: 'What helps you return?', options: [{ id: 'a', text: 'A cue' }, { id: 'b', text: 'Noise' }, { id: 'c', text: 'Guessing' }], correctOptionId: 'a', rationale: 'A cue names the next move.', reviewConcept: 'Restart cue', claimRefs: [claimId] },
+      { id: 'q2', prompt: 'When do you write it?', options: [{ id: 'a', text: 'Before switching' }, { id: 'b', text: 'Never' }, { id: 'c', text: 'After forgetting' }], correctOptionId: 'a', rationale: 'Write it before switching.', reviewConcept: 'Timing', claimRefs: [claimId] },
+      { id: 'q3', prompt: 'What should it be?', options: [{ id: 'a', text: 'Visible' }, { id: 'b', text: 'Hidden' }, { id: 'c', text: 'Vague' }], correctOptionId: 'a', rationale: 'Visibility makes return easier.', reviewConcept: 'Visibility', claimRefs: [claimId] },
+    ] },
+    claims: candidate.claims,
+    claimCoverage: [
+      { path: 'identity.title', claimIds: [claimId] },
+      { path: 'learning.centralIdea', claimIds: [claimId] },
+      { path: 'learning.whyItMatters', claimIds: [claimId] },
+      { path: 'learning.oneLineToKeep', claimIds: [claimId] },
+      { path: 'learning.action', claimIds: [claimId] },
+      { path: 'read.story', claimIds: [claimId] },
+      { path: 'read.playbook', claimIds: [claimId] },
+      { path: 'visual', claimIds: [claimId] },
+      { path: 'listen.brief', claimIds: [claimId] },
+      { path: 'listen.discussion', claimIds: [claimId] },
+      { path: 'quiz', claimIds: [claimId] },
+    ],
+    materialization: 'draft',
+    contentModel: 'story-playbook.v1',
+  } as const;
+
+  const missing = runDeterministicChecks({
+    candidate: {
+      kind: 'nuglet.lesson.v1',
+      schemaVersion: '1.1.0',
+      payload: (() => {
+        const payload = { ...basePayload } as Record<string, unknown>;
+        delete payload.socialPost;
+        return payload;
+      })(),
+    } as unknown as ContentCandidate,
+    evidence: { sources: [{ ...evidence.sources[0], title: 'Focused work evidence' }] },
+  });
+  assert.ok(missing.findings.some(({ code }) => code === 'social-post'));
+
+  const valid = runDeterministicChecks({
+    candidate: { kind: 'nuglet.lesson.v1', schemaVersion: '1.1.0', payload: basePayload } as unknown as ContentCandidate,
+    evidence: { sources: [{ ...evidence.sources[0], title: 'Focused work evidence' }] },
+  });
+  assert.equal(valid.findings.some(({ code }) => code === 'social-post'), false);
+});
+
 test('editorial parsing uses only critical, major, and minor severities', () => {
   const report = parseEditorialCheck({
     findings: [{ code: 'unsupported-claim', severity: 'major', message: 'No source supports this.' }],
