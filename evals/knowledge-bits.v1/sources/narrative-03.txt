@@ -1,0 +1,1 @@
+Immutable evaluation source for Long terminology cross-format. This fixture is local and contains no production data.

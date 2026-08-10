@@ -1,0 +1,10 @@
+{
+  "recipes": {
+    "nuglet.lesson.v1": ["evals/knowledge-bits.v1/provenance/recipe-nuglet.lesson.v1.txt"]
+  },
+  "prompts": {
+    "research": ["evals/knowledge-bits.v1/provenance/prompt-research.txt"],
+    "create": ["evals/knowledge-bits.v1/provenance/prompt-create.txt"],
+    "check": ["evals/knowledge-bits.v1/provenance/prompt-check.txt"]
+  }
+}

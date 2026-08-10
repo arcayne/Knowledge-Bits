@@ -105,6 +105,16 @@ importers:
         specifier: 3.24.1
         version: 3.24.1
 
+  packages/evaluation:
+    dependencies:
+      '@knowledge-bits/pipeline':
+        specifier: workspace:*
+        version: link:../pipeline
+    devDependencies:
+      '@types/node':
+        specifier: 24.1.0
+        version: 24.1.0
+
   packages/pipeline:
     dependencies:
       '@knowledge-bits/contracts':

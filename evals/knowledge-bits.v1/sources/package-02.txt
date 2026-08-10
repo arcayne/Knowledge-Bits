@@ -1,0 +1,1 @@
+Immutable evaluation source for Schema 1.1 retry delivery package. This fixture is local and contains no production data.

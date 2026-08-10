@@ -1,0 +1,1 @@
+Immutable evaluation source for Stale source binding. This fixture is local and contains no production data.

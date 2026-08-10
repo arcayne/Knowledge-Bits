@@ -1,0 +1,1 @@
+Immutable evaluation source for Weak source rejection. This fixture is local and contains no production data.
