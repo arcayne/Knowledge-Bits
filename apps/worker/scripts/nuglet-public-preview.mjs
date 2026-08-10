@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.4.0";
+export const PUBLIC_PREVIEW_TEMPLATE_VERSION = "nuglet.public-preview@1.6.0";
 
 export function compilePublicPreview(content) {
   const lesson = lessonPayload(content);
@@ -132,6 +132,7 @@ export function renderPublicPreviewSource(brief) {
 }
 
 export function renderPublicPreviewPrompt(brief, marker) {
+  const openingSceneDirection = openingSceneDirectionFor(brief);
   return [
     marker,
     `Create an English-language NotebookLM Short for the locked Nuglet "${brief.title}".`,
@@ -144,16 +145,29 @@ export function renderPublicPreviewPrompt(brief, marker) {
     `Why it matters: ${brief.whyItMatters}`,
     `Visual anchors: ${brief.visualAnchors.join(" ")}`,
     "Keep one consistent person or situation across the opening and return; show one concrete cue or object at a time rather than diagrams, dashboards, formulas, or montage overload.",
+    openingSceneDirection,
     "Narrate in complete, natural sentences. Use cautious qualitative language and explain only the mechanism supported by the curated source.",
     `Editorial guardrails: ${brief.editorialGuardrails.join(" ")}`,
     "Visual casting should generally reflect working adults aged roughly 25-40, with women represented most often. Younger men and people from varied backgrounds should appear naturally too. This is a flexible direction, not an exclusive rule or rigid quota. Avoid repeatedly defaulting to middle-aged or older men, and avoid stereotypes or tokenistic casting.",
     `Visual direction: ${brief.visualDirection}`,
     "Make every challenge, tension, or problem beat object-first. Do not use a human face to communicate friction, struggle, confusion, difficulty, failure, or conflict.",
+    "Do not default to coffee, cups, mugs, breakfast beverages, desks, or laptops as the opening motif. Choose the concrete cue from this Nuglet's recognition moment, and vary the opening object across lessons. Use only objects that are necessary to the scene and render each one cleanly and recognizably.",
     "Human figures may appear only during recognition, curiosity, insight, or relief. Keep every visible person relaxed, curious, gently concentrated, or softly smiling.",
     "Never show furrowed brows, narrowed eyes, downturned mouths, clenched jaws or fists, tense shoulders, glaring, scowling, hostile, distressed, panicked, defeated, or confrontational expressions or posture.",
     "The emotional arc is thoughtful surprise, curiosity, calm recognition, clarity, and gentle relief. The challenge should feel intellectually intriguing, never emotionally threatening.",
     "Tone: warm, hopeful, intelligent, emotionally observant, concise, evidence-grounded, and human. No hype, shame, fear, diagnosis, invented statistics, or transformation promises. Do not resolve the lesson or repeat its exact practice, reframe, quiz answer, or conclusion.",
   ].join(" ");
+}
+
+function openingSceneDirectionFor(brief) {
+  const title = normalize(brief.title);
+  if (title.includes("build defaults")) {
+    return "For this preview, make the opening visual about choosing between two breakfast foods or looking at a small pantry choice. Do not show a coffee cup or mug, and do not use a generic morning-routine montage.";
+  }
+  if (title.includes("weekly reset")) {
+    return "For this preview, make the opening visual about a wall calendar, a weekly page, or a phone reminder being reviewed on Monday. Do not show a coffee cup or mug, and do not use a generic morning-routine montage.";
+  }
+  return "For this preview, make the opening visual specific to the recognition moment above. Do not use coffee, cups, or mugs as a default prop, and do not reuse the same opening object across unrelated Nuglets.";
 }
 
 export function publicPreviewSourceTitle(brief) {

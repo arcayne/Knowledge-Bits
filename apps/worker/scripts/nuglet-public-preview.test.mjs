@@ -61,7 +61,7 @@ test("compiles a limited English source without protected lesson answers", () =>
   assert.doesNotMatch(source, /Visible cues make attention easier to pull away/);
   assert.doesNotMatch(source, /Design the setup before relying on effort/);
   assert.match(source, /attention pattern/);
-  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.4.0");
+  assert.equal(brief.promptTemplateVersion, "nuglet.public-preview@1.6.0");
   assert.match(source, /phone on the desk, five open tabs, and a message window/);
   assert.match(source, /Visible cues pull you/);
   assert.match(publicPreviewSourceTitle(brief), /^Nuglet public preview [a-f0-9]{12}$/);
@@ -95,6 +95,8 @@ test("prompt binds NotebookLM Short format and the protected boundary", () => {
   assert.match(prompt, /phone on the desk, five open tabs/);
   assert.match(prompt, /complete natural sentences/);
   assert.match(prompt, /Do not intensify the source/);
+  assert.match(prompt, /Do not default to coffee, cups, mugs/);
+  assert.match(prompt, /vary the opening object across lessons/);
   assert.doesNotMatch(prompt, /Put the phone away/);
 });
 
@@ -106,6 +108,24 @@ test("prompt biases casting toward the core audience without making it exclusive
   assert.match(prompt, /flexible direction, not an exclusive rule or rigid quota/);
   assert.match(prompt, /Avoid repeatedly defaulting to middle-aged or older men/);
   assert.match(prompt, /avoid stereotypes or tokenistic casting/);
+});
+
+test("prompt gives the current preview lessons distinct opening scenes", () => {
+  const defaultsPrompt = renderPublicPreviewPrompt(
+    { ...compilePublicPreview(content), title: "Build defaults for decisions you repeat" },
+    "[marker]",
+  );
+  const weeklyPrompt = renderPublicPreviewPrompt(
+    { ...compilePublicPreview(content), title: "Design a weekly reset that survives real life" },
+    "[marker]",
+  );
+
+  assert.match(defaultsPrompt, /two breakfast foods or looking at a small pantry choice/);
+  assert.match(weeklyPrompt, /wall calendar, a weekly page, or a phone reminder/);
+  assert.notEqual(
+    defaultsPrompt.match(/For this preview, make the opening visual[^.]+\./)?.[0],
+    weeklyPrompt.match(/For this preview, make the opening visual[^.]+\./)?.[0],
+  );
 });
 
 test("flags obvious practice and quiz-answer leakage", () => {

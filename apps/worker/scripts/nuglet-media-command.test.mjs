@@ -261,7 +261,7 @@ test("public preview marker binds the prompt contract version", () => {
 
   assert.match(
     prompt,
-    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.4\.0\]/,
+    /\[knowledge-bits:aaaaaaaaaaaaaaaa:public_preview:nuglet\.public-preview@1\.6\.0\]/,
   );
 });
 
