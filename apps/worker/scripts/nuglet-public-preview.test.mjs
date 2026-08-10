@@ -86,6 +86,28 @@ test("binds the public preview brief to the exact social post revision", () => {
   assert.doesNotMatch(renderPublicPreviewSource(original), /#Attention/);
 });
 
+test("rejects preview generation without the canonical social post", () => {
+  const withoutSocialPost = structuredClone(content);
+  delete withoutSocialPost.payload.socialPost;
+  assert.throws(
+    () => compilePublicPreview(withoutSocialPost),
+    /social post text/,
+  );
+});
+
+test("rejects preview generation when the social post is not review-ready", () => {
+  assert.throws(
+    () => compilePublicPreview({
+      ...content,
+      payload: {
+        ...content.payload,
+        socialPost: { platform: "cross-platform", text: "A useful reminder. #Focus #Habits" },
+      },
+    }),
+    /at least three hashtags/,
+  );
+});
+
 test("prompt binds NotebookLM Short format and the protected boundary", () => {
   const prompt = renderPublicPreviewPrompt(compilePublicPreview(content), "[marker]");
   assert.match(prompt, /NotebookLM Short/);
@@ -199,6 +221,10 @@ test("uses the legacy lessonV2 story and visual anchors when present", () => {
     hook: "Your attention is not just where you look.",
     takeaway: "Put your phone away for one focus block.",
     commonMistake: "Trying to make a noisy environment work through willpower.",
+    socialPost: {
+      platform: "cross-platform",
+      text: "Your setup keeps inviting your attention elsewhere. Notice the cues before blaming your focus. #ProtectYourAttention #Focus #WorkHabits",
+    },
     lessonV2: {
       read: {
         sections: [{

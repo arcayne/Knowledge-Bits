@@ -1,0 +1,41 @@
+{
+  "workflow": "agentic-delivery-playbook v0.2",
+  "phase": "implementation_qa",
+  "status": "in_progress",
+  "taskFit": "broad-ticket",
+  "specPath": "specs/20260810-legacy-promotion-batch/spec.md",
+  "activeRole": "primary-agent",
+  "modelLedger": [
+    { "role": "primary-agent", "source": "runtime-default" }
+  ],
+  "reviewGates": {
+    "spec": "approved by explicit end-to-end user request",
+    "critic": "self-review complete",
+    "qa": "pending",
+    "humanContentReview": "required for every live run"
+  },
+  "changedFiles": [
+    "packages/contracts/src/knowledge-bits.ts",
+    "packages/contracts/test/contracts.test.mjs",
+    "apps/api/src/repositories/workflow-repository.ts",
+    "apps/api/src/repositories/workflow-repository.test.ts",
+    "apps/api/src/routes/reviews.ts",
+    "apps/api/src/routes/reviews.test.ts",
+    "apps/api/src/services/review-packages.ts",
+    "apps/api/src/services/standard-nuglet-intake.ts",
+    "apps/api/src/services/standard-nuglet-intake.test.ts",
+    "apps/worker/scripts/nuglet-public-preview.mjs",
+    "apps/worker/scripts/nuglet-public-preview.test.mjs"
+  ],
+  "validation": [
+    "contracts tests: 42 passed",
+    "API tests: 150 passed, 4 Docker-only skipped",
+    "worker tests: 178 passed",
+    "public preview tests: 10 passed",
+    "workspace typecheck: 5 packages passed",
+    "git diff --check: passed"
+  ],
+  "findings": [],
+  "knownGaps": [],
+  "nextAction": "Publish and deploy the implementation, then prepare ten live source revisions."
+}

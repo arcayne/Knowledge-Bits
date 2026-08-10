@@ -382,6 +382,22 @@ export interface PrepareLegacyRevisionResult {
   previousPackageChecksum: string;
 }
 
+export interface PrepareSourceRevisionInput {
+  runId: string;
+  expectedRevision: number;
+  expectedPackageChecksum: string;
+  notebookLmNotebookId: string;
+  brief: JsonObject;
+  comment: string;
+  operatorId: string;
+}
+
+export interface PrepareSourceRevisionResult {
+  run: WorkflowRun;
+  previousRevision: number;
+  previousPackageChecksum: string;
+}
+
 export interface WorkflowStore {
   createRun(input: CreateRunInput): Promise<WorkflowRun>;
   bootstrapRun(input: BootstrapRunInput): Promise<WorkflowRun>;
@@ -421,6 +437,7 @@ export interface WorkflowStore {
     recipeOverrides?: MediaRecipeOverrides,
   ): Promise<WorkflowRun>;
   prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult>;
+  prepareSourceRevision(input: PrepareSourceRevisionInput): Promise<PrepareSourceRevisionResult>;
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun>;
   recordPackageChange(input: RecordPackageChangeInput): Promise<WorkflowRun>;
   recordPackageVersion(input: RecordPackageVersionInput): Promise<WorkflowPackageVersion>;
@@ -571,6 +588,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   prepareLegacyRevision(input: PrepareLegacyRevisionInput): Promise<PrepareLegacyRevisionResult> {
     return this.store.prepareLegacyRevision(input);
+  }
+
+  prepareSourceRevision(input: PrepareSourceRevisionInput): Promise<PrepareSourceRevisionResult> {
+    return this.store.prepareSourceRevision(input);
   }
 
   reviewRun(input: ReviewRunInput): Promise<WorkflowRun> {
@@ -1393,6 +1414,103 @@ export class PrismaWorkflowStore implements WorkflowStore {
           jobId: `legacy-revision:${input.expectedRevision}`,
           effectKey: operation.effectKey,
           type: 'prepare_legacy_revision',
+          payload: toPrismaJson(operation.payload),
+        },
+      });
+      const updated = await transaction.run.findUniqueOrThrow({
+        where: { id: run.id },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      });
+      return {
+        run: toWorkflowRun(updated),
+        previousRevision: input.expectedRevision,
+        previousPackageChecksum: input.expectedPackageChecksum,
+      };
+    });
+  }
+
+  async prepareSourceRevision(input: PrepareSourceRevisionInput): Promise<PrepareSourceRevisionResult> {
+    assertSourceRevisionInput(input);
+    return this.prisma.$transaction(async (transaction) => {
+      await lockRun(transaction, input.runId);
+      const run = await transaction.run.findUnique({
+        where: { id: input.runId },
+        include: { stages: true },
+      });
+      if (!run) throw new WorkflowNotFoundError('Run not found');
+      const operation = sourceRevisionOperation(input);
+      const existingEffect = await transaction.workflowEffect.findUnique({ where: { effectKey: operation.effectKey } });
+      if (existingEffect) {
+        assertSourceRevisionReplay(existingEffect.payload, operation.payload);
+        if (run.currentRevision !== input.expectedRevision + 1
+          || run.currentStage !== 'research'
+          || run.packageChecksum !== null
+          || run.approvedChecksum !== null
+          || run.reviewStatus !== 'pending'
+          || sourceBriefChecksum(run.brief as JsonObject) !== operation.replacementBriefChecksum) {
+          throw new WorkflowConflictError('Source revision replay does not match the prepared run');
+        }
+        return {
+          run: toWorkflowRun(run),
+          previousRevision: input.expectedRevision,
+          previousPackageChecksum: input.expectedPackageChecksum,
+        };
+      }
+      await assertPrismaSourceRevisionFence(transaction, run, input);
+      const nextRevision = run.currentRevision + 1;
+      const now = new Date();
+      await transaction.job.updateMany({
+        where: { runId: run.id, state: 'queued' },
+        data: {
+          state: 'superseded',
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          executionDeadlineAt: null,
+        },
+      });
+      await transaction.delivery.updateMany({
+        where: { runId: run.id, state: { in: ['queued', 'waiting', 'failed'] } },
+        data: { state: 'superseded', nextAttemptAt: null },
+      });
+      for (const stage of WORKFLOW_STAGES) {
+        await transaction.stage.upsert({
+          where: { runId_name: { runId: run.id, name: stage } },
+          update: { state: 'queued', reason: null, attempt: 0, revisionAttempt: 0 },
+          create: { runId: run.id, name: stage, state: 'queued', reason: null, attempt: 0, revisionAttempt: 0 },
+        });
+      }
+      await transaction.run.update({
+        where: { id: run.id },
+        data: {
+          brief: toPrismaJson(input.brief),
+          currentStage: 'research',
+          currentRevision: nextRevision,
+          packageChecksum: null,
+          approvedChecksum: null,
+          reviewStatus: 'pending',
+        },
+      });
+      await transaction.job.create({
+        data: {
+          runId: run.id,
+          stage: 'research',
+          action: ACTION_BY_STAGE.research,
+          state: 'queued',
+          idempotencyKey: transitionJobIdempotencyKey(run.id, 'research', nextRevision),
+          availableAt: now,
+          input: toPrismaJson({
+            brief: input.brief,
+            notebookLmNotebookId: input.notebookLmNotebookId,
+            sourceRevision: { requestedBy: input.operatorId, comment: input.comment },
+          }),
+        },
+      });
+      await transaction.workflowEffect.create({
+        data: {
+          runId: run.id,
+          jobId: `source-revision:${input.expectedRevision}`,
+          effectKey: operation.effectKey,
+          type: 'prepare_source_revision',
           payload: toPrismaJson(operation.payload),
         },
       });
@@ -3114,6 +3232,100 @@ class InMemoryWorkflowStore implements WorkflowStore {
     };
   }
 
+  async prepareSourceRevision(input: PrepareSourceRevisionInput): Promise<PrepareSourceRevisionResult> {
+    assertSourceRevisionInput(input);
+    const run = this.requireRun(input.runId);
+    const operation = sourceRevisionOperation(input);
+    const existingEffect = this.effectsByKey.get(operation.effectKey);
+    if (existingEffect) {
+      assertSourceRevisionReplay(existingEffect.payload, operation.payload);
+      if (run.currentRevision !== input.expectedRevision + 1
+        || run.currentStage !== 'research'
+        || run.packageChecksum !== null
+        || run.approvedChecksum !== null
+        || run.reviewStatus !== 'pending'
+        || sourceBriefChecksum(run.brief) !== operation.replacementBriefChecksum) {
+        throw new WorkflowConflictError('Source revision replay does not match the prepared run');
+      }
+      return {
+        run: { ...run, nextRetryAt: this.nextRetryAt(run) },
+        previousRevision: input.expectedRevision,
+        previousPackageChecksum: input.expectedPackageChecksum,
+      };
+    }
+    assertSourceRevisionFence(run, input);
+    const activeJobs = [...this.jobs.values()].filter((job) => (
+      job.runId === run.id && (job.state === 'queued' || job.state === 'running')
+    ));
+    if (activeJobs.some((job) => job.state === 'running')) {
+      throw new WorkflowConflictError('Source revision requires no running worker jobs');
+    }
+    if (activeJobs.some((job) => job.stage !== 'deliver')) {
+      throw new WorkflowConflictError('Source revision requires no queued non-delivery jobs');
+    }
+    const now = this.clock();
+    for (const job of this.jobs.values()) {
+      if (job.runId === run.id && (job.state === 'queued' || job.state === 'running')) {
+        job.state = 'superseded';
+        job.leaseOwner = null;
+        job.leaseExpiresAt = null;
+        job.executionDeadlineAt = null;
+        job.updatedAt = now;
+      }
+    }
+    for (const delivery of this.deliveriesByIdempotencyKey.values()) {
+      if (delivery.runId === run.id && ['queued', 'waiting', 'failed'].includes(delivery.state)) {
+        delivery.state = 'superseded';
+        delivery.nextAttemptAt = null;
+        delivery.updatedAt = now;
+      }
+    }
+    for (const stage of WORKFLOW_STAGES) {
+      const snapshot = run.stages[stage] ?? {
+        name: stage,
+        state: 'queued',
+        reason: null,
+        attempt: 0,
+        revisionAttempts: 0,
+      };
+      snapshot.state = 'queued';
+      snapshot.reason = null;
+      snapshot.attempt = 0;
+      snapshot.revisionAttempts = 0;
+      run.stages[stage] = snapshot;
+    }
+    run.brief = input.brief;
+    run.currentStage = 'research';
+    run.currentRevision += 1;
+    run.packageChecksum = null;
+    run.approvedChecksum = null;
+    run.reviewStatus = 'pending';
+    run.updatedAt = now;
+    await this.queueJob({
+      runId: run.id,
+      stage: 'research',
+      action: ACTION_BY_STAGE.research,
+      idempotencyKey: transitionJobIdempotencyKey(run.id, 'research', run.currentRevision),
+      input: {
+        brief: input.brief,
+        notebookLmNotebookId: input.notebookLmNotebookId,
+        sourceRevision: { requestedBy: input.operatorId, comment: input.comment },
+      },
+      availableAt: now,
+    });
+    this.effectsByKey.set(operation.effectKey, {
+      runId: run.id,
+      jobId: `source-revision:${input.expectedRevision}`,
+      type: 'prepare_source_revision',
+      payload: operation.payload,
+    });
+    return {
+      run: { ...run, nextRetryAt: this.nextRetryAt(run) },
+      previousRevision: input.expectedRevision,
+      previousPackageChecksum: input.expectedPackageChecksum,
+    };
+  }
+
   async claimJob(input: ClaimJobInput): Promise<JobClaim | null> {
     assertWorkerId(input.workerId);
     assertLeaseSeconds(input.leaseSeconds);
@@ -3927,16 +4139,35 @@ function mediaJobInputForStage(
   if (stage !== 'produce_assets') return {};
   const generationPlan = nugletGenerationPlanSchema.safeParse(brief.generationPlan);
   if (!generationPlan.success) return {};
+  const regeneration = isRecord(brief.mediaRegeneration) ? brief.mediaRegeneration : undefined;
+  const requestedKinds = Array.isArray(regeneration?.regeneratedKinds)
+    ? regeneration.regeneratedKinds.filter((kind): kind is RegenerableMediaKind => (
+      typeof kind === 'string' && [
+        'hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview',
+      ].includes(kind)
+    ))
+    : [];
+  if (requestedKinds.length > 0) {
+    return {
+      mediaOperation: 'generate',
+      mediaKinds: [...new Set(requestedKinds)],
+    };
+  }
   if (generationPlan.data.mediaMode === 'reuse_legacy') {
     return {
       mediaOperation: 'attach_existing',
       mediaKinds: ['hero', 'infographic', 'audio_brief', 'audio_discussion'],
     };
   }
-  if (generationPlan.data.heroMode !== 'deferred') return {};
   return {
     mediaOperation: 'generate',
-    mediaKinds: ['infographic', 'audio_brief', 'audio_discussion'],
+    mediaKinds: [
+      ...(generationPlan.data.heroMode === 'deferred' ? [] : ['hero']),
+      'infographic',
+      'audio_brief',
+      'audio_discussion',
+      'public_preview',
+    ],
   };
 }
 
@@ -4108,6 +4339,115 @@ function assertStrictLegacyReplacement(input: PrepareLegacyRevisionInput): void 
     || evidenceNotebookId !== input.notebookLmNotebookId) {
     throw new WorkflowValidationError('Replacement brief notebook binding must match the requested notebook');
   }
+}
+
+function assertSourceRevisionInput(input: PrepareSourceRevisionInput): void {
+  if (!Number.isInteger(input.expectedRevision) || input.expectedRevision <= 0) {
+    throw new WorkflowValidationError('Expected revision must be a positive integer');
+  }
+  if (!/^[a-f0-9]{64}$/.test(input.expectedPackageChecksum)) {
+    throw new WorkflowValidationError('Expected package checksum must be a 64-character checksum');
+  }
+  if (!input.notebookLmNotebookId.trim() || !input.comment.trim() || !input.operatorId.trim()) {
+    throw new WorkflowValidationError('Notebook ID, operator identity, and comment are required');
+  }
+  const brief = knowledgeBitsRunBriefSchema.safeParse(input.brief);
+  const plan = brief.success ? nugletGenerationPlanSchema.safeParse(brief.data.generationPlan) : undefined;
+  const sourceUrls = brief.success && Array.isArray(brief.data.sourceUrls) ? brief.data.sourceUrls : undefined;
+  if (!brief.success || !plan?.success || plan.data.contentKind !== 'nuglet.lesson.v1') {
+    throw new WorkflowValidationError('Source revision requires a strict Nuglet replacement brief');
+  }
+  if (brief.data.notebookLmNotebookId !== input.notebookLmNotebookId) {
+    throw new WorkflowValidationError('Replacement brief notebook binding must match the requested notebook');
+  }
+  if (!sourceUrls?.length || sourceUrls.some((url) => typeof url !== 'string' || !/^https:\/\//.test(url))) {
+    throw new WorkflowValidationError('Source revision requires one or more HTTPS source URLs');
+  }
+}
+
+function assertSourceRevisionFence(
+  run: {
+    currentRevision: number;
+    packageChecksum: string | null;
+    approvedChecksum: string | null;
+    currentStage: string;
+    reviewStatus: string;
+    notebookLmNotebookId?: string | null;
+    brief: unknown;
+  },
+  input: PrepareSourceRevisionInput,
+): void {
+  if (run.currentRevision !== input.expectedRevision) {
+    throw new WorkflowConflictError('Source revision expected revision does not match the current run revision');
+  }
+  if (run.packageChecksum !== input.expectedPackageChecksum || run.approvedChecksum !== input.expectedPackageChecksum) {
+    throw new WorkflowConflictError('Source revision expected checksum does not match the approved package');
+  }
+  if (run.currentStage !== 'deliver' || run.reviewStatus !== 'approved') {
+    throw new WorkflowConflictError('Source revision preparation requires an approved delivery run');
+  }
+  if (!run.notebookLmNotebookId || run.notebookLmNotebookId !== input.notebookLmNotebookId) {
+    throw new WorkflowConflictError('Source revision cannot change the NotebookLM notebook');
+  }
+  if (!isStrictNugletBrief(run.brief)) {
+    throw new WorkflowConflictError('Source revision preparation requires a strict Nuglet run');
+  }
+}
+
+async function assertPrismaSourceRevisionFence(
+  transaction: Prisma.TransactionClient,
+  run: {
+    id: string;
+    currentRevision: number;
+    packageChecksum: string | null;
+    approvedChecksum: string | null;
+    currentStage: string;
+    reviewStatus: string;
+    notebookLmNotebookId: string | null;
+    brief: Prisma.JsonValue;
+  },
+  input: PrepareSourceRevisionInput,
+): Promise<void> {
+  assertSourceRevisionFence(run, input);
+  const runningJobs = await transaction.job.count({ where: { runId: run.id, state: 'running' } });
+  if (runningJobs > 0) throw new WorkflowConflictError('Source revision requires no running worker jobs');
+  const queuedNonDeliveryJobs = await transaction.job.count({
+    where: { runId: run.id, state: 'queued', stage: { not: 'deliver' } },
+  });
+  if (queuedNonDeliveryJobs > 0) {
+    throw new WorkflowConflictError('Source revision requires no queued non-delivery jobs');
+  }
+}
+
+function sourceRevisionOperation(input: PrepareSourceRevisionInput): {
+  effectKey: string;
+  replacementBriefChecksum: string;
+  payload: JsonObject;
+} {
+  const replacementBriefChecksum = sourceBriefChecksum(input.brief);
+  return {
+    effectKey: `source-revision:${input.runId}:${input.expectedRevision}:${input.expectedPackageChecksum}:${replacementBriefChecksum}`,
+    replacementBriefChecksum,
+    payload: {
+      operatorId: input.operatorId,
+      comment: input.comment,
+      previousRevision: input.expectedRevision,
+      newRevision: input.expectedRevision + 1,
+      previousPackageChecksum: input.expectedPackageChecksum,
+      replacementBriefChecksum,
+    },
+  };
+}
+
+function assertSourceRevisionReplay(actual: unknown, expected: JsonObject): void {
+  if (!isDeepStrictEqual(actual, expected)) {
+    throw new WorkflowConflictError('Source revision conflicts with an existing operation');
+  }
+}
+
+function sourceBriefChecksum(brief: unknown): string {
+  if (!isJsonObject(brief)) throw new WorkflowValidationError('Source revision brief must contain JSON values');
+  return createHash('sha256').update(canonicalJson(brief)).digest('hex');
 }
 
 function assertLegacyRevisionFence(

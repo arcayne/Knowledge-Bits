@@ -846,6 +846,64 @@ test('prepares a legacy revision only for an authenticated review principal', as
   assert.equal(stale.status, 409);
 });
 
+test('prepares an approved strict source revision and supersedes its queued delivery', async () => {
+  const { app, repository } = createTestApp();
+  const packageVersion = strictPackageVersionInput('0f8fad5b-d9cb-469f-a165-70867728950e', 'approved-source');
+  const brief = {
+    ...strictLegacyReplacementBrief(),
+    sourceUrls: ['https://www.frontiersin.org/journals/human-neuroscience/articles/10.3389/fnhum.2019.00229/full'],
+  };
+  const run = await repository.createRun({
+    id: packageVersion.runId,
+    title: 'Repair a conversation before resentment becomes the default',
+    locale: 'en',
+    brief,
+    notebookLmNotebookId: 'notebook-fixture',
+    currentStage: 'deliver',
+    packageChecksum: packageVersion.packageChecksum,
+    approvedChecksum: packageVersion.packageChecksum,
+    reviewStatus: 'approved',
+    stages: [{ name: 'deliver', state: 'queued' }],
+  });
+  await repository.recordPackageVersion(packageVersion);
+  const deliveryJob = await repository.queueJob({
+    runId: run.id,
+    stage: 'deliver',
+    action: 'deliver_package',
+    idempotencyKey: 'source-revision-delivery',
+    input: { packageChecksum: packageVersion.packageChecksum },
+  });
+
+  const body = {
+    expectedRevision: 1,
+    expectedPackageChecksum: packageVersion.packageChecksum,
+    notebookLmNotebookId: 'notebook-fixture',
+    brief,
+    comment: 'Replace the noncommercial source with the verified CC BY source.',
+  };
+  const response = await app.request(`/runs/${run.id}/prepare-source-revision`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify(body),
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  const prepared = await response.json();
+  assert.equal(prepared.run.currentRevision, 2);
+  assert.equal(prepared.run.currentStage, 'research');
+  assert.equal(prepared.run.reviewStatus, 'pending');
+  assert.equal(prepared.run.packageChecksum, null);
+  assert.equal(prepared.run.approvedChecksum, null);
+  assert.equal((await repository.getJobContext(deliveryJob.id))?.job.state, 'superseded');
+
+  const replay = await app.request(`/runs/${run.id}/prepare-source-revision`, {
+    method: 'POST',
+    headers: reviewHeaders,
+    body: JSON.stringify(body),
+  });
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), prepared);
+});
+
 async function reviewReadyRun(
   repository: WorkflowRepository,
   storage: ReviewStorage,

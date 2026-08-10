@@ -25,6 +25,7 @@ test('binds the approved Story and Playbook plan to the standard intake marker',
   assert.equal(parsedBrief.contentKind, 'nuglet.lesson.v1');
   assert.equal(plan.schemaVersion, '1.1.0');
   assert.equal(plan.mediaMode, 'generate');
+  assert.deepEqual(parsedBrief.promotionBundle, { publicPreview: true });
   assert.equal(plan.recipes.infographic.version, '2.0.0');
   assert.match(plan.heroDirection.metaphor, /Match the Message to the Customer/);
   assert.doesNotMatch(plan.heroDirection.metaphor, /clear bridge/i);

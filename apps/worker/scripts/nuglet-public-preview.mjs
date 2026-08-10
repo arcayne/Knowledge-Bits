@@ -22,9 +22,14 @@ export function compilePublicPreview(content) {
     "lesson topic",
   );
   const socialPost = record(lesson.socialPost);
+  const socialPostText = required(socialPost.text, "social post text");
+  const hashtags = socialPostText.match(/#[\p{L}\p{N}]+/gu) ?? [];
+  if (socialPost.platform !== "cross-platform" || hashtags.length < 3) {
+    throw new Error("social post must be cross-platform and contain at least three hashtags");
+  }
   const socialPostRepresentation = {
-    platform: socialPost.platform === "cross-platform" ? socialPost.platform : "cross-platform",
-    text: typeof socialPost.text === "string" ? socialPost.text.trim() : "",
+    platform: socialPost.platform,
+    text: socialPostText,
   };
   const protectedContent = {
     exactPractice: takeaway,

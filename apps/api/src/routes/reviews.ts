@@ -1,6 +1,8 @@
 import {
   prepareLegacyRevisionRequestSchema,
   prepareLegacyRevisionResponseSchema,
+  prepareSourceRevisionRequestSchema,
+  prepareSourceRevisionResponseSchema,
   regenerateMediaRequestSchema,
   resumeCreateCandidateRequestSchema,
   reviewRunRequestSchema,
@@ -228,6 +230,29 @@ export function registerReviewRoutes(
         ...input.data,
       });
       return context.json(prepareLegacyRevisionResponseSchema.parse({
+        ...prepared,
+        run: toRunResponse(prepared.run),
+      }));
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) return context.json({ error: error.message }, 404);
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
+      throw error;
+    }
+  });
+
+  app.post('/runs/:id/prepare-source-revision', async (context) => {
+    const principal = requireReviewPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const input = prepareSourceRevisionRequestSchema.safeParse(await readJson(context.req.raw));
+    if (!input.success) return context.json({ error: 'Invalid source revision preparation input' }, 400);
+    try {
+      const prepared = await dependencies.repository.prepareSourceRevision({
+        runId: context.req.param('id'),
+        operatorId: principal,
+        ...input.data,
+      });
+      return context.json(prepareSourceRevisionResponseSchema.parse({
         ...prepared,
         run: toRunResponse(prepared.run),
       }));

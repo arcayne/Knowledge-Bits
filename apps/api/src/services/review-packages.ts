@@ -721,8 +721,10 @@ function assetChecksumIssues(
 
 function publicPreviewPlanned(brief: Record<string, unknown>): boolean {
   const regeneration = isRecord(brief.mediaRegeneration) ? brief.mediaRegeneration : undefined;
-  return Array.isArray(regeneration?.regeneratedKinds)
-    && regeneration.regeneratedKinds.includes('public_preview');
+  if (Array.isArray(regeneration?.regeneratedKinds)
+    && regeneration.regeneratedKinds.includes('public_preview')) return true;
+  const promotionBundle = isRecord(brief.promotionBundle) ? brief.promotionBundle : undefined;
+  return promotionBundle?.publicPreview === true;
 }
 
 async function trustedRetainedMediaArtifactIds(
