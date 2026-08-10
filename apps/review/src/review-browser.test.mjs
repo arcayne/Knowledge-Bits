@@ -60,6 +60,8 @@ test('browser renders the complete approved payload and submits its displayed ch
   assert.equal(await page.locator('#audio-brief-transcript').textContent(), 'Brief final transcript.');
   assert.equal(await page.locator('#audio-discussion-transcript').textContent(), 'Discussion final transcript.');
   assert.equal(await page.locator('audio').count(), 2);
+  assert.equal(await page.locator('video').count(), 1);
+  assert.match(await page.locator('#social-post-text').textContent() ?? '', /#PersonalFinance #MoneyHabits #FinancialWellbeing/);
   assert.equal(await page.locator('.quiz-question').count(), 3);
   assert.equal(await page.locator('.crop-frame img').count(), 3);
   assert.equal(await page.locator('[data-full-size="hero"]').count(), 1);
@@ -222,6 +224,10 @@ function reviewModel({ warnings = [] } = {}) {
       brief: { transcript: { text: 'Brief final transcript.' } },
       discussion: { transcript: { text: 'Discussion final transcript.' } },
     },
+    socialPost: {
+      platform: 'cross-platform',
+      text: 'A small buffer can make the next decision easier. #PersonalFinance #MoneyHabits #FinancialWellbeing',
+    },
     quiz: {
       questions: ['Central idea?', 'Practical action?', 'What should you avoid?'].map((prompt, index) => ({
         prompt,
@@ -261,6 +267,7 @@ function reviewModel({ warnings = [] } = {}) {
       infographic: availableAsset('infographic', 'image/webp'),
       audioBrief: availableAsset('audio-brief', 'audio/mp4'),
       audioDiscussion: availableAsset('audio-discussion', 'audio/mp4'),
+      publicPreview: availableAsset('public-preview', 'video/mp4'),
     },
     generationExecutions: Object.fromEntries([
       ['story', 'nuglet.lesson.story'],
@@ -277,7 +284,15 @@ function reviewModel({ warnings = [] } = {}) {
 function availableAsset(label, mediaType) {
   return {
     state: 'available',
-    artifactId: `55555555-5555-4555-8555-${label === 'hero' ? '000000000001' : label === 'infographic' ? '000000000002' : label === 'audio-brief' ? '000000000003' : '000000000004'}`,
+    artifactId: `55555555-5555-4555-8555-${label === 'hero'
+      ? '000000000001'
+      : label === 'infographic'
+        ? '000000000002'
+        : label === 'audio-brief'
+          ? '000000000003'
+          : label === 'audio-discussion'
+            ? '000000000004'
+            : '000000000005'}`,
     mediaType,
   };
 }
@@ -321,6 +336,7 @@ function browserFixtureHtml() {
       <div id="hero"></div><p id="hero-alt"></p><p id="hero-metadata"></p><div class="crop-frame" id="hero-lesson-header"></div><div class="crop-frame" id="hero-card"></div><div class="crop-frame" id="hero-thumbnail"></div>
       <div id="infographic"></div><p id="infographic-alt"></p><ul id="infographic-text-equivalent"></ul><button id="regenerate-infographic" disabled>Replace with Nuglet infographic</button><p id="regenerate-infographic-status"></p>
       <div id="audio-brief"></div><p id="audio-brief-transcript"></p><div id="audio-discussion"></div><p id="audio-discussion-transcript"></p>
+      <div id="public-preview"></div><p id="social-post-companion"></p><pre id="social-post-text"></pre><button type="button" id="copy-social-post">Copy social post</button>
       <div id="quiz"></div><ul id="claim-coverage"></ul><ul id="accepted-sources"></ul><ul id="rejected-sources"></ul><ul id="coverage-gaps"></ul><ul id="claims"></ul>
       <p id="qa"></p><ul id="qa-findings"></ul><details id="generation-provenance"><summary>Generation provenance</summary><div id="generation-executions"></div></details>
     </div></main>

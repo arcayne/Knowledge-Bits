@@ -434,6 +434,49 @@ export const prepareLegacyRevisionResponseSchema = z.object({
   previousPackageChecksum: checksumSchema,
 }).strict();
 
+export const prepareSourceRevisionRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  expectedPackageChecksum: checksumSchema,
+  notebookLmNotebookId: z.string().trim().min(1),
+  brief: z.record(z.unknown()),
+  comment: z.string().trim().min(1),
+}).strict().superRefine((request, context) => {
+  const parsedBrief = knowledgeBitsRunBriefSchema.safeParse(request.brief);
+  if (!parsedBrief.success) {
+    for (const issue of parsedBrief.error.issues) {
+      context.addIssue({ ...issue, path: ['brief', ...issue.path] });
+    }
+    return;
+  }
+  const generationPlan = nugletGenerationPlanSchema.safeParse(parsedBrief.data.generationPlan);
+  if (!generationPlan.success || generationPlan.data.contentKind !== 'nuglet.lesson.v1') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Source revision requires a strict Nuglet generation plan',
+      path: ['brief', 'generationPlan'],
+    });
+  }
+  if (parsedBrief.data.notebookLmNotebookId !== request.notebookLmNotebookId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Replacement brief NotebookLM notebook ID must match the request',
+      path: ['notebookLmNotebookId'],
+    });
+  }
+  const sourceUrls = parsedBrief.data.sourceUrls;
+  if (!Array.isArray(sourceUrls) || sourceUrls.length === 0 || sourceUrls.some((url) => (
+    typeof url !== 'string' || !/^https:\/\//.test(url)
+  ))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Source revision requires one or more HTTPS source URLs',
+      path: ['brief', 'sourceUrls'],
+    });
+  }
+});
+
+export const prepareSourceRevisionResponseSchema = prepareLegacyRevisionResponseSchema;
+
 function targetsNugletLesson(brief: Record<string, unknown>): boolean {
   const generationPlan = brief.generationPlan;
   return brief.contentKind === 'nuglet.lesson.v1'

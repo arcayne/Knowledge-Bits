@@ -78,6 +78,7 @@ export function bindStandardNugletIntakePlan(input: {
     ...input.brief,
     contentKind: 'nuglet.lesson.v1',
     generationPlan: plan,
+    promotionBundle: { publicPreview: true },
   };
 }
 

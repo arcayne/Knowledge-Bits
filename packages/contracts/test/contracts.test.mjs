@@ -12,6 +12,8 @@ import {
   nugletSimilarityReviewSchema,
   prepareLegacyRevisionRequestSchema,
   prepareLegacyRevisionResponseSchema,
+  prepareSourceRevisionRequestSchema,
+  prepareSourceRevisionResponseSchema,
   resumeCreateCandidateRequestSchema,
   regenerateMediaRequestSchema,
   knowledgeBitsRunBriefSchema,
@@ -726,6 +728,36 @@ test('requires a strictly bound Nuglet replacement brief to prepare a legacy rev
     previousRevision: 1,
     previousPackageChecksum: checksum,
   });
+});
+
+test('requires accepted HTTPS sources for an approved source revision', () => {
+  const brief = {
+    baseline: { runId: 'fixture-run' },
+    generationPlan: validGenerationPlan(),
+    notebookLmNotebookId: 'notebook-fixture',
+    sourceUrls: ['https://example.test/accepted-source'],
+  };
+  const request = {
+    expectedRevision: 1,
+    expectedPackageChecksum: checksum,
+    notebookLmNotebookId: 'notebook-fixture',
+    brief,
+    comment: 'Create a new grounded revision with the complete promotion bundle.',
+  };
+  assert.deepEqual(prepareSourceRevisionRequestSchema.parse(request), request);
+  assert.equal(prepareSourceRevisionRequestSchema.safeParse({
+    ...request,
+    brief: { ...brief, sourceUrls: [] },
+  }).success, false);
+  assert.equal(prepareSourceRevisionRequestSchema.safeParse({
+    ...request,
+    brief: { ...brief, sourceUrls: ['http://example.test/not-https'] },
+  }).success, false);
+  assert.equal(prepareSourceRevisionRequestSchema.safeParse({
+    ...request,
+    notebookLmNotebookId: 'another-notebook',
+  }).success, false);
+  assert.equal(prepareSourceRevisionResponseSchema, prepareLegacyRevisionResponseSchema);
 });
 
 test('validates protected Create candidate recovery requests', () => {

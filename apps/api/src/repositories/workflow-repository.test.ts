@@ -550,6 +550,87 @@ test('queues all four legacy media roles for a reuse migration after QA passes',
   assert.deepEqual(assets?.input.mediaKinds, ['hero', 'infographic', 'audio_brief', 'audio_discussion']);
 });
 
+test('queues all generated media including public preview after strict QA passes', async () => {
+  const { repository, now } = createRepository();
+  const brief = strictLegacyReplacementBrief();
+  const plan = brief.generationPlan as Record<string, unknown>;
+  delete plan.mediaBaseline;
+  plan.mediaMode = 'generate';
+  await repository.createRun({
+    id: runId,
+    title: 'Complete generated media flow',
+    locale: 'en',
+    brief,
+    notebookLmNotebookId: 'notebook-fixture',
+    currentStage: 'check',
+    stages: [{ name: 'check', state: 'queued' }],
+  });
+  await repository.queueJob({
+    runId,
+    stage: 'check',
+    action: 'check_content',
+    idempotencyKey: 'generated-media-check',
+    input: { brief, notebookLmNotebookId: 'notebook-fixture' },
+  });
+  const check = await repository.claimJob({ workerId: 'check-worker', capabilities: ['check_content'], leaseSeconds: 60 });
+  const context = await repository.getJobContext(check!.jobId);
+  await repository.applyJobResult({
+    workerId: 'check-worker',
+    result: { ...completedResult(check!.jobId, now), stage: 'check' },
+    transition: nextTransition({
+      stage: 'check', state: 'running', revisionAttempts: context!.stage.revisionAttempts,
+      packageChecksum: null, approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum }),
+  });
+
+  const assets = await repository.claimJob({ workerId: 'asset-worker', capabilities: ['produce_assets'], leaseSeconds: 60 });
+  assert.equal(assets?.input.mediaOperation, 'generate');
+  assert.deepEqual(assets?.input.mediaKinds, [
+    'hero', 'infographic', 'audio_brief', 'audio_discussion', 'public_preview',
+  ]);
+});
+
+test('honors explicit regeneration kinds when a source revision reaches asset production', async () => {
+  const { repository, now } = createRepository();
+  const brief = {
+    ...strictLegacyReplacementBrief(),
+    mediaRegeneration: {
+      sourcePackageChecksum: checksum,
+      regeneratedKinds: ['infographic', 'public_preview'],
+    },
+  };
+  await repository.createRun({
+    id: runId,
+    title: 'Explicit source revision media',
+    locale: 'en',
+    brief,
+    notebookLmNotebookId: 'notebook-fixture',
+    currentStage: 'check',
+    stages: [{ name: 'check', state: 'queued' }],
+  });
+  await repository.queueJob({
+    runId,
+    stage: 'check',
+    action: 'check_content',
+    idempotencyKey: 'explicit-regeneration-check',
+    input: { brief, notebookLmNotebookId: 'notebook-fixture' },
+  });
+  const check = await repository.claimJob({ workerId: 'check-worker', capabilities: ['check_content'], leaseSeconds: 60 });
+  const context = await repository.getJobContext(check!.jobId);
+  await repository.applyJobResult({
+    workerId: 'check-worker',
+    result: { ...completedResult(check!.jobId, now), stage: 'check' },
+    transition: nextTransition({
+      stage: 'check', state: 'running', revisionAttempts: context!.stage.revisionAttempts,
+      packageChecksum: null, approvedChecksum: null,
+    }, { type: 'stage_completed', packageChecksum: checksum }),
+  });
+
+  const assets = await repository.claimJob({ workerId: 'asset-worker', capabilities: ['produce_assets'], leaseSeconds: 60 });
+  assert.equal(assets?.input.mediaOperation, 'generate');
+  assert.deepEqual(assets?.input.mediaKinds, ['infographic', 'public_preview']);
+});
+
 test('rejects a retry timestamp at or before the repository clock', async () => {
   const { repository, now } = createRepository();
   await createRun(repository);
