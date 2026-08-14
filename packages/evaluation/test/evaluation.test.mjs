@@ -376,3 +376,5 @@ test('promotion requires passing report and three blinded narrative cases', asyn
   await assert.rejects(() => writePromotionRequest(path, request), /already exists/);
   assert.ok((await readFile(path, 'utf8')).includes('model-baseline-promotion-request'));
 });
+
+// Lane 0 trusted-base bootstrap probe.
