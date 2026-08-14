@@ -1,0 +1,53 @@
+{
+  "workflow": "agentic-delivery-playbook@0.2",
+  "phase": "closeout",
+  "status": "ready_for_review",
+  "taskFit": "broad-ticket",
+  "specPath": "specs/20260814-1942-veo-provider/spec.md",
+  "activeRole": "implementer",
+  "activeModel": "runtime-default",
+  "approval": {
+    "source": "user",
+    "message": "ok lets do it",
+    "recordedAt": "2026-08-14"
+  },
+  "reviewGates": {
+    "specCritic": "self-review",
+    "implementationQA": "required",
+    "liveGeneration": "not-performed"
+  },
+  "modelLedger": [
+    {
+      "role": "implementer",
+      "source": "runtime-default"
+    },
+    {
+      "role": "spec-critic",
+      "source": "runtime-default"
+    }
+  ],
+  "changedFiles": [
+    ".env.example",
+    "apps/worker/package.json",
+    "apps/worker/scripts/nuglet-veo-command.mjs",
+    "apps/worker/scripts/nuglet-veo-command.test.mjs",
+    "apps/worker/src/providers/veo.ts",
+    "apps/worker/src/providers/veo.test.ts",
+    "docs/engineering/vertex-content-creation-workflow.md"
+  ],
+  "validation": [
+    "pnpm --filter @knowledge-bits/worker test:veo: passed",
+    "pnpm --filter @knowledge-bits/worker build: passed",
+    "pnpm typecheck: passed",
+    "pnpm scan:forbidden-credentials: passed",
+    "pnpm --filter @knowledge-bits/worker test: 180 passed, 3 unrelated engine-client tests cancelled under Node 22",
+    "ffprobe latest known Veo MP4: passed at 720x1280 and 8 seconds",
+    "git diff --check: passed"
+  ],
+  "findings": [],
+  "knownGaps": [
+    "The current workflow has no dedicated Nuglet video artifact kind.",
+    "A live Vertex generation request is intentionally not part of automated validation."
+  ],
+  "nextAction": "Commit and open the separate Veo prototype PR for human review."
+}
