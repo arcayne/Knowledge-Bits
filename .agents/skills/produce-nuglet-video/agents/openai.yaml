@@ -1,0 +1,4 @@
+interface:
+  display_name: "Produce a Nuglet video"
+  short_description: "Turn a Nuglet idea into a reviewed Vertex video"
+  default_prompt: "Take this Nuglet idea through brief, audio hook, Vertex video generation, review, and optional ChatCut assembly."
