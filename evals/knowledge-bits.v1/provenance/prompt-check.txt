@@ -1,0 +1,1 @@
+Check prompt fixture: reject unsupported claims, unsafe advice, and delivery mismatches.

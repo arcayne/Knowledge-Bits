@@ -1,0 +1,1 @@
+Research prompt fixture: return grounded evidence with immutable source bindings.

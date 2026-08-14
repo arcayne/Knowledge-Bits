@@ -1,0 +1,1 @@
+Immutable evaluation source for Grounded source claim. This fixture is local and contains no production data.

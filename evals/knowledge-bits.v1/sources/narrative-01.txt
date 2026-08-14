@@ -1,0 +1,1 @@
+Immutable evaluation source for Abstract topic Story and Playbook. This fixture is local and contains no production data.
