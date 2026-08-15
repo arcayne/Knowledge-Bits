@@ -56,10 +56,12 @@ ChatCut must not silently replace the Vertex request with its own video generati
 7. Retrieve the output through the worker. Store the exact bytes and checksum as an immutable artifact.
 8. Run media checks for dimensions, duration, playable output, audio presence when requested, and basic visual or transcript requirements.
 9. Apply brand, motion, material, and hook gates before any editing. Keep rejected or uncertain output at `needs_human` and do not deliver it.
-10. Listen to the exact audio excerpt against the accepted source video. Record its transcript and in and out points.
-11. If an edit is needed, import the accepted Vertex asset into ChatCut or another editing surface. Keep the generated source and the edited derivative as separate artifacts.
-12. Require the selected audio, readable captions, the Nuglet end card, and final human review before calling the derivative ready for publication.
-13. Approve the final package before Nuglet delivery or social publication.
+10. Require a motion complexity budget of one moving object, one monotonic path, one end state, and no interacting particle system.
+11. Create a sampled contact sheet near 0, 1, 2, 4, 6, and 8 seconds. Reject any change in object identity, object count, shape, or path direction.
+12. Listen to the exact audio excerpt against the accepted source video. Record its transcript and in and out points.
+13. If an edit is needed, import the accepted Vertex asset into ChatCut or another editing surface. Keep the generated source and the edited derivative as separate artifacts.
+14. Require the selected audio, readable captions, the Nuglet end card, and final human review before calling the derivative ready for publication.
+15. Approve the final package before Nuglet delivery or social publication.
 
 ## Provenance requirements
 
@@ -95,6 +97,8 @@ Do not publish a video because it is playable or because the movement is technic
 4. Captions are readable and do not cover the focal action.
 5. The Nuglet end card is present and correctly placed.
 6. A human has reviewed the complete derivative, not only the source video.
+
+The motion budget is a hard gate. Prefer a boring but legible action to a visually ambitious action that the model cannot keep physically stable.
 
 If a candidate fails the visual family check, reject it and regenerate from a suitable reference. Do not attempt to make a diagrammatic or flat asset conform through captions, audio, or color adjustments.
 

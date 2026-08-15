@@ -51,6 +51,15 @@ For an oddly satisfying visual, prefer a continuous action with a visible change
 
 Default short form settings are vertical 9:16, 7 to 8 seconds, one coherent action, and no generated text. Change them only when the brief requires it.
 
+Set a motion complexity budget before writing the prompt:
+
+1. One moving object.
+2. One monotonic path, either straight or one simple arc.
+3. One state change at the end.
+4. No interacting particle system, sorting field, or multi object transformation.
+
+If the concept needs more than this budget, split it into separate shots. Do not ask one short generation to simulate several linked physical systems.
+
 ### 2A. Apply the brand gate
 
 Do not generate until the visual reference passes this gate.
@@ -113,8 +122,11 @@ Apply these quality gates in order:
 2. Motion gate: one object performs one coherent action from start to finish without disappearance, duplication, path breaks, or unexplained resets.
 3. Material gate: lighting, texture, object scale, contact, and shadows remain believable.
 4. Hook gate: the first second makes the action understandable and the first eight seconds support the audio idea.
+5. Continuity gate: sampled frames show one monotonic path, stable object identity, stable object count, and no shape changes.
 
 Review the source video in Knowledge Bits before editing. Reject candidates that teleport, reverse without a reason, add a second action, lose the focal object, or become less coherent as the clip continues. Keep uncertain output at `needs_human`.
+
+Create a contact sheet with samples near 0, 1, 2, 4, 6, and 8 seconds. Reject the source if the focal object changes shape, grows a hole, disappears, reappears, or moves backward between samples. A technically smooth render still fails when the object identity is unstable.
 
 ### 6. Assemble an optional edit
 
