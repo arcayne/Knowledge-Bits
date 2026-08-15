@@ -51,6 +51,18 @@ For an oddly satisfying visual, prefer a continuous action with a visible change
 
 Default short form settings are vertical 9:16, 7 to 8 seconds, one coherent action, and no generated text. Change them only when the brief requires it.
 
+### 2A. Apply the brand gate
+
+Do not generate until the visual reference passes this gate.
+
+1. Compare the reference with two recent approved Nuglet videos or scene images.
+2. Require tactile materials, natural light, visible surface detail, and a clear physical object.
+3. Reject flat illustrations, vector scenes, diagrams, infographic layouts, generic 3D product renders, and assets that look like presentation graphics.
+4. Reject an anchor that was created for an older campaign when its visual language does not match the current approved work.
+5. Record the approved reference paths and the reason the scene belongs to the current Nuglet visual family.
+
+If no reference passes, stop at the brief. Do not try to repair a wrong visual family with a longer generation prompt.
+
 ### 3. Select the audio hook
 
 Choose a short excerpt from the approved Nuglet conversation. Prefer a line that creates a concrete question or recognition without explaining the entire lesson.
@@ -63,6 +75,8 @@ Check:
 4. The excerpt has a transcript and a source asset reference.
 
 Keep the audio decision separate from visual generation. Add the excerpt to the edit only after the source video passes visual review.
+
+Before editing, listen to the exact excerpt with the candidate visual. Do not select audio from a filename, chapter title, or assumed timestamp alone. Record the transcript, in and out points, and the reason the excerpt creates curiosity.
 
 ### 4. Generate through Vertex
 
@@ -93,6 +107,13 @@ Run the available checks for:
 5. Stable objects and coherent motion.
 6. No accidental text, logos, watermarks, or unrelated objects.
 
+Apply these quality gates in order:
+
+1. Brand gate: the output matches the approved tactile visual family and does not look like a diagram or presentation graphic.
+2. Motion gate: one object performs one coherent action from start to finish without disappearance, duplication, path breaks, or unexplained resets.
+3. Material gate: lighting, texture, object scale, contact, and shadows remain believable.
+4. Hook gate: the first second makes the action understandable and the first eight seconds support the audio idea.
+
 Review the source video in Knowledge Bits before editing. Reject candidates that teleport, reverse without a reason, add a second action, lose the focal object, or become less coherent as the clip continues. Keep uncertain output at `needs_human`.
 
 ### 6. Assemble an optional edit
@@ -106,6 +127,8 @@ Import only the accepted Vertex source asset into ChatCut or another editing sur
 5. Export a review file.
 
 Keep the Vertex source asset and the edited derivative as separate artifacts. Do not use ChatCut's video generation feature for this workflow.
+
+The edit is not publication ready until it includes the selected audio, readable captions, the Nuglet end card, and a final human review. A technically playable MP4 is not sufficient.
 
 ### 7. Hand off for human review
 

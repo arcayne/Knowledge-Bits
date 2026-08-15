@@ -49,14 +49,17 @@ ChatCut must not silently replace the Vertex request with its own video generati
 
 1. Create an approved content brief with the Nuglet concept, audience, learning moment, and source bounds.
 2. Select the media recipe and define the intended format, duration, aspect ratio, audio mode, and visual constraints.
-3. Write the Vertex prompt. Describe one clear physical action, one stable object set, and one camera behavior. Add constraints that prevent text, logos, watermarks, accidental hands, and unrelated objects when the recipe requires them.
-4. Submit the request through the Knowledge Bits worker and Vertex adapter. Do not generate the production asset from ChatCut.
-5. Persist the provider operation, model, location, prompt, input references, and recipe version before the result is accepted.
-6. Retrieve the output through the worker. Store the exact bytes and checksum as an immutable artifact.
-7. Run media checks for dimensions, duration, playable output, audio presence when requested, and basic visual or transcript requirements.
-8. Review the asset in Knowledge Bits. Keep rejected or uncertain output at `needs_human` and do not deliver it.
-9. If an edit is needed, import the accepted Vertex asset into ChatCut or another editing surface. Keep the generated source and the edited derivative as separate artifacts.
-10. Approve the final package before Nuglet delivery or social publication.
+3. Compare the visual reference with recent approved Nuglet work. Reject flat illustrations, vector scenes, diagrams, infographic layouts, generic 3D product renders, and stale campaign references that do not match the current tactile visual family.
+4. Write the Vertex prompt. Describe one clear physical action, one stable object set, and one camera behavior. Add constraints that prevent text, logos, watermarks, accidental hands, and unrelated objects when the recipe requires them.
+5. Submit the request through the Knowledge Bits worker and Vertex adapter. Do not generate the production asset from ChatCut.
+6. Persist the provider operation, model, location, prompt, input references, and recipe version before the result is accepted.
+7. Retrieve the output through the worker. Store the exact bytes and checksum as an immutable artifact.
+8. Run media checks for dimensions, duration, playable output, audio presence when requested, and basic visual or transcript requirements.
+9. Apply brand, motion, material, and hook gates before any editing. Keep rejected or uncertain output at `needs_human` and do not deliver it.
+10. Listen to the exact audio excerpt against the accepted source video. Record its transcript and in and out points.
+11. If an edit is needed, import the accepted Vertex asset into ChatCut or another editing surface. Keep the generated source and the edited derivative as separate artifacts.
+12. Require the selected audio, readable captions, the Nuglet end card, and final human review before calling the derivative ready for publication.
+13. Approve the final package before Nuglet delivery or social publication.
 
 ## Provenance requirements
 
@@ -81,6 +84,19 @@ The current repository already exposes media production through the local worker
 The durable workflow ledger remains in Knowledge Bits. It does not run Vertex or ChatCut. The local worker performs provider calls and writes stage results through the control API.
 
 The current Nuglet media contract does not yet define a dedicated Nuglet Moment video kind. The first red ball execution is therefore a Vertex prototype with external evidence files. Before this becomes a normal worker run, add a versioned recipe, asset kind, artifact checks, and review projection for the source video and its edited derivative.
+
+## Publication quality gate
+
+Do not publish a video because it is playable or because the movement is technically coherent. The complete candidate must pass all of these checks:
+
+1. It belongs to the current Nuglet tactile visual family.
+2. It has one clear physical action with believable materials and motion.
+3. The exact audio excerpt has been listened to and matches the visual idea.
+4. Captions are readable and do not cover the focal action.
+5. The Nuglet end card is present and correctly placed.
+6. A human has reviewed the complete derivative, not only the source video.
+
+If a candidate fails the visual family check, reject it and regenerate from a suitable reference. Do not attempt to make a diagrammatic or flat asset conform through captions, audio, or color adjustments.
 
 ## First experiment
 
