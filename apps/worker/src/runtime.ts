@@ -28,6 +28,7 @@ import {
 } from './providers/media.js';
 import { generationSupportArtifacts } from './recipes/support-artifacts.js';
 import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess, type ResearchSourceVerifier } from './providers/notebooklm.js';
+import { NotebookLmNotebookProvisioner } from './providers/notebooklm-provisioner.js';
 import {
   PiEditorialProvider,
   type PiSdkClient,
@@ -110,6 +111,7 @@ export function composeWorkerProviders(options: {
     runtime.notebookProcess && runtime.notebookContext && runtime.sourceVerifier
       ? new NotebookLmProvider({
         process: runtime.notebookProcess,
+        command: configuredValue(env, 'NOTEBOOKLM_COMMAND') ?? 'nlm',
         context: trustedContextResolver(runtime.notebookContext, runtime.recipeBindingVerifier),
         sourceVerifier: runtime.sourceVerifier,
         ...(runtime.sourceDiscoverer ? { sourceDiscoverer: runtime.sourceDiscoverer } : {}),
@@ -134,6 +136,14 @@ export function composeWorkerProviders(options: {
       })
       : new UnavailableProvider('media', ['produce_assets'], runtime.configurationIssues?.media),
   ];
+}
+
+export function createNotebookLmNotebookProvisioner(env: NodeJS.ProcessEnv = process.env): NotebookLmNotebookProvisioner {
+  return new NotebookLmNotebookProvisioner({
+    process: new SpawnNotebookLmProcess(),
+    command: configuredValue(env, 'NOTEBOOKLM_COMMAND') ?? 'nlm',
+    timeoutMs: configuredPositiveInteger(env, 'NOTEBOOKLM_TIMEOUT_MS', 180_000),
+  });
 }
 
 function configuredRuntime(

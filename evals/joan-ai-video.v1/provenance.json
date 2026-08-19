@@ -1,0 +1,11 @@
+{
+  "recipes": {
+    "media": ["recipes/media/joan.v1.txt"]
+  },
+  "prompts": {
+    "research": ["prompts/research-joan.v1.txt"],
+    "create": ["prompts/create-joan.v1.txt"],
+    "check": ["prompts/check-joan.v1.txt"],
+    "media": ["prompts/media-joan.v1.txt"]
+  }
+}

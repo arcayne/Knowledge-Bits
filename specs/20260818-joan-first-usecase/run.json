@@ -1,0 +1,55 @@
+{
+  "workflow": "agentic-delivery-playbook v0.2",
+  "phase": "first-usecase",
+  "status": "blocked",
+  "taskFit": "real-shadow-run",
+  "specPath": "specs/20260818-joan-first-usecase/spec.md",
+  "activeRole": "primary",
+  "modelLedger": { "source": "runtime-default" },
+  "approval": "User supplied the YouTube URL and requested the first workflow run.",
+  "riskTier": "orange",
+  "reviewGates": ["intake", "research-boundary", "human-review-before-publication"],
+  "input": {
+    "youtubeUrl": "https://www.youtube.com/watch?v=-QFHIoCo-Ko&t=9s",
+    "canonicalVideoId": "-QFHIoCo-Ko",
+    "canonicalUrl": "https://www.youtube.com/watch?v=-QFHIoCo-Ko"
+  },
+  "intakeEvidence": {
+    "mode": "in_memory",
+    "runId": "cde5ebe5-eb9f-4e98-9cba-fcdfc385b6d6",
+    "status": 201,
+    "currentStage": "research",
+    "researchState": "queued"
+  },
+  "researchBoundaryEvidence": {
+    "mode": "direct_worker_context",
+    "result": "needs_human",
+    "needsHumanKind": "configuration",
+    "reason": "notebooklm_notebook_id_missing"
+  },
+  "notebookEvidence": {
+    "provider": "notebooklm-mcp-cli",
+    "profile": "default",
+    "notebookId": "c20fd528-bb60-415e-b9f2-220c502d5839",
+    "title": "Joan AI — Workflow for AI Coding — Matt Pocock",
+    "url": "https://notebooklm.google.com/notebook/c20fd528-bb60-415e-b9f2-220c502d5839",
+    "state": "created_external_not_yet_bound_to_engine_run"
+  },
+  "knownGaps": [
+    "The local control API cannot persist a real run because PostgreSQL and runtime credentials are not configured.",
+    "The local control API run does not yet contain the created NotebookLM notebook ID.",
+    "YouTube metadata and transcript are not yet captured as immutable pipeline artifacts."
+  ],
+  "assetExperiment": {
+    "kind": "photo_infographic_series",
+    "cardCount": {
+      "min": 4,
+      "max": 8,
+      "selection": "Choose after research from the information structure; do not pad the series."
+    },
+    "format": "1080x1350 portrait 4:5",
+    "deliveryDependency": "none",
+    "comparison": "Compare reusable image-series cost and review time against NotebookLM video output."
+  },
+  "nextAction": "Run the first use case with the PostgreSQL-backed API and authenticated worker; then generate both NotebookLM media and the photo-infographic series from the same checked brief."
+}

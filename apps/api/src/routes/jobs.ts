@@ -1,4 +1,5 @@
 import {
+  bindNotebookRequestSchema,
   claimJobRequestSchema,
   reportJobResultRequestSchema,
 } from '@knowledge-bits/contracts';
@@ -88,6 +89,25 @@ export function registerJobRoutes(
     } catch (error) {
       if (error instanceof ArtifactStorageObjectNotFoundError) return context.json({ error: error.message }, 404);
       if (error instanceof ArtifactStorageOperationError) return context.json({ error: error.message }, 503);
+      throw error;
+    }
+  });
+
+  app.post('/jobs/:id/notebook', async (context) => {
+    const principal = requireWorkerPrincipal(context, dependencies.auth);
+    if (principal instanceof Response) return principal;
+    const input = bindNotebookRequestSchema.safeParse(await readJson(context.req.raw));
+    if (!input.success) return context.json({ error: 'Invalid notebook binding input' }, 400);
+    try {
+      await dependencies.repository.bindNotebook({
+        jobId: context.req.param('id'),
+        workerId: principal.workerId,
+        notebookLmNotebookId: input.data.notebookLmNotebookId,
+      });
+      return new Response(null, { status: 204 });
+    } catch (error) {
+      if (error instanceof WorkflowConflictError) return context.json({ error: error.message }, 409);
+      if (error instanceof WorkflowValidationError) return context.json({ error: error.message }, 400);
       throw error;
     }
   });

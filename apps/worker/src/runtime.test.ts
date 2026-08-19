@@ -985,6 +985,7 @@ function contextClient(bodies: Map<string, Uint8Array>): WorkerEngineClient {
   return {
     async claim() { return null; },
     async heartbeat() { return { kind: 'continue' }; },
+    async bindNotebook() {},
     async readArtifact(_job, artifactId) {
       const body = bodies.get(artifactId);
       if (!body) throw new Error(`missing ${artifactId}`);

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "joan-ai-video.evaluation-case.v1",
+  "id": "media-consistency-01",
+  "title": "All media uses the checked brief",
+  "coverage": ["media-consistency"],
+  "tags": ["media", "consistency", "joan"],
+  "source": {"id": "joan-fixture-source", "path": "sources/ai-coding-workflow.txt", "bodyChecksum": "d20ad1ff1e03785a5ac835660df50d504eff50702d118598ff5405243164f571", "artifactId": "joan-fixture-source"},
+  "expected": {"materialClaimIds": ["claim-agent-ready", "claim-vertical-slice"], "requiredTopicSignals": ["agent-ready requirements", "vertical slices", "test-driven development", "autonomous coding agents", "agent-effective codebases"], "requiredSourceIds": ["joan-fixture-source"], "media": {"requiredKinds": ["audio", "video", "infographic", "x", "linkedin"], "duration": {"minSeconds": 120, "maxSeconds": 300}, "cardCount": {"min": 4, "max": 8}, "dimensions": {"width": 1080, "height": 1350}}},
+  "label": {"hardGates": ["media-binding", "infographic-structure"], "critical": true},
+  "labelPath": "labels/joan.v1.json",
+  "labelChecksum": "48f923d68b668db3d106d805748c5d1c0c7b0fb9d7420b4e262d1160778188ac",
+  "checksum": "fc37279174a4369a0f175b31eb45ed0f7e384f2a7c8b92790487a0ca9704b568"
+}

@@ -137,6 +137,7 @@ export class NotebookLmProvider implements ContentProvider {
 
   constructor(private readonly options: {
     process: NotebookLmProcess;
+    command?: string;
     context: (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
     sourceVerifier?: ResearchSourceVerifier;
     sourceDiscoverer?: ResearchSourceDiscoveryClient;
@@ -491,7 +492,7 @@ export class NotebookLmProvider implements ContentProvider {
 
   private async run(args: readonly string[], signal: AbortSignal, stdin?: string) {
     const response = await this.options.process.run({
-      command: 'nlm',
+      command: this.options.command ?? 'nlm',
       args,
       ...(stdin ? { stdin } : {}),
       timeoutMs: this.options.timeoutMs ?? DEFAULT_NOTEBOOKLM_TIMEOUT_MS,

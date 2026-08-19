@@ -50,6 +50,64 @@ test('creates a run with all stages and research queued', async () => {
   }
 });
 
+test('creates a Joan run from only a YouTube URL', async () => {
+  const app = createTestApp();
+  const response = await app.request('/runs/joan', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer engine-api-test',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ youtubeUrl: 'https://youtu.be/dQw4w9WgXcQ?t=42' }),
+  });
+
+  assert.equal(response.status, 201, await response.clone().text());
+  const body = await response.json();
+  assert.equal(body.brief.contentKind, 'joan.ai-video-brief.v1');
+  assert.equal(body.brief.youtubeVideoId, 'dQw4w9WgXcQ');
+  assert.equal(body.brief.youtubeUrl, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  assert.deepEqual(body.brief.sourceUrls, ['https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
+  assert.equal(body.currentStage, 'research');
+  assert.equal(body.stages.research.state, 'queued');
+  assert.equal(body.notebookLmNotebookId, null);
+});
+
+test('rejects duplicate Joan intake for the same canonical YouTube video', async () => {
+  const app = createTestApp();
+  const headers = {
+    Authorization: 'Bearer engine-api-test',
+    'Content-Type': 'application/json',
+  };
+  const first = await app.request('/runs/joan', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }),
+  });
+  assert.equal(first.status, 201);
+  const firstBody = await first.json();
+
+  const duplicate = await app.request('/runs/joan', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ youtubeUrl: 'https://www.youtube.com/shorts/dQw4w9WgXcQ' }),
+  });
+  assert.equal(duplicate.status, 409);
+  assert.deepEqual(await duplicate.json(), {
+    error: 'A Joan run already exists for this YouTube video',
+    runId: firstBody.id,
+  });
+});
+
+test('rejects non-YouTube Joan intake', async () => {
+  const app = createTestApp();
+  const response = await app.request('/runs/joan', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer engine-api-test' },
+    body: JSON.stringify({ youtubeUrl: 'https://example.com/video' }),
+  });
+  assert.equal(response.status, 400);
+});
+
 test('requires the engine API token to create and inspect runs', async () => {
   const app = createTestApp();
   const missingToken = await app.request('/runs', {

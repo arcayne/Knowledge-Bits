@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type { ArtifactCompleteRequest, JobClaim, JobResult, WorkflowStage } from '@knowledge-bits/contracts';
 
 import type { WorkerEngineClient } from './engine-client.js';
+import type { NotebookProvisioner } from './providers/notebooklm-provisioner.js';
 import {
   ProviderNeedsHumanError,
   ProviderWaitingError,
@@ -39,6 +40,7 @@ export interface IntervalScheduler {
 export interface WorkerExecutorOptions {
   client: WorkerEngineClient;
   providers: readonly WorkerProvider[];
+  notebookProvisioner?: NotebookProvisioner;
   now?: () => Date;
   scheduler?: IntervalScheduler;
 }
@@ -99,8 +101,17 @@ export class WorkerExecutor {
     }, executionDeadlineMs(job, this.now()));
 
     try {
+      const preparedJob = needsNotebookProvisioning(job, action, this.options.notebookProvisioner)
+        ? await this.prepareNotebookJob(job, action, controller.signal)
+        : job;
+      if ('kind' in preparedJob) {
+        if (reportingAllowed && !controller.signal.aborted) {
+          await this.reportTypedResult(job, preparedJob, controller.signal);
+        }
+        return;
+      }
       const execution = await this.executeProvider(provider, {
-        job,
+        job: preparedJob,
         action,
         idempotencyKey: operationIdempotencyKey(job, action),
         signal: controller.signal,
@@ -256,6 +267,40 @@ export class WorkerExecutor {
     }
   }
 
+  private async prepareNotebookJob(
+    job: JobClaim,
+    action: WorkerAction,
+    signal: AbortSignal,
+  ): Promise<JobClaim | Extract<ProviderExecution, { kind: 'waiting' | 'needs_human' }>> {
+    if (action !== 'collect_sources' || !this.options.notebookProvisioner) return job;
+    const brief = job.input.brief;
+    if (!isRecord(brief) || brief.contentKind !== 'joan.ai-video-brief.v1') return job;
+    if (typeof job.input.notebookLmNotebookId === 'string' && job.input.notebookLmNotebookId.trim()) return job;
+    if (typeof brief.youtubeVideoId !== 'string' || !brief.youtubeVideoId.trim()) {
+      return { kind: 'needs_human', needsHumanKind: 'quality', reason: 'joan_video_id_missing' };
+    }
+    try {
+      const provisioned = await this.options.notebookProvisioner.provision({
+        title: `Joan AI — ${brief.youtubeVideoId}`,
+        idempotencyKey: operationIdempotencyKey(job, action),
+        signal,
+      });
+      await this.options.client.bindNotebook(job, provisioned.notebookId, signal);
+      return {
+        ...job,
+        input: { ...job.input, notebookLmNotebookId: provisioned.notebookId },
+      };
+    } catch (error) {
+      if (error instanceof ProviderWaitingError) {
+        return { kind: 'waiting', reason: error.message, retryAt: error.retryAt };
+      }
+      if (error instanceof ProviderNeedsHumanError) {
+        return { kind: 'needs_human', needsHumanKind: error.needsHumanKind, reason: error.message };
+      }
+      return { kind: 'needs_human', needsHumanKind: 'configuration', reason: 'notebooklm_binding_failed' };
+    }
+  }
+
   private async uploadExecutionArtifacts(
     job: JobClaim,
     provider: string,
@@ -364,6 +409,18 @@ export class WorkerExecutor {
     };
     await this.reportTypedResult(job, execution, signal);
   }
+}
+
+function needsNotebookProvisioning(
+  job: JobClaim,
+  action: WorkerAction,
+  provisioner: NotebookProvisioner | undefined,
+): boolean {
+  if (action !== 'collect_sources' || !provisioner) return false;
+  const brief = job.input.brief;
+  return isRecord(brief)
+    && brief.contentKind === 'joan.ai-video-brief.v1'
+    && !(typeof job.input.notebookLmNotebookId === 'string' && job.input.notebookLmNotebookId.trim());
 }
 
 function validateGenerationProvenance(

@@ -20,6 +20,167 @@ const relativeArtifactPathSchema = z.string().trim().min(1).refine((value) => (
   && value.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..')
 ), 'must be a normalized relative path');
 
+const youtubeVideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'must be a YouTube video ID');
+
+export const joanVideoRunRequestSchema = z.object({
+  youtubeUrl: z.string().trim().url(),
+}).strict().superRefine(({ youtubeUrl }, context) => {
+  if (!parseYouTubeUrl(youtubeUrl)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'youtubeUrl must be an HTTPS YouTube watch, short, or youtu.be URL',
+      path: ['youtubeUrl'],
+    });
+  }
+});
+
+export const joanAiVideoBriefSchema = z.object({
+  contentKind: z.literal('joan.ai-video-brief.v1'),
+  schemaVersion: z.literal('1.0.0'),
+  youtubeUrl: z.string().url(),
+  youtubeVideoId: youtubeVideoIdSchema,
+  sourceUrls: z.tuple([z.string().url()]),
+  locale: z.string().trim().min(1),
+  audience: z.string().trim().min(1),
+  brandVoice: z.string().trim().min(1),
+  researchPolicy: z.string().trim().min(1),
+  objective: z.string().trim().min(1),
+  targetDurationSeconds: z.object({
+    min: z.literal(120),
+    max: z.literal(300),
+  }).strict(),
+}).strict().superRefine((brief, context) => {
+  const parsed = parseYouTubeUrl(brief.youtubeUrl);
+  if (!parsed || parsed.videoId !== brief.youtubeVideoId || parsed.url !== brief.sourceUrls[0]) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'YouTube URL, video ID, and source URL must identify the same canonical video',
+      path: ['youtubeUrl'],
+    });
+  }
+});
+
+export type JoanVideoRunRequest = z.infer<typeof joanVideoRunRequestSchema>;
+export type JoanAiVideoBrief = z.infer<typeof joanAiVideoBriefSchema>;
+
+export const joanPhotoInfographicCardSchema = z.object({
+  sequence: z.number().int().min(1).max(8),
+  assetKind: z.string().regex(/^joan\.photo-infographic\.card\.\d{2}$/),
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().min(1).max(500),
+  visualDirection: z.string().trim().min(1).max(500),
+  imagePrompt: z.string().trim().min(1).max(1_000),
+  altText: z.string().trim().min(1).max(500),
+  textEquivalent: z.array(z.string().trim().min(1)).min(1),
+  claimRefs: z.array(z.string().uuid()).min(1),
+}).strict();
+
+export const joanPhotoInfographicSeriesSchema = z.object({
+  contentKind: z.literal('joan.photo-infographic-series.v1'),
+  schemaVersion: z.literal('1.0.0'),
+  sourceVideoId: youtubeVideoIdSchema,
+  format: z.object({
+    width: z.literal(1080),
+    height: z.literal(1350),
+    aspectRatio: z.literal('4:5'),
+  }).strict(),
+  selection: z.object({
+    cardCount: z.number().int().min(4).max(8),
+    rule: z.literal('structure-driven-no-padding'),
+    rationale: z.string().trim().min(1).max(500),
+  }).strict(),
+  cards: z.array(joanPhotoInfographicCardSchema).min(4).max(8),
+}).strict().superRefine((series, context) => {
+  if (series.selection.cardCount !== series.cards.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'selection.cardCount must equal the number of cards',
+      path: ['selection', 'cardCount'],
+    });
+  }
+
+  const titlesAndBodies = new Set<string>();
+  series.cards.forEach((card, index) => {
+    if (card.sequence !== index + 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Cards must use contiguous sequence numbers starting at one',
+        path: ['cards', index, 'sequence'],
+      });
+    }
+    if (card.assetKind !== `joan.photo-infographic.card.${String(card.sequence).padStart(2, '0')}`) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'assetKind must match the card sequence number',
+        path: ['cards', index, 'assetKind'],
+      });
+    }
+    const identity = `${normalizeJoanCardText(card.title)}|${normalizeJoanCardText(card.body)}`;
+    if (titlesAndBodies.has(identity)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Photo-infographic cards must not duplicate the same title and body',
+        path: ['cards', index],
+      });
+    }
+    titlesAndBodies.add(identity);
+  });
+});
+
+export type JoanPhotoInfographicCard = z.infer<typeof joanPhotoInfographicCardSchema>;
+export type JoanPhotoInfographicSeries = z.infer<typeof joanPhotoInfographicSeriesSchema>;
+
+function normalizeJoanCardText(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+}
+
+export function canonicalizeYouTubeUrl(value: string): { url: string; videoId: string } {
+  const parsed = parseYouTubeUrl(value);
+  if (!parsed) throw new TypeError('Invalid YouTube URL');
+  return parsed;
+}
+
+export function createJoanAiVideoBrief(youtubeUrl: string): JoanAiVideoBrief {
+  const canonical = canonicalizeYouTubeUrl(youtubeUrl);
+  return joanAiVideoBriefSchema.parse({
+    contentKind: 'joan.ai-video-brief.v1',
+    schemaVersion: '1.0.0',
+    youtubeUrl: canonical.url,
+    youtubeVideoId: canonical.videoId,
+    sourceUrls: [canonical.url],
+    locale: 'en',
+    audience: 'AI-curious professionals and builders who need a fast, reliable briefing',
+    brandVoice: 'clear, evidence-led, curious, useful, and low-hype',
+    researchPolicy: 'Prioritize author-linked sources. Add independent sources only when they materially improve context, accuracy, or qualification.',
+    objective: 'Extract the most relevant, evidence-supported information from a long AI video and present it in two to five minutes.',
+    targetDurationSeconds: { min: 120, max: 300 },
+  });
+}
+
+function parseYouTubeUrl(value: string): { url: string; videoId: string } | undefined {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'https:') return undefined;
+
+  const hostname = url.hostname.toLowerCase();
+  let videoId: string | null = null;
+  if (hostname === 'youtu.be') {
+    videoId = url.pathname.split('/').filter(Boolean)[0] ?? null;
+  } else if (hostname === 'youtube.com' || hostname === 'www.youtube.com' || hostname === 'm.youtube.com') {
+    if (url.pathname === '/watch') videoId = url.searchParams.get('v');
+    else if (url.pathname.startsWith('/shorts/')) videoId = url.pathname.split('/')[2] ?? null;
+  }
+  if (!videoId || !youtubeVideoIdSchema.safeParse(videoId).success) return undefined;
+  return {
+    url: `https://www.youtube.com/watch?v=${videoId}`,
+    videoId,
+  };
+}
+
 function generationRecipeBindingSchema(id: string) {
   return z.object({
     id: z.literal(id),
@@ -268,6 +429,15 @@ function validateBaselineEvidenceBinding(
 export type NugletMediaBaseline = z.infer<typeof nugletMediaBaselineSchema>;
 
 export const knowledgeBitsRunBriefSchema = z.record(z.unknown()).superRefine((brief, context) => {
+  if (targetsJoanAiVideoBrief(brief)) {
+    const parsed = joanAiVideoBriefSchema.safeParse(brief);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        context.addIssue({ ...issue, path: [...issue.path] });
+      }
+    }
+    return;
+  }
   const generationPlan = brief.generationPlan;
   if (!targetsNugletLesson(brief)) return;
   const parsed = nugletGenerationPlanSchema.safeParse(generationPlan);
@@ -481,6 +651,10 @@ function targetsNugletLesson(brief: Record<string, unknown>): boolean {
   const generationPlan = brief.generationPlan;
   return brief.contentKind === 'nuglet.lesson.v1'
     || (isUnknownRecord(generationPlan) && generationPlan.contentKind === 'nuglet.lesson.v1');
+}
+
+function targetsJoanAiVideoBrief(brief: Record<string, unknown>): boolean {
+  return brief.contentKind === 'joan.ai-video-brief.v1';
 }
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {

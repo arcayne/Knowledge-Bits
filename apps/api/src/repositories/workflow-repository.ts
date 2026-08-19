@@ -215,6 +215,12 @@ export interface RenewJobLeaseInput {
   workerId: string;
 }
 
+export interface BindNotebookInput {
+  jobId: string;
+  workerId: string;
+  notebookLmNotebookId: string;
+}
+
 export interface CompleteJobInput {
   workerId: string;
   result: JobResult;
@@ -416,6 +422,7 @@ export interface WorkflowStore {
   queueJob(input: QueueJobInput): Promise<WorkflowJob>;
   claimJob(input: ClaimJobInput): Promise<JobClaim | null>;
   renewJobLease(input: RenewJobLeaseInput): Promise<void>;
+  bindNotebook(input: BindNotebookInput): Promise<WorkflowRun>;
   hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean>;
   hasActiveArtifactLease(input: HasActiveArtifactLeaseInput): Promise<boolean>;
   completeJob(input: CompleteJobInput): Promise<JobResult>;
@@ -516,6 +523,10 @@ export class WorkflowRepository implements WorkflowStore {
 
   renewJobLease(input: RenewJobLeaseInput): Promise<void> {
     return this.store.renewJobLease(input);
+  }
+
+  bindNotebook(input: BindNotebookInput): Promise<WorkflowRun> {
+    return this.store.bindNotebook(input);
   }
 
   hasActiveJobLease(input: HasActiveJobLeaseInput): Promise<boolean> {
@@ -1659,6 +1670,50 @@ export class PrismaWorkflowStore implements WorkflowStore {
       RETURNING "Job"."id"
     `);
     if (!rows[0]) throw new WorkflowConflictError('Job lease is no longer valid');
+  }
+
+  async bindNotebook(input: BindNotebookInput): Promise<WorkflowRun> {
+    const notebookId = input.notebookLmNotebookId.trim();
+    if (!notebookId) throw new WorkflowValidationError('NotebookLM notebook ID is required');
+    return this.prisma.$transaction(async (transaction) => {
+      const job = await transaction.job.findUnique({
+        where: { id: input.jobId },
+        include: { run: true },
+      });
+      if (!job || job.stage !== 'research' || job.state !== 'running'
+        || job.leaseOwner !== input.workerId
+        || !job.leaseExpiresAt || job.leaseExpiresAt <= new Date()
+        || !job.executionDeadlineAt || job.executionDeadlineAt <= new Date()
+        || job.run.currentStage !== 'research') {
+        throw new WorkflowConflictError('Job lease is no longer valid for notebook binding');
+      }
+      if (job.run.notebookLmNotebookId && job.run.notebookLmNotebookId !== notebookId) {
+        throw new WorkflowConflictError('Run already has a different NotebookLM notebook bound');
+      }
+      const existing = await transaction.run.findUnique({
+        where: { notebookLmNotebookId: notebookId },
+        select: { id: true },
+      });
+      if (existing && existing.id !== job.runId) {
+        throw new WorkflowConflictError(`NotebookLM notebook ${notebookId} is already assigned to run ${existing.id}`);
+      }
+      const currentInput = isJsonObject(job.input) ? job.input : {};
+      await transaction.run.update({
+        where: { id: job.runId },
+        data: { notebookLmNotebookId: notebookId },
+      });
+      await transaction.job.update({
+        where: { id: job.id },
+        data: {
+          input: toPrismaJson({ ...currentInput, notebookLmNotebookId: notebookId }),
+        },
+      });
+      const updated = await transaction.run.findUniqueOrThrow({
+        where: { id: job.runId },
+        include: { stages: true, jobs: { where: { state: 'queued' }, orderBy: { availableAt: 'asc' }, take: 1 } },
+      });
+      return toWorkflowRun(updated);
+    });
   }
 
   async completeJob(input: CompleteJobInput): Promise<JobResult> {
@@ -3404,6 +3459,30 @@ class InMemoryWorkflowStore implements WorkflowStore {
     if (leaseDuration <= 0) throw new WorkflowConflictError('Job lease is no longer valid');
     job.leaseExpiresAt = new Date(now.getTime() + leaseDuration);
     job.updatedAt = now;
+  }
+
+  async bindNotebook(input: BindNotebookInput): Promise<WorkflowRun> {
+    const notebookId = input.notebookLmNotebookId.trim();
+    if (!notebookId) throw new WorkflowValidationError('NotebookLM notebook ID is required');
+    const now = this.clock();
+    const job = this.jobs.get(input.jobId);
+    const run = job ? this.runs.get(job.runId) : undefined;
+    if (!job || !run || job.stage !== 'research' || job.state !== 'running'
+      || job.leaseOwner !== input.workerId
+      || !job.leaseExpiresAt || job.leaseExpiresAt <= now
+      || !job.executionDeadlineAt || job.executionDeadlineAt <= now
+      || run.currentStage !== 'research') {
+      throw new WorkflowConflictError('Job lease is no longer valid for notebook binding');
+    }
+    if (run.notebookLmNotebookId && run.notebookLmNotebookId !== notebookId) {
+      throw new WorkflowConflictError('Run already has a different NotebookLM notebook bound');
+    }
+    this.assertNotebookLmNotebookIdAvailable(notebookId, run.id);
+    run.notebookLmNotebookId = notebookId;
+    job.input = { ...job.input, notebookLmNotebookId: notebookId };
+    run.updatedAt = now;
+    this.runsByNotebookLmNotebookId.set(notebookId, run.id);
+    return { ...run, stages: { ...run.stages } };
   }
 
   async completeJob(input: CompleteJobInput): Promise<JobResult> {

@@ -15,6 +15,7 @@ export type HeartbeatResult = { kind: 'continue' } | { kind: 'interrupted' };
 export interface WorkerEngineClient {
   claim(leaseSeconds: number, preferredRunId?: string): Promise<JobClaim | null>;
   heartbeat(job: JobClaim): Promise<HeartbeatResult>;
+  bindNotebook(job: JobClaim, notebookLmNotebookId: string, signal?: AbortSignal): Promise<void>;
   readArtifact(job: JobClaim, artifactId: string, signal?: AbortSignal): Promise<{ body: Uint8Array; mediaType: string }>;
   prepareArtifact(input: ArtifactPrepareRequest, signal?: AbortSignal): Promise<ArtifactPrepareResponse>;
   uploadArtifact(prepared: ArtifactPrepareResponse, body: Uint8Array, signal?: AbortSignal): Promise<void>;
@@ -58,6 +59,14 @@ export class HttpEngineClient implements WorkerEngineClient {
     if (response.status === 204) return { kind: 'continue' };
     if (response.status === 409) return { kind: 'interrupted' };
     throw new EngineClientError('Invalid heartbeat response', response.status);
+  }
+
+  async bindNotebook(job: JobClaim, notebookLmNotebookId: string, signal?: AbortSignal): Promise<void> {
+    await this.request(`/jobs/${job.jobId}/notebook`, {
+      method: 'POST',
+      body: JSON.stringify({ notebookLmNotebookId }),
+      signal,
+    });
   }
 
   async readArtifact(job: JobClaim, artifactId: string, signal?: AbortSignal): Promise<{ body: Uint8Array; mediaType: string }> {
