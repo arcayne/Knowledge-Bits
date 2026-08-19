@@ -279,9 +279,18 @@ export class WorkerExecutor {
     if (typeof brief.youtubeVideoId !== 'string' || !brief.youtubeVideoId.trim()) {
       return { kind: 'needs_human', needsHumanKind: 'quality', reason: 'joan_video_id_missing' };
     }
+    const sourceUrls = Array.isArray(brief.sourceUrls)
+      ? brief.sourceUrls.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      : typeof brief.youtubeUrl === 'string' && brief.youtubeUrl.trim()
+        ? [brief.youtubeUrl.trim()]
+        : [];
+    if (sourceUrls.length === 0) {
+      return { kind: 'needs_human', needsHumanKind: 'quality', reason: 'joan_source_url_missing' };
+    }
     try {
       const provisioned = await this.options.notebookProvisioner.provision({
         title: `Joan AI — ${brief.youtubeVideoId}`,
+        sourceUrls,
         idempotencyKey: operationIdempotencyKey(job, action),
         signal,
       });

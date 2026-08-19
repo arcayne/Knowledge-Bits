@@ -7,3 +7,5 @@ dist/
 !.env.example
 .local-artifacts/
 .local-supervisor/
+artifacts/
+.DS_Store

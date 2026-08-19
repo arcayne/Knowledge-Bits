@@ -17,11 +17,21 @@ NotebookLM provisioning boundary:
 - The worker calls `nlm notebook list --json` and reuses an exact deterministic Joan title when it
   exists.
 - On a miss, the worker calls `nlm notebook create <title> --json`.
+- Before binding, the worker seeds every required source URL with `nlm source add ... --wait` and
+  fails closed when the Joan source URL is missing.
 - The worker binds the returned ID through `POST /jobs/:id/notebook`.
 - The API persists the ID on the run and the active research job input.
 - The API accepts the binding only from the current research lease owner and rejects conflicting or
   already-assigned notebook IDs.
 - Authentication failures become `needs_human`; timeouts and rate limits become scheduler waits.
+
+Related-source discovery boundary:
+
+- Joan `collect_sources` uses the bound NotebookLM notebook to run web research.
+- The query includes the YouTube title and author from YouTube oEmbed metadata, plus the topic,
+  objective, and audience.
+- NotebookLM returns candidates only. Deterministic URL verification runs before related sources
+  are attached to the notebook.
 
 ## Validation
 
@@ -33,3 +43,7 @@ NotebookLM provisioning boundary:
 - The environment uses Node 20.11.0. The repository declares Node 24 as its supported engine.
 - The real first-usecase run still needs a configured PostgreSQL-backed API and a worker process to
   execute this boundary end to end.
+- The first-usecase NotebookLM research task was manually tested: 10 candidates were discovered
+  and 0 were imported because the controlled pipeline verification has not run yet.
+- NotebookLM video output for Joan must use the `Short` format with a custom focus. The `Explainer`
+  format is out of scope for this pipeline.

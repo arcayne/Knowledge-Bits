@@ -18,6 +18,7 @@ export interface NotebookProvisioningProcess {
 
 export interface NotebookProvisioningInput {
   title: string;
+  sourceUrls: readonly string[];
   idempotencyKey: string;
   signal: AbortSignal;
 }
@@ -48,13 +49,19 @@ export class NotebookLmNotebookProvisioner implements NotebookProvisioner {
   async provision(input: NotebookProvisioningInput): Promise<NotebookProvisioningResult> {
     const title = normalizeTitle(input.title);
     const existing = await this.list(title, input.signal);
-    if (existing) return { ...existing, reused: true };
+    const result = existing
+      ? { ...existing, reused: true }
+      : await this.create(title, input.signal);
+    await this.synchronizeSources(result.notebookId, input.sourceUrls, input.signal);
+    return result;
+  }
 
+  private async create(title: string, signal: AbortSignal): Promise<NotebookProvisioningResult> {
     const response = await this.options.process.run({
       command: this.options.command ?? 'nlm',
       args: ['notebook', 'create', title, '--json'],
       timeoutMs: this.options.timeoutMs ?? 180_000,
-      signal: input.signal,
+      signal,
     });
     this.assertProcessSuccess(response);
     const record = parseNotebookRecord(response.stdout, 'create');
@@ -91,6 +98,40 @@ export class NotebookLmNotebookProvisioner implements NotebookProvisioner {
       title: match.title,
       ...(match.url ? { url: match.url } : {}),
     };
+  }
+
+  private async synchronizeSources(notebookId: string, sourceUrls: readonly string[], signal: AbortSignal): Promise<void> {
+    const urls = [...new Set(sourceUrls.map((url) => normalizeSourceUrl(url)).filter((url): url is string => url !== undefined))];
+    if (urls.length === 0) throw new ProviderNeedsHumanError('notebooklm_provisioning_source_missing', 'quality');
+
+    const response = await this.options.process.run({
+      command: this.options.command ?? 'nlm',
+      args: ['source', 'list', notebookId, '--json'],
+      timeoutMs: this.options.timeoutMs ?? 180_000,
+      signal,
+    });
+    this.assertProcessSuccess(response);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(response.stdout);
+    } catch {
+      throw new ProviderNeedsHumanError('notebooklm_provisioning_source_list_invalid');
+    }
+    if (!Array.isArray(parsed)) throw new ProviderNeedsHumanError('notebooklm_provisioning_source_list_invalid');
+    const existingUrls = new Set(parsed.flatMap(sourceUrl));
+    const hasReadyYouTubeSource = parsed.some(readyYouTubeSource);
+    const missing = urls.filter((url) => (
+      !existingUrls.has(url) && !(hasReadyYouTubeSource && isYouTubeUrl(url))
+    ));
+    if (missing.length === 0) return;
+
+    const addResponse = await this.options.process.run({
+      command: this.options.command ?? 'nlm',
+      args: ['source', 'add', notebookId, ...missing.flatMap((url) => ['--url', url]), '--wait'],
+      timeoutMs: this.options.timeoutMs ?? 180_000,
+      signal,
+    });
+    this.assertProcessSuccess(addResponse);
   }
 
   private assertProcessSuccess(response: { stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean }): void {
@@ -161,6 +202,36 @@ function optionalUrl(value: unknown): string | undefined {
     return url.protocol === 'http:' || url.protocol === 'https:' ? value : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function normalizeSourceUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function sourceUrl(value: unknown): string[] {
+  if (!isRecord(value) || typeof value.url !== 'string') return [];
+  const normalized = normalizeSourceUrl(value.url);
+  return normalized ? [normalized] : [];
+}
+
+function readyYouTubeSource(value: unknown): boolean {
+  if (!isRecord(value) || value.type !== 'youtube') return false;
+  const status = value.status ?? value.state;
+  return status === 2 || (typeof status === 'string' && /^(?:active|complete|completed|ready|success|succeeded)$/i.test(status.trim()));
+}
+
+function isYouTubeUrl(value: string): boolean {
+  try {
+    return ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
   }
 }
 

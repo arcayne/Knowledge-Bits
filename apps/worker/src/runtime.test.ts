@@ -643,6 +643,7 @@ test('extracts and ranks Google grounding sources without trusting generated pro
     audience: 'business owners',
     objective: 'apply the offer framework',
     seedUrls: ['https://acquisition.com/books'],
+    notebookId: 'notebook-fixture',
     maxCandidates: 3,
     idempotencyKey: 'grounded-search',
     signal: new AbortController().signal,
