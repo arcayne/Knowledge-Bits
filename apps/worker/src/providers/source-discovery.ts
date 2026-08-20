@@ -26,6 +26,7 @@ export interface ResearchSourceDiscoveryClient {
     audience: string;
     objective: string;
     seedUrls: readonly string[];
+    notebookId: string;
     maxCandidates: number;
     idempotencyKey: string;
     signal: AbortSignal;

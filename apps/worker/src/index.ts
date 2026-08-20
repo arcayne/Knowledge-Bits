@@ -1,6 +1,6 @@
 import { HttpEngineClient } from './engine-client.js';
 import { WorkerExecutor } from './executor.js';
-import { composeWorkerProviders } from './runtime.js';
+import { composeWorkerProviders, createNotebookLmNotebookProvisioner } from './runtime.js';
 import { runWorkerTick } from './tick.js';
 
 const baseUrl = requiredEnvironment('ENGINE_API_BASE_URL');
@@ -13,7 +13,11 @@ const maxDurationSeconds = positiveInteger(
 );
 
 const client = new HttpEngineClient({ baseUrl, workerToken });
-const executor = new WorkerExecutor({ client, providers: composeWorkerProviders({ env: process.env, engineClient: client }) });
+const executor = new WorkerExecutor({
+  client,
+  providers: composeWorkerProviders({ env: process.env, engineClient: client }),
+  notebookProvisioner: createNotebookLmNotebookProvisioner(process.env),
+});
 const tickStartedAt = Date.now();
 console.log(JSON.stringify({
   event: 'worker_tick_started',

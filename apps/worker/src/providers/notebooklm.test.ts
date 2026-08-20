@@ -1318,6 +1318,26 @@ test('does not re-import URLs that already exist in the NotebookLM notebook', as
   assert.equal(calls.some(({ args }) => args.includes('add')), false);
 });
 
+test('does not re-import a ready YouTube source when the CLI omits its URL in source list output', async () => {
+  const calls: Array<{ args: readonly string[]; stdin?: string }> = [];
+  const sourceUrl = 'https://www.youtube.com/watch?v=-QFHIoCo-Ko';
+  const provider = new NotebookLmProvider({
+    sourceVerifier: fakeSourceVerifier,
+    process: processWith(calls, [
+      { stdout: 'nlm 0.9.4\n', stderr: '', exitCode: 0 },
+      { stdout: JSON.stringify([{ id: 'source-1', title: 'Full Walkthrough', type: 'youtube', url: null, status: 2 }]), stderr: '', exitCode: 0 },
+      { stdout: await fixture('notebooklm-research.json'), stderr: '', exitCode: 0 },
+    ]),
+    context: async () => ({ notebookId: 'notebook_fixture_01', sourceUrls: [sourceUrl], topic: 'focus' }),
+  });
+
+  const result = await provider.execute(input('collect_sources'));
+
+  assert.equal(result.kind, 'success');
+  assert.equal(calls.length, 3);
+  assert.equal(calls.some(({ args }) => args.includes('add')), false);
+});
+
 test('classifies a provider cooldown without attempting a structured repair', async () => {
   const provider = new NotebookLmProvider({
     sourceVerifier: fakeSourceVerifier,

@@ -9,6 +9,7 @@ import type {
   JobClaim,
   JobResult,
 } from '@knowledge-bits/contracts';
+import { createJoanAiVideoBrief } from '@knowledge-bits/contracts';
 
 import {
   WorkerExecutor,
@@ -44,6 +45,45 @@ test('reports a provider wait without creating fallback artifacts', async () => 
   assert.equal(client.results[0]?.retryAt, retryAt);
   assert.equal(client.completedArtifacts.length, 0);
   assert.equal(client.uploadedArtifacts.length, 0);
+});
+
+test('provisions and binds a Joan notebook before the research provider runs', async () => {
+  const client = new FakeEngineClient();
+  const provider: WorkerProvider = {
+    name: 'notebooklm',
+    capabilities: ['collect_sources'],
+    async execute(input) {
+      assert.equal(input.job.input.notebookLmNotebookId, 'provisioned-notebook');
+      return {
+        kind: 'success',
+        rawResponse: Buffer.from('{}'),
+        parsedOutput: { acceptedSources: [] },
+        executionReport: { provider: 'notebooklm' },
+      };
+    },
+  };
+  const executor = new WorkerExecutor({
+    client,
+    providers: [provider],
+    notebookProvisioner: {
+      async provision() {
+        return {
+          notebookId: 'provisioned-notebook',
+          title: 'Joan AI — -QFHIoCo-Ko',
+          reused: false,
+        };
+      },
+    },
+    now: () => new Date(now),
+  });
+
+  await executor.execute({
+    ...job('research'),
+    input: { brief: createJoanAiVideoBrief('https://www.youtube.com/watch?v=-QFHIoCo-Ko'), dependencies: [] },
+  });
+
+  assert.deepEqual(client.boundNotebooks, ['provisioned-notebook']);
+  assert.equal(client.results[0]?.result.state, 'done');
 });
 
 test('reports a typed NotebookLM transport wait as a durable scheduler retry', async () => {
@@ -1034,6 +1074,7 @@ class FakeEngineClient implements WorkerEngineClient {
   readonly uploadedArtifacts: Array<{ artifactId: string; body: Uint8Array }> = [];
   readonly preparedArtifacts: ArtifactPrepareRequest[] = [];
   readonly deliveries: string[] = [];
+  readonly boundNotebooks: string[] = [];
   heartbeats = 0;
   private artifactSequence = 0;
 
@@ -1051,6 +1092,10 @@ class FakeEngineClient implements WorkerEngineClient {
     this.heartbeats += 1;
     this.events.push('heartbeat');
     return this.options.heartbeat ?? { kind: 'continue' };
+  }
+
+  async bindNotebook(_job: JobClaim, notebookLmNotebookId: string): Promise<void> {
+    this.boundNotebooks.push(notebookLmNotebookId);
   }
 
   async readArtifact(): Promise<{ body: Uint8Array; mediaType: string }> {

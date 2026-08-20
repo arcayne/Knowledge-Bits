@@ -2,11 +2,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as contracts from '../dist/index.js';
 import {
+  canonicalizeYouTubeUrl,
+  createJoanAiVideoBrief,
   knowledgeBitsContentSchema,
   knowledgeBitsEvidenceSchema,
   knowledgeBitsQaSchema,
   knowledgeBitsSchema,
   knowledgeBitsCreateRunRequestSchema,
+  knowledgeBitsRunBriefSchema,
+  joanAiVideoBriefSchema,
+  joanPhotoInfographicSeriesSchema,
+  joanVideoRunRequestSchema,
   nugletSimilarityRequestSchema,
   nugletSimilarityResponseSchema,
   nugletSimilarityReviewSchema,
@@ -16,7 +22,6 @@ import {
   prepareSourceRevisionResponseSchema,
   resumeCreateCandidateRequestSchema,
   regenerateMediaRequestSchema,
-  knowledgeBitsRunBriefSchema,
   nugletGenerationPlanSchema,
   nugletMigrationInventorySchema,
   storyPlaybookDraftSchema,
@@ -35,6 +40,68 @@ const packageId = '0f8fad5b-d9cb-469f-a165-70867728950e';
 const sourceId = '0f8fad5b-d9cb-469f-a165-70867728950f';
 const claimId = '0f8fad5b-d9cb-469f-a165-708677289510';
 const snapshotArtifactId = '0f8fad5b-d9cb-469f-a165-708677289512';
+
+test('canonicalizes supported YouTube intake URLs', () => {
+  assert.deepEqual(canonicalizeYouTubeUrl('https://youtu.be/dQw4w9WgXcQ?t=42'), {
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    videoId: 'dQw4w9WgXcQ',
+  });
+  assert.deepEqual(canonicalizeYouTubeUrl('https://www.youtube.com/shorts/dQw4w9WgXcQ'), {
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    videoId: 'dQw4w9WgXcQ',
+  });
+  assert.equal(joanVideoRunRequestSchema.safeParse({ youtubeUrl: 'https://example.com/video' }).success, false);
+});
+
+test('creates and validates a URL-only Joan video brief', () => {
+  const brief = createJoanAiVideoBrief('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  assert.deepEqual(joanAiVideoBriefSchema.parse(brief), brief);
+  assert.deepEqual(knowledgeBitsRunBriefSchema.parse(brief), brief);
+  assert.equal(brief.contentKind, 'joan.ai-video-brief.v1');
+  assert.deepEqual(brief.targetDurationSeconds, { min: 120, max: 300 });
+});
+
+test('validates an adaptive four-to-eight-card Joan photo-infographic series', () => {
+  const claimIds = [
+    '11111111-1111-4111-8111-111111111111',
+    '22222222-2222-4222-8222-222222222222',
+    '33333333-3333-4333-8333-333333333333',
+    '44444444-4444-4444-8444-444444444444',
+  ];
+  const series = {
+    contentKind: 'joan.photo-infographic-series.v1',
+    schemaVersion: '1.0.0',
+    sourceVideoId: 'dQw4w9WgXcQ',
+    format: { width: 1080, height: 1350, aspectRatio: '4:5' },
+    selection: {
+      cardCount: 4,
+      rule: 'structure-driven-no-padding',
+      rationale: 'Four distinct ideas are sufficient for this brief.',
+    },
+    cards: claimIds.map((claimId, index) => ({
+      sequence: index + 1,
+      assetKind: `joan.photo-infographic.card.0${index + 1}`,
+      title: `Idea ${index + 1}`,
+      body: `Body ${index + 1}`,
+      visualDirection: `Visual direction ${index + 1}`,
+      imagePrompt: `Image prompt ${index + 1}`,
+      altText: `Alt text ${index + 1}`,
+      textEquivalent: [`Text equivalent ${index + 1}`],
+      claimRefs: [claimId],
+    })),
+  };
+
+  assert.deepEqual(joanPhotoInfographicSeriesSchema.parse(series), series);
+  assert.equal(joanPhotoInfographicSeriesSchema.safeParse({
+    ...series,
+    selection: { ...series.selection, cardCount: 3 },
+    cards: series.cards.slice(0, 3),
+  }).success, false);
+  assert.equal(joanPhotoInfographicSeriesSchema.safeParse({
+    ...series,
+    cards: [series.cards[0], series.cards[0], ...series.cards.slice(2)],
+  }).success, false);
+});
 
 test('similarity preflight contracts are bounded and checksum-bound', () => {
   const request = {

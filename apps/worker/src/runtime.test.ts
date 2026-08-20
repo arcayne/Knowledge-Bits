@@ -643,6 +643,7 @@ test('extracts and ranks Google grounding sources without trusting generated pro
     audience: 'business owners',
     objective: 'apply the offer framework',
     seedUrls: ['https://acquisition.com/books'],
+    notebookId: 'notebook-fixture',
     maxCandidates: 3,
     idempotencyKey: 'grounded-search',
     signal: new AbortController().signal,
@@ -985,6 +986,7 @@ function contextClient(bodies: Map<string, Uint8Array>): WorkerEngineClient {
   return {
     async claim() { return null; },
     async heartbeat() { return { kind: 'continue' }; },
+    async bindNotebook() {},
     async readArtifact(_job, artifactId) {
       const body = bodies.get(artifactId);
       if (!body) throw new Error(`missing ${artifactId}`);

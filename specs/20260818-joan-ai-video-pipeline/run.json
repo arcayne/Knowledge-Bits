@@ -1,0 +1,45 @@
+{
+  "workflow": "agentic-delivery-playbook v0.2",
+  "phase": "implementation",
+  "status": "complete",
+  "taskFit": "new-pipeline-vertical-slice",
+  "specPath": "docs/JOAN_AI_VIDEO_PIPELINE_SPEC.md",
+  "activeRole": "primary",
+  "modelLedger": { "source": "runtime-default" },
+  "approval": "User explicitly requested implementation of the Joan AI video pipeline.",
+  "riskTier": "orange",
+  "reviewGates": ["tests-first", "implementation-qa", "verification"],
+  "changedFiles": [
+    "specs/20260818-joan-ai-video-pipeline/spec.md",
+    "specs/20260818-joan-ai-video-pipeline/run.json",
+    "specs/20260818-joan-ai-video-pipeline/notes.md",
+    "packages/contracts/src/knowledge-bits.ts",
+    "packages/contracts/test/contracts.test.mjs",
+    "apps/api/src/routes/runs.ts",
+    "apps/api/src/routes/runs.test.ts"
+  ],
+  "knownBoundary": "The existing worker requires a real NotebookLM notebook ID before provider execution. This slice does not fabricate or persist a notebook ID.",
+  "validation": [
+    {
+      "phase": "green",
+      "command": "corepack pnpm --filter @knowledge-bits/contracts typecheck && corepack pnpm --filter @knowledge-bits/contracts build && corepack pnpm --filter @knowledge-bits/contracts test",
+      "result": "Passed: typecheck, build, and 44 contract tests."
+    },
+    {
+      "phase": "green",
+      "command": "corepack pnpm --filter @knowledge-bits/pipeline build && corepack pnpm --filter @knowledge-bits/api exec tsx --test src/routes/runs.test.ts",
+      "result": "Passed: pipeline build and 11 API route tests."
+    },
+    {
+      "phase": "blocked",
+      "command": "corepack pnpm --filter @knowledge-bits/api typecheck",
+      "result": "Blocked by the local generated Prisma client state; the existing repository reports missing Prisma.JsonValue, Prisma.InputJsonValue, Prisma.sql, and related generated types."
+    }
+  ],
+  "knownGaps": [
+    "Joan-specific research provider is not implemented in this slice.",
+    "NotebookLM notebook provisioning and server-side notebook ID persistence are not implemented.",
+    "X and LinkedIn remain manual delivery targets."
+  ],
+  "nextAction": "Add Joan-specific research and NotebookLM notebook provisioning through the worker boundary."
+}

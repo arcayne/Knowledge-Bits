@@ -120,7 +120,8 @@ interface NotebookLmPhaseTiming {
 interface NotebookLmListedSource {
   sourceId: string;
   title: string;
-  url: string;
+  url?: string;
+  type?: string;
   ready: boolean;
 }
 
@@ -137,6 +138,7 @@ export class NotebookLmProvider implements ContentProvider {
 
   constructor(private readonly options: {
     process: NotebookLmProcess;
+    command?: string;
     context: (input: ProviderExecutionInput) => Promise<NotebookLmContext>;
     sourceVerifier?: ResearchSourceVerifier;
     sourceDiscoverer?: ResearchSourceDiscoveryClient;
@@ -404,6 +406,7 @@ export class NotebookLmProvider implements ContentProvider {
         audience: context.audience ?? 'general adult learners',
         objective: context.objective ?? context.topic,
         seedUrls: context.sourceUrls,
+        notebookId: context.notebookId,
         maxCandidates: maxCandidates - seedCandidates.length,
         idempotencyKey: input.idempotencyKey,
         signal: input.signal,
@@ -437,14 +440,17 @@ export class NotebookLmProvider implements ContentProvider {
     recordInventory: boolean,
   ): Promise<NotebookLmResearchSource[]> {
     if (context.sourceUrls.length === 0 && !recordInventory) return [];
-    let existing = await this.listSources(context.notebookId, signal);
-    const existingUrls = new Set(existing.map(({ url }) => url));
-    const missing = [...new Set(context.sourceUrls)].filter((url) => !existingUrls.has(url));
+    let existing = hydrateSourceUrls(await this.listSources(context.notebookId, signal), context.sourceUrls);
+    const existingUrls = new Set(existing.flatMap(({ url }) => url ? [url] : []));
+    const hasReadyYouTubeSource = existing.some((source) => source.ready && source.type === 'youtube');
+    const missing = [...new Set(context.sourceUrls)].filter((url) => (
+      !existingUrls.has(url) && !(hasReadyYouTubeSource && isYouTubeUrl(url))
+    ));
     if (missing.length === 0) return recordInventory ? readyResearchSources(existing) : [];
     const response = await this.run(['source', 'add', context.notebookId, ...missing.flatMap((url) => ['--url', url]), '--wait'], signal);
     this.assertProcessSuccess(response);
     if (!recordInventory) return [];
-    existing = await this.listSources(context.notebookId, signal);
+    existing = hydrateSourceUrls(await this.listSources(context.notebookId, signal), context.sourceUrls);
     return readyResearchSources(existing);
   }
 
@@ -491,7 +497,7 @@ export class NotebookLmProvider implements ContentProvider {
 
   private async run(args: readonly string[], signal: AbortSignal, stdin?: string) {
     const response = await this.options.process.run({
-      command: 'nlm',
+      command: this.options.command ?? 'nlm',
       args,
       ...(stdin ? { stdin } : {}),
       timeoutMs: this.options.timeoutMs ?? DEFAULT_NOTEBOOKLM_TIMEOUT_MS,
@@ -583,22 +589,39 @@ interface ResearchCandidate {
 function parseListedSource(value: unknown): NotebookLmListedSource[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
   const source = value as Record<string, unknown>;
-  if (typeof source.url !== 'string' || source.url.length === 0) return [];
+  const url = typeof source.url === 'string' && source.url.length > 0 ? source.url : undefined;
+  const type = stringField(source.type) ?? stringField(source.source_type);
+  if (!url && type !== 'youtube') return [];
   const sourceId = stringField(source.id)
     ?? stringField(source.sourceId)
     ?? stringField(source.source_id)
-    ?? `notebook-source-${createHash('sha256').update(source.url).digest('hex').slice(0, 16)}`;
+    ?? (url ? `notebook-source-${createHash('sha256').update(url).digest('hex').slice(0, 16)}` : undefined);
+  if (!sourceId) return [];
   return [{
     sourceId,
-    title: stringField(source.title) ?? sourceTitle(source.url),
-    url: source.url,
+    title: stringField(source.title) ?? (url ? sourceTitle(url) : 'NotebookLM source'),
+    ...(url ? { url } : {}),
+    ...(type ? { type } : {}),
     ready: listedSourceReady(source.status ?? source.state),
   }];
 }
 
 function readyResearchSources(sources: readonly NotebookLmListedSource[]): NotebookLmResearchSource[] {
   return sources.flatMap(({ ready, sourceId, title, url }) => (
-    ready ? [{ sourceId, title, url }] : []
+    ready && url ? [{ sourceId, title, url }] : []
+  ));
+}
+
+function hydrateSourceUrls(
+  sources: readonly NotebookLmListedSource[],
+  requestedUrls: readonly string[],
+): NotebookLmListedSource[] {
+  const requestedYouTubeUrl = requestedUrls.find(isYouTubeUrl);
+  if (!requestedYouTubeUrl) return [...sources];
+  return sources.map((source) => (
+    !source.url && source.type === 'youtube'
+      ? { ...source, url: requestedYouTubeUrl }
+      : source
   ));
 }
 
@@ -610,6 +633,15 @@ function listedSourceReady(value: unknown): boolean {
   if (value === undefined || value === null) return true;
   if (value === 2) return true;
   return typeof value === 'string' && /^(?:2|active|complete|completed|ready|success|succeeded)$/i.test(value.trim());
+}
+
+function isYouTubeUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(hostname);
+  } catch {
+    return false;
+  }
 }
 
 function seedResearchCandidates(sourceUrls: readonly string[]): ResearchCandidate[] {

@@ -1,0 +1,2 @@
+Joan fixture source for AI coding workflow evaluation.
+The source covers agent-ready requirements, vertical slices, test-driven development, autonomous coding agents, and codebases designed for agent effectiveness.

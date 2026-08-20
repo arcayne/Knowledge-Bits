@@ -1,4 +1,6 @@
 import {
+  createJoanAiVideoBrief,
+  joanVideoRunRequestSchema,
   knowledgeBitsCreateRunRequestSchema,
   nugletSimilarityRequestSchema,
   nugletSimilarityResponseSchema,
@@ -62,6 +64,39 @@ export function registerRunRoutes(
         ...boundInput.data,
         notebookLmNotebookId: boundInput.data.notebookLmNotebookId
           ?? notebookIdFromBrief(brief),
+      });
+      return context.json(workflowRunResponseSchema.parse(toRunResponse(run)), 201);
+    } catch (error) {
+      if (error instanceof WorkflowConflictError) {
+        return context.json({ error: error.message }, 409);
+      }
+      throw error;
+    }
+  });
+
+  app.post('/runs/joan', async (context) => {
+    const authFailure = requireApiOrReviewPrincipal(context, dependencies.auth);
+    if (authFailure) return authFailure;
+    const input = joanVideoRunRequestSchema.safeParse(await readJson(context.req.raw));
+    if (!input.success) return context.json({ error: 'Invalid Joan video input' }, 400);
+
+    const brief = createJoanAiVideoBrief(input.data.youtubeUrl);
+    const existing = (await dependencies.repository.listRuns()).find((run) => (
+      run.brief.contentKind === brief.contentKind
+      && run.brief.youtubeVideoId === brief.youtubeVideoId
+    ));
+    if (existing) {
+      return context.json({
+        error: 'A Joan run already exists for this YouTube video',
+        runId: existing.id,
+      }, 409);
+    }
+
+    try {
+      const run = await dependencies.repository.bootstrapRun({
+        title: `Joan AI video brief: ${brief.youtubeVideoId}`,
+        locale: brief.locale,
+        brief,
       });
       return context.json(workflowRunResponseSchema.parse(toRunResponse(run)), 201);
     } catch (error) {

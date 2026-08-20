@@ -125,6 +125,37 @@ test('renews only the current worker lease through the heartbeat endpoint', asyn
   assert.equal(rejected.status, 409);
 });
 
+test('binds a server-provisioned NotebookLM ID through the active research lease', async () => {
+  const app = createPrincipalBoundTestApp();
+  const created = await app.request('/runs/joan', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer engine-api-test',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }),
+  });
+  assert.equal(created.status, 201);
+  const run = await created.json() as { id: string };
+  const claim = await claimResearchJob(app, 'research-worker-token');
+
+  const bound = await app.request(`/jobs/${claim.jobId}/notebook`, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer research-worker-token',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ notebookLmNotebookId: 'provisioned-notebook' }),
+  });
+  assert.equal(bound.status, 204);
+
+  const retrieved = await app.request(`/runs/${run.id}`, {
+    headers: { Authorization: 'Bearer engine-api-test' },
+  });
+  assert.equal(retrieved.status, 200);
+  assert.equal((await retrieved.json()).notebookLmNotebookId, 'provisioned-notebook');
+});
+
 test('serves only declared artifact dependencies through the active worker lease', async () => {
   const repository = new WorkflowRepository(createInMemoryWorkflowStore());
   const dependencyId = '55555555-5555-4555-8555-555555555555';
@@ -336,10 +367,10 @@ async function createRun(app: ReturnType<typeof createTestApp>) {
   return response.json() as Promise<{ id: string }>;
 }
 
-async function claimResearchJob(app: ReturnType<typeof createTestApp>) {
+async function claimResearchJob(app: ReturnType<typeof createTestApp>, token = 'engine-worker-test') {
   const response = await app.request('/jobs/claim', {
     method: 'POST',
-    headers: { Authorization: 'Bearer engine-worker-test' },
+    headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ leaseSeconds: 120 }),
   });
   assert.equal(response.status, 200);

@@ -1,0 +1,36 @@
+{
+  "workflow": "agentic-delivery-playbook v0.2",
+  "phase": "implementation",
+  "status": "complete",
+  "taskFit": "server-owned-notebook-provisioning",
+  "specPath": "specs/20260819-joan-notebook-provisioning/spec.md",
+  "activeRole": "primary",
+  "modelLedger": { "source": "runtime-default" },
+  "approval": "User explicitly requested a server-owned adapter using nlm notebook create.",
+  "riskTier": "orange",
+  "reviewGates": ["tests-first", "implementation-qa", "verification"],
+  "knownBoundary": "The real first-usecase run requires a configured PostgreSQL-backed API and authenticated worker.",
+  "validation": [
+    {
+      "phase": "green",
+      "command": "corepack pnpm --filter @knowledge-bits/contracts build && corepack pnpm --filter @knowledge-bits/contracts test",
+      "result": "Passed: contracts build and 45 contract tests."
+    },
+    {
+      "phase": "green",
+      "command": "corepack pnpm --filter @knowledge-bits/worker typecheck && corepack pnpm --filter @knowledge-bits/worker exec tsx --test src/executor.test.ts src/providers/notebooklm-provisioner.test.ts",
+      "result": "Passed separately: worker typecheck, 34 executor tests, and 5 provisioning tests."
+    },
+    {
+      "phase": "green",
+      "command": "corepack pnpm --filter @knowledge-bits/api exec tsx --test src/routes/jobs.test.ts",
+      "result": "Passed: 12 API jobs route tests, including lease-scoped notebook binding."
+    },
+    {
+      "phase": "blocked",
+      "command": "corepack pnpm --filter @knowledge-bits/api typecheck",
+      "result": "Blocked by the existing generated Prisma client state; missing Prisma.JsonValue, Prisma.InputJsonValue, Prisma.sql, and related generated types."
+    }
+  ],
+  "nextAction": "Run the first YouTube use case with PostgreSQL and the authenticated worker, then implement Joan research capture and source synchronization."
+}

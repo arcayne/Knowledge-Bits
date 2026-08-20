@@ -27,6 +27,10 @@ const SCHEMA_1_1_FIXTURE_FILE_BY_ACTION: Partial<Record<WorkerAction, string>> =
   produce_assets: 'produce-assets-dual-audio.json',
 };
 
+const JOAN_FIXTURE_FILE_BY_ACTION: Partial<Record<WorkerAction, string>> = {
+  produce_assets: 'produce-assets-joan-photo-infographic.json',
+};
+
 export class FixtureProvider implements WorkerProvider {
   readonly name = 'fixture';
   readonly capabilities = Object.keys(FIXTURE_FILE_BY_ACTION) as WorkerAction[];
@@ -84,6 +88,9 @@ async function resolveFixtureValues(
 
 function fixtureFileFor(input: ProviderExecutionInput): string {
   const brief = input.job.input.brief;
+  if (isRecord(brief) && brief.contentKind === 'joan.ai-video-brief.v1') {
+    return JOAN_FIXTURE_FILE_BY_ACTION[input.action] ?? FIXTURE_FILE_BY_ACTION[input.action];
+  }
   const generationPlan = isRecord(brief) && isRecord(brief.generationPlan)
     ? brief.generationPlan
     : undefined;
@@ -225,6 +232,13 @@ function resolveFixturePlaceholders(
         throw new TypeError('Fixture provider cannot resolve the generation input checksum');
       }
       return fixtureValues.generationInputChecksum;
+    }
+    if (value === '$youtubeVideoId') {
+      const brief = job.input.brief;
+      if (!isRecord(brief) || typeof brief.youtubeVideoId !== 'string') {
+        throw new TypeError('Fixture provider cannot resolve the YouTube video ID');
+      }
+      return brief.youtubeVideoId;
     }
     const prefix = '$snapshotArtifactId:';
     if (value.startsWith(prefix)) {

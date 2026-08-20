@@ -28,6 +28,8 @@ import {
 } from './providers/media.js';
 import { generationSupportArtifacts } from './recipes/support-artifacts.js';
 import { NotebookLmProvider, type NotebookLmContext, type NotebookLmProcess, type ResearchSourceVerifier } from './providers/notebooklm.js';
+import { NotebookLmNotebookProvisioner } from './providers/notebooklm-provisioner.js';
+import { NotebookLmResearchSourceDiscoveryClient } from './providers/notebooklm-research.js';
 import {
   PiEditorialProvider,
   type PiSdkClient,
@@ -80,6 +82,7 @@ export interface TrustedRecipeBindingVerifier {
 export interface ProviderRuntime {
   recipeBindingVerifier?: TrustedRecipeBindingVerifier;
   notebookProcess?: NotebookLmProcess;
+  notebookResearchDiscoverer?: ResearchSourceDiscoveryClient;
   notebookContext?: NotebookContextResolver;
   sourceVerifier?: ResearchSourceVerifier;
   sourceDiscoverer?: ResearchSourceDiscoveryClient;
@@ -110,9 +113,12 @@ export function composeWorkerProviders(options: {
     runtime.notebookProcess && runtime.notebookContext && runtime.sourceVerifier
       ? new NotebookLmProvider({
         process: runtime.notebookProcess,
+        command: configuredValue(env, 'NOTEBOOKLM_COMMAND') ?? 'nlm',
         context: trustedContextResolver(runtime.notebookContext, runtime.recipeBindingVerifier),
         sourceVerifier: runtime.sourceVerifier,
-        ...(runtime.sourceDiscoverer ? { sourceDiscoverer: runtime.sourceDiscoverer } : {}),
+        ...((runtime.notebookResearchDiscoverer ?? runtime.sourceDiscoverer)
+          ? { sourceDiscoverer: runtime.notebookResearchDiscoverer ?? runtime.sourceDiscoverer }
+          : {}),
         maxResearchCandidates: configuredPositiveInteger(env, 'PI_SOURCE_DISCOVERY_MAX_CANDIDATES', 8),
         minimumAcceptedSources: configuredPositiveInteger(env, 'PI_SOURCE_DISCOVERY_MIN_ACCEPTED', 3),
         separateReadQueries: true,
@@ -136,6 +142,14 @@ export function composeWorkerProviders(options: {
   ];
 }
 
+export function createNotebookLmNotebookProvisioner(env: NodeJS.ProcessEnv = process.env): NotebookLmNotebookProvisioner {
+  return new NotebookLmNotebookProvisioner({
+    process: new SpawnNotebookLmProcess(),
+    command: configuredValue(env, 'NOTEBOOKLM_COMMAND') ?? 'nlm',
+    timeoutMs: configuredPositiveInteger(env, 'NOTEBOOKLM_TIMEOUT_MS', 180_000),
+  });
+}
+
 function configuredRuntime(
   env: NodeJS.ProcessEnv,
   engineClient: WorkerEngineClient | undefined,
@@ -145,6 +159,7 @@ function configuredRuntime(
   if (!engineClient) return {};
   const recipeBindingVerifier = new FileRecipeRegistry(recipeRoots);
   const contexts = new LeaseScopedJobContextResolver(engineClient, recipeBindingVerifier);
+  const notebookProcess = new SpawnNotebookLmProcess();
   const piProvider = configuredValue(env, 'PI_PROVIDER');
   const piModel = configuredValue(env, 'PI_MODEL');
   const googleCloudProject = configuredValue(env, 'GOOGLE_CLOUD_PROJECT');
@@ -169,7 +184,13 @@ function configuredRuntime(
   return {
     recipeBindingVerifier,
     ...(mediaConfigurationIssue ? { configurationIssues: { media: mediaConfigurationIssue } } : {}),
-    notebookProcess: new SpawnNotebookLmProcess(),
+    notebookProcess,
+    notebookResearchDiscoverer: new NotebookLmResearchSourceDiscoveryClient({
+      process: notebookProcess,
+      command: configuredValue(env, 'NOTEBOOKLM_COMMAND') ?? 'nlm',
+      fetch: request,
+      timeoutMs: configuredPositiveInteger(env, 'NOTEBOOKLM_TIMEOUT_MS', 180_000),
+    }),
     notebookContext: (input: ProviderExecutionInput) => contexts.notebook(input),
     sourceVerifier: new DeterministicSourceVerifier({
       trustedHosts: commaSeparated(env.SOURCE_TRUSTED_HOSTS),
@@ -389,6 +410,7 @@ export class GoogleGroundedSourceDiscoveryClient implements ResearchSourceDiscov
     audience: string;
     objective: string;
     seedUrls: readonly string[];
+    notebookId: string;
     maxCandidates: number;
     idempotencyKey: string;
     signal: AbortSignal;

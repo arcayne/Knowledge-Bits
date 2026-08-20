@@ -1,0 +1,116 @@
+{
+  "workflow": "agentic-delivery-playbook v0.2",
+  "phase": "first-usecase",
+  "status": "blocked",
+  "taskFit": "real-shadow-run",
+  "specPath": "specs/20260818-joan-first-usecase/spec.md",
+  "activeRole": "primary",
+  "modelLedger": { "source": "runtime-default" },
+  "approval": "User supplied the YouTube URL and requested the first workflow run.",
+  "riskTier": "orange",
+  "reviewGates": ["intake", "research-boundary", "human-review-before-publication"],
+  "input": {
+    "youtubeUrl": "https://www.youtube.com/watch?v=-QFHIoCo-Ko&t=9s",
+    "canonicalVideoId": "-QFHIoCo-Ko",
+    "canonicalUrl": "https://www.youtube.com/watch?v=-QFHIoCo-Ko"
+  },
+  "intakeEvidence": {
+    "mode": "in_memory",
+    "runId": "cde5ebe5-eb9f-4e98-9cba-fcdfc385b6d6",
+    "status": 201,
+    "currentStage": "research",
+    "researchState": "queued"
+  },
+  "researchBoundaryEvidence": {
+    "mode": "direct_worker_context",
+    "result": "needs_human",
+    "needsHumanKind": "configuration",
+    "reason": "notebooklm_notebook_id_missing"
+  },
+  "notebookEvidence": {
+    "provider": "notebooklm-mcp-cli",
+    "profile": "default",
+    "notebookId": "c20fd528-bb60-415e-b9f2-220c502d5839",
+    "title": "Joan AI — Workflow for AI Coding — Matt Pocock",
+    "url": "https://notebooklm.google.com/notebook/c20fd528-bb60-415e-b9f2-220c502d5839",
+    "state": "created_external_source_attached_not_yet_bound_to_engine_run"
+  },
+  "sourceEvidence": {
+    "sourceId": "d25b28bb-bf13-4ae7-8a87-6eecaa93897a",
+    "sourceType": "youtube",
+    "status": "ready",
+    "notebookSourceCount": 1,
+    "url": "https://www.youtube.com/watch?v=-QFHIoCo-Ko"
+  },
+  "relatedSourceDiscoveryEvidence": {
+    "provider": "notebooklm-web-research",
+    "taskId": "b3ad0c3a-cc9b-4d38-acae-a075cbb57e91",
+    "status": "completed",
+    "candidateCount": 10,
+    "importedCandidateCount": 0,
+    "importPolicy": "deterministic verification required before import"
+  },
+  "knownGaps": [
+    "The local control API cannot persist a real run because PostgreSQL and runtime credentials are not configured.",
+    "The local control API run does not yet contain the created NotebookLM notebook ID.",
+    "YouTube metadata and transcript are not yet captured as immutable pipeline artifacts."
+  ],
+  "assetExperiment": {
+    "kind": "photo_infographic_series",
+    "cardCount": {
+      "min": 4,
+      "max": 8,
+      "selection": "Choose after research from the information structure; do not pad the series."
+    },
+    "format": "1080x1350 portrait 4:5",
+    "deliveryDependency": "none",
+    "comparison": "Compare reusable image-series cost and review time against NotebookLM video output."
+  },
+  "notebookLmVideo": {
+    "format": "short",
+    "explainerSelected": false,
+    "focus": "LLM Smart Zones",
+    "focusSource": "NotebookLM suggested focus selected in operator UI",
+    "customFocusAvailable": true,
+    "generatedArtifacts": [
+      {
+        "artifactId": "4d547904-6868-463f-ab61-95673f15dcfd",
+        "status": "completed",
+        "title": "Why Your AI Hits the Dumb Zone",
+        "focus": "LLM Smart Zones"
+      },
+      {
+        "artifactId": "9e796c2a-f025-434b-a95c-b8eab6947c65",
+        "status": "completed",
+        "title": "Why AI Needs Vertical Slices",
+        "focus": "Primary YouTube source dominant; key concepts of the source video"
+      },
+      {
+        "artifactId": "0e6d68ab-b001-4fe6-8f77-ecb580d18a8f",
+        "status": "completed",
+        "title": "The Day Shift / Night Shift AI Coding Workflow",
+        "focus": "Primary YouTube source dominant; complete workflow concept map",
+        "postProcessing": {
+          "renderer": "nuglet-public-preview-renderer",
+          "outputPath": "artifacts/joan-workflow-branded-short.mp4",
+          "durationSeconds": 65,
+          "width": 720,
+          "height": 1280,
+          "hasAudio": true,
+          "providerTailTrimSeconds": 16.669206,
+          "narrativeDurationSeconds": 62,
+          "endCardDurationSeconds": 3,
+          "endCardVersion": "nuglet.short-end-card@2.2.0",
+          "footerTreatment": "opaque lower-footer mask with Nuglet logo overlay"
+        }
+      }
+    ]
+  },
+  "experimentLearnings": [
+    "Narrow focus presets did not represent the full source video; the source-dominant workflow prompt produced the strongest result.",
+    "NotebookLM Short is the correct first format for the intended audience; Explainer is out of scope for this experiment.",
+    "The reusable Nuglet post-processor successfully removed the provider tail, covered the NotebookLM footer, preserved audio, and added the Nuglet end card.",
+    "The post-processor improves branding and ending treatment but does not change NotebookLM's visual style."
+  ],
+  "nextAction": "Run the first use case with the PostgreSQL-backed API and authenticated worker; then generate both NotebookLM media and the photo-infographic series from the same checked brief."
+}

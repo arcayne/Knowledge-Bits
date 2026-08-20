@@ -103,6 +103,10 @@ export const claimJobRequestSchema = z.object({
   preferredRunId: z.string().uuid().optional(),
 }).strict();
 
+export const bindNotebookRequestSchema = z.object({
+  notebookLmNotebookId: z.string().trim().min(1).max(256),
+}).strict();
+
 export const reportJobResultRequestSchema = z.object({
   result: jobResultSchema,
   retryAt: z.string().datetime().optional(),
@@ -229,6 +233,7 @@ export type JobClaim = z.infer<typeof jobClaimSchema>;
 export type JobResult = z.infer<typeof jobResultSchema>;
 export type CreateRunRequest = z.infer<typeof createRunRequestSchema>;
 export type ClaimJobRequest = z.infer<typeof claimJobRequestSchema>;
+export type BindNotebookRequest = z.infer<typeof bindNotebookRequestSchema>;
 export type ReportJobResultRequest = z.infer<typeof reportJobResultRequestSchema>;
 export type WorkflowRunResponse = z.infer<typeof workflowRunResponseSchema>;
 export type PipelineRunSummary = z.infer<typeof pipelineRunSummarySchema>;
