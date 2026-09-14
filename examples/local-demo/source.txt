@@ -1,0 +1,4 @@
+Local fixture source: a brief pause followed by a defined next action can reduce restart friction.
+
+This source is bundled for the local demo. The fixture provider simulates source collection and
+returns deterministic committed provider data. No external source is fetched.

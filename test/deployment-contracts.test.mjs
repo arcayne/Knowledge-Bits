@@ -13,6 +13,7 @@ test('required Quality workflow covers pull requests and independently reproduce
   assert.match(workflow, /^\s{2}push:\s*$/m);
   assert.match(workflow, /^\s{6}- main\s*$/m);
   assert.match(workflow, /^permissions:\s*\n\s{2}contents:\s*read$/m);
+  assert.match(workflow, /^\s{10}fetch-depth:\s*0$/m);
   assert.match(workflow, /^\s{8}run:\s*pnpm install --frozen-lockfile$/m);
   assert.match(workflow, /^\s{8}run:\s*pnpm typecheck$/m);
   assert.match(workflow, /^\s{8}run:\s*pnpm test$/m);

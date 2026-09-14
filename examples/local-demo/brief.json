@@ -1,0 +1,14 @@
+{
+  "title": "Return to one task",
+  "locale": "en",
+  "notebookLmNotebookId": "local-demo-notebook",
+  "brief": {
+    "objective": "Help an adult learner return to one task after an interruption.",
+    "audience": "Adults rebuilding focused work habits",
+    "sourceUrls": ["https://example.test/attention-recovery/focused-return"],
+    "fixtureSourcePath": "examples/local-demo/source.txt",
+    "intake": {
+      "requestedFormat": "story_playbook"
+    }
+  }
+}

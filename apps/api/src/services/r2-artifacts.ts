@@ -11,6 +11,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   ArtifactStorageObjectNotFoundError,
   ArtifactStorageOperationError,
+  LocalFilesystemArtifactStorageAdapter,
   type ArtifactStorageAdapter,
   UnavailableArtifactStorageAdapter,
 } from './artifacts.js';
@@ -108,6 +109,18 @@ export class R2ArtifactStorageAdapter implements ArtifactStorageAdapter {
 
 export function createArtifactStorageFromEnv(env: NodeJS.ProcessEnv): ArtifactStorageAdapter {
   const mode = env.ARTIFACT_STORAGE_MODE ?? 'unavailable';
+  if (mode === 'filesystem') {
+    const root = env.ARTIFACT_STORAGE_FILESYSTEM_ROOT?.trim();
+    const uploadBaseUrl = env.ARTIFACT_STORAGE_FILESYSTEM_UPLOAD_BASE_URL?.trim();
+    const missing = [
+      ...(root ? [] : ['ARTIFACT_STORAGE_FILESYSTEM_ROOT']),
+      ...(uploadBaseUrl ? [] : ['ARTIFACT_STORAGE_FILESYSTEM_UPLOAD_BASE_URL']),
+    ];
+    if (missing.length > 0) {
+      throw new Error(`ARTIFACT_STORAGE_MODE=filesystem requires: ${missing.join(', ')}`);
+    }
+    return new LocalFilesystemArtifactStorageAdapter({ root: root!, uploadBaseUrl: uploadBaseUrl! });
+  }
   if (mode !== 'r2') return new UnavailableArtifactStorageAdapter();
 
   const config = {

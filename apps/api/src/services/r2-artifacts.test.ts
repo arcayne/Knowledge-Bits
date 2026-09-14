@@ -7,6 +7,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3
 import {
   ArtifactStorageObjectNotFoundError,
   ArtifactStorageOperationError,
+  LocalFilesystemArtifactStorageAdapter,
 } from './artifacts.js';
 import {
   createArtifactStorageFromEnv,
@@ -93,6 +94,20 @@ test('maps R2 missing objects to a review-safe not-found error', async () => {
     () => adapter.inspect('knowledge-bits/nuglet/run-1/1/missing'),
     ArtifactStorageObjectNotFoundError,
   );
+});
+
+test('selects local filesystem storage only when explicitly configured', () => {
+  assert.throws(
+    () => createArtifactStorageFromEnv({ ARTIFACT_STORAGE_MODE: 'filesystem' }),
+    /ARTIFACT_STORAGE_MODE=filesystem requires: ARTIFACT_STORAGE_FILESYSTEM_ROOT, ARTIFACT_STORAGE_FILESYSTEM_UPLOAD_BASE_URL/,
+  );
+  const storage = createArtifactStorageFromEnv({
+    ARTIFACT_STORAGE_MODE: 'filesystem',
+    ARTIFACT_STORAGE_FILESYSTEM_ROOT: '/tmp/knowledge-bits-artifacts-test',
+    ARTIFACT_STORAGE_FILESYSTEM_UPLOAD_BASE_URL: 'http://127.0.0.1:4321',
+  });
+  assert.ok(storage instanceof LocalFilesystemArtifactStorageAdapter);
+  assert.ok(createArtifactStorageFromEnv({ ARTIFACT_STORAGE_MODE: 'unavailable' }));
 });
 
 test('fails closed when R2 mode is enabled without backend credentials', () => {

@@ -5,7 +5,16 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.demo.example
 .local-artifacts/
 .local-supervisor/
 artifacts/
+
+# Local agent, scratch, and worktree state
+.codex-work/
+.pi/
+.pi-subagents/
+.tmp/
+tmp/
+.worktrees/
 .DS_Store
