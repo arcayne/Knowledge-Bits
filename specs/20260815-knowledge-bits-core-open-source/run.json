@@ -1,0 +1,175 @@
+{
+  "run": "open-source-readiness-20260914",
+  "plan": "specs/20260815-knowledge-bits-core-open-source/readiness-plan.md",
+  "mode": "full",
+  "status": "in-progress",
+  "goal": "mu1ikom5-7b4xdh",
+  "currentPhase": "publication-review",
+  "dashboard": {
+    "acceptedSlices": ["audit-release-contents", "local-demo-foundation", "local-demo-lifecycle-implementation", "integration-documentation", "public-ci-release-validation"],
+    "blockedSlices": ["local-demo-runtime-proof"],
+    "inFlightLanes": [],
+    "knownValidationExceptions": [
+      "Local Node 22 is below the repository Node 24 requirement; credential scan passed with an engine warning.",
+      "Docker/OrbStack is unavailable in this environment; Docker-backed e2e was not run.",
+      "Playwright Chromium is not installed; review browser tests timed out in the read-only audit."
+    ],
+    "nextGate": "Docker-backed clean-clone demo proof when OrbStack is available; owner/legal/security publication review remains required before any publication or license selection"
+  },
+  "routeEnforcement": {
+    "required": true,
+    "reason": "Full-mode implementation and review use project-configured role overrides.",
+    "target": {
+      "worker": {
+        "role": "implementer",
+        "agent": "worker",
+        "model": "openai-codex/gpt-5.6-luna",
+        "reasoningIntensity": "high",
+        "source": "project-settings"
+      },
+      "reviewer": {
+        "role": "reviewer",
+        "agent": "reviewer",
+        "model": "openai-codex/gpt-5.6-luna",
+        "reasoningIntensity": "high",
+        "source": "project-settings"
+      }
+    },
+    "verification": {
+      "status": "verified",
+      "evidence": ".pi/settings.json contains explicit worker and reviewer model overrides; read-only scout retry was launched with the explicit project model."
+    }
+  },
+  "gates": {
+    "localDemoWorkerLaunch": {
+      "status": "failed-before-launch",
+      "reason": "workflowScript syntax error from unescaped Markdown backticks in the task string; no child session started and no files changed.",
+      "recovery": "Retried with an array-joined task string; worker completed after supervisor confirmation of local environment variable names."
+    },
+    "localDemoWorker": {
+      "status": "passed-with-review-findings",
+      "route": "worker/openai-codex/gpt-5.6-luna/high/project-settings",
+      "changedFiles": [
+        "apps/api/src/services/artifacts.ts",
+        "apps/api/src/services/r2-artifacts.ts",
+        "apps/api/src/services/delivery-adapters/local.ts",
+        "apps/api/src/services/delivery-adapters/local.test.ts",
+        "apps/api/src/services/local-artifacts.test.ts",
+        "apps/api/src/services/r2-artifacts.test.ts",
+        "apps/api/src/routes/artifacts.ts",
+        "apps/api/src/routes/artifacts.test.ts",
+        "apps/api/src/runtime.ts"
+      ],
+      "validation": ["API tests: 152 passed, 4 skipped", "Focused local tests: 22 passed", "API typecheck passed", "API build passed"],
+      "foundationRepairWorker": {
+        "status": "passed",
+        "route": "worker/openai-codex/gpt-5.6-luna/high/project-settings",
+        "validation": ["Focused tests: 7 passed", "API tests: 153 passed, 4 skipped", "API typecheck passed", "API build passed", "Local demo tests after approval fix: 7 passed", "Compose config passed", "Credential scan passed"]
+      },
+      "lifecycleP1RepairWorker": {
+        "status": "passed",
+        "route": "worker/openai-codex/gpt-5.6-luna/high/project-settings",
+        "validation": ["Local-demo tests: 9 passed", "Credential scan passed", "Syntax and diff checks passed", ".env.demo.example is not ignored"]
+      },
+      "rereviewLaunch": {
+        "status": "failed-before-launch",
+        "reason": "Rereview workflow script had an invalid escaped newline; no reviewer session started and no files changed.",
+        "recovery": "Retry with a plain array-joined task string."
+      },
+      "review": {
+        "status": "accepted-with-follow-up",
+        "route": "reviewer/openai-codex/gpt-5.6-luna/high/project-settings",
+        "verdict": "accepted after private reporting channel and README production/demo clarifications",
+        "resolvedFindings": [
+          "P1: private reporting channel and current escalation owner are documented in SECURITY.md and CODE_OF_CONDUCT.md",
+          "P2: README states the demo revision precondition",
+          "P2: README includes the stop-start-status restart persistence sequence"
+        ],
+        "followUps": [
+          "P2: verify process identity before stop can signal a recorded PID",
+          "P2: close or document the artifact payload/metadata installation crash window",
+          "P2: add cross-adapter artifact race and receipt fault-injection coverage"
+        ]
+      }
+    },
+    "readOnlyAuditFanout": {
+      "status": "passed",
+      "lanes": ["content-history-retry", "demo-gap-retry"],
+      "route": "scout/openai-codex/gpt-5.6-luna/high/project-settings",
+      "evidence": [
+        "content-history retry report",
+        "demo-gap retry report",
+        "No child file changes"
+      ]
+    },
+    "initialScoutFanout": {
+      "status": "failed",
+      "reason": "Subagent acceptance.criteria was passed as a string instead of an array; children produced no run IDs.",
+      "impact": "No child work ran and no repository files were changed by that gate.",
+      "recovery": "Retried the two read-only lanes with criteria arrays."
+    },
+    "publicReleaseValidation": {
+      "status": "accepted-with-follow-up-resolved",
+      "route": "worker and reviewer/openai-codex/gpt-5.6-luna/high/project-settings",
+      "validation": [
+        "Public-release tests: 12 passed",
+        "Contract tests: 11 passed",
+        "Local-demo tests: 9 passed",
+        "License inventory: 7 importers and 31 direct dependency references; informational status",
+        "Credential scan passed",
+        "git diff --check passed",
+        "Current public-release check: exit 1 with 164 reachable-history findings plus current candidate findings and untracked candidate paths; output did not print matched values"
+      ],
+      "review": "Independent review accepted the repaired slice with follow-up; quote-aware assignment parsing and explicit AWS_ACCESS_KEY_ID coverage were then added and focused validation passed.",
+      "publicationGate": "Current public-release execution remains non-passing because it reports pre-existing candidate/history findings and untracked candidate paths; owner review and clean-history or sanitized-candidate decisions remain required."
+    },
+    "draftPrBlockerAcceptance": {
+      "status": "accepted-for-draft-review-only",
+      "release": "Existing public-release candidate/history findings and untracked candidate paths remain publication gates; no values were printed.",
+      "docker": "Clean-clone PostgreSQL, restart, receipt, and revision-reapproval runtime proof is accepted as pending because the Docker daemon is unavailable.",
+      "node": "Local validation used Node 22; the repository contract remains Node 24.",
+      "boundary": "This is not approval to publish, retain history, select a license, or merge a public release."
+    },
+    "credentialScan": {
+      "status": "passed",
+      "command": "pnpm scan:forbidden-credentials",
+      "result": "Credential scan passed for 503 tracked and non-ignored paths; Node 22 engine warning reported."
+    },
+    "ignoreRules": {
+      "status": "passed",
+      "command": "git check-ignore -v .codex-work/foo .pi/foo .pi-subagents/foo tmp/foo .worktrees/foo .DS_Store",
+      "result": "All local tool and scratch paths resolve to repository ignore rules."
+    },
+    "auditContractTests": {
+      "status": "passed",
+      "command": "node --test test/deployment-contracts.test.mjs test/credential-scanner.test.mjs test/local-supervisor.test.mjs",
+      "result": "11 tests passed in the read-only audit lane."
+    }
+  },
+  "changedFilesThisRun": [
+    ".gitignore",
+    ".github/workflows/quality.yml",
+    "README.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CODE_OF_CONDUCT.md",
+    "THIRD_PARTY_NOTICES.md",
+    "docs/engineering/open-source-release-validation.md",
+    "scripts/public-release-check.mjs",
+    "scripts/public-release-check.test.mjs",
+    "test/deployment-contracts.test.mjs",
+    "specs/20260815-knowledge-bits-core-open-source/release-inventory.md",
+    "specs/20260815-knowledge-bits-core-open-source/demo-gap-list.md",
+    "specs/20260815-knowledge-bits-core-open-source/run.json"
+  ],
+  "knownGaps": [
+    "History review is a narrow pattern scan, not a complete rights or manual export audit.",
+    "Public release review found P1 scanner gaps in credential-bearing URL exemptions, standalone secret assignments, force-added ignored paths, and shallow CI history; repairs were implemented and independently accepted.",
+    "Current public-release check still reports pre-existing credential-shaped local/test fixtures, reachable-history findings, and untracked candidate paths; these remain publication-review evidence until the owner selects sanitized candidates or adopts a clean-history strategy.",
+    "The public-release scanner now scans every match, quote-aware multi-segment uppercase assignments, JWTs without source-line exemptions, force-added ignored paths, and full CI history; focused validation passes while the check remains blocked by pre-existing release-candidate/history findings.",
+    "General secret-scanner tools were unavailable; current scanner coverage is pattern-limited.",
+    "Docker/OrbStack remains unavailable: docker info cannot connect to unix:///Users/dearkane/.orbstack/run/docker.sock, so the full clean-clone demo, restart persistence, and delivery receipt proof are not runtime-verified in this environment.",
+    "License, owner contacts, and publication authorization remain open decisions.",
+    "P2 follow-ups remain for PID identity, artifact crash window, and cross-adapter/fault-injection coverage."
+  ]
+}

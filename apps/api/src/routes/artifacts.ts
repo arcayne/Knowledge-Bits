@@ -12,9 +12,13 @@ import {
   ArtifactLeaseError,
   ArtifactMetadataMismatchError,
   ArtifactService,
+  ArtifactStorageObjectExistsError,
   ArtifactStorageObjectNotFoundError,
   ArtifactStorageOperationError,
   ArtifactStorageUnavailableError,
+  ArtifactUploadCapabilityError,
+  ArtifactUploadMediaTypeMismatchError,
+  LocalFilesystemArtifactStorageAdapter,
   type ArtifactStorageAdapter,
 } from '../services/artifacts.js';
 import { WorkflowConflictError, type WorkflowRepository } from '../repositories/workflow-repository.js';
@@ -27,6 +31,30 @@ export function registerArtifactRoutes(
     repository: dependencies.repository,
     storage: dependencies.artifactStorage,
   });
+
+  const localStorage = dependencies.artifactStorage instanceof LocalFilesystemArtifactStorageAdapter
+    ? dependencies.artifactStorage
+    : undefined;
+  if (localStorage) {
+    app.put('/artifacts/upload/:token', async (context) => {
+      const mediaType = context.req.header('content-type');
+      if (!mediaType) return context.json({ error: 'Artifact upload requires a content type' }, 400);
+      try {
+        await localStorage.upload(
+          context.req.param('token'),
+          new Uint8Array(await context.req.raw.arrayBuffer()),
+          mediaType,
+        );
+        return context.body(null, 204);
+      } catch (error) {
+        if (error instanceof ArtifactUploadCapabilityError) return context.json({ error: error.message }, 404);
+        if (error instanceof ArtifactUploadMediaTypeMismatchError) return context.json({ error: error.message }, 422);
+        if (error instanceof ArtifactStorageObjectExistsError) return context.json({ error: error.message }, 409);
+        if (error instanceof ArtifactStorageOperationError) return context.json({ error: error.message }, 503);
+        throw error;
+      }
+    });
+  }
 
   app.post('/artifacts/prepare', async (context) => {
     const principal = requireWorkerPrincipal(context, dependencies.auth);

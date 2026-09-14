@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
   artifactStorageKey,
   ArtifactStorageObjectNotFoundError,
   ArtifactStorageOperationError,
+  LocalFilesystemArtifactStorageAdapter,
   type ArtifactStorageAdapter,
 } from '../services/artifacts.js';
 import { createApp } from '../app.js';
@@ -423,6 +427,40 @@ test('rechecks the producer lease after storage inspection before recording an a
   });
 
   assert.equal(response.status, 409, await response.clone().text());
+});
+
+test('local upload capability is exposed only for the local filesystem adapter', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'knowledge-bits-artifacts-route-'));
+  try {
+    const storage = new LocalFilesystemArtifactStorageAdapter({
+      root,
+      uploadBaseUrl: 'http://127.0.0.1:4321',
+    });
+    const app = createApp({
+      repository: new WorkflowRepository(createInMemoryWorkflowStore()),
+      artifactStorage: storage,
+      env: { ENGINE_API_TOKEN: 'api-token' },
+    });
+    const prepared = await storage.preparePut({
+      storageKey: 'knowledge-bits/nuglet/run-1/1/artifact-1',
+      mediaType: 'application/json',
+      expiresInSeconds: 60,
+    });
+    const uploaded = await app.request(prepared.uploadUrl, {
+      method: 'PUT',
+      headers: prepared.requiredHeaders,
+      body: '{"local":true}',
+    });
+    assert.equal(uploaded.status, 204, await uploaded.clone().text());
+    const unavailableApp = createApp({
+      repository: new WorkflowRepository(createInMemoryWorkflowStore()),
+      env: { ENGINE_API_TOKEN: 'api-token' },
+    });
+    const notRegistered = await unavailableApp.request(prepared.uploadUrl, { method: 'PUT', body: 'nope' });
+    assert.equal(notRegistered.status, 404);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('maps a missing uploaded object to a client error and storage failures to 503', async () => {
