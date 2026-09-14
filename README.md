@@ -59,7 +59,7 @@ No redistributable screenshot is included at present. Screenshots are intentiona
 - Production review must be placed behind an identity provider. The local reviewer identity is only a demo convenience.
 - A local delivery receipt is not a public publication.
 - Generated content and provider output require human review. This project does not promise factual correctness, uninterrupted availability, or suitability for a particular use.
-- No license has been selected or granted for this repository yet. See [License and rights](docs/license-and-rights.md).
+- Project-owned software and general documentation are licensed under the [MIT License](LICENSE). Third-party fonts, media, source material, and other assets retain their own terms; see [License and rights](docs/license-and-rights.md) and [Third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Optional production integrations
 

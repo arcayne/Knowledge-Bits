@@ -12,7 +12,7 @@ Read:
 - [Security reporting](SECURITY.md)
 - [License and rights](docs/license-and-rights.md)
 
-No repository license has been selected or granted yet. Submit only code, documentation, examples, or media that you have the right to share. Do not add credentials, private links, account identifiers, local paths, or product-owned assets without confirmed permission.
+Project-owned software and general documentation are licensed under the [MIT License](LICENSE). Submit only material that you have the right to share. Do not add credentials, private links, account identifiers, local paths, or third-party or product-owned assets without confirmed permission.
 
 ## Setup
 
@@ -59,7 +59,7 @@ If a check needs a database, use a local test database through the guarded migra
 - Preserve immutable artifacts, checksums, lease fencing, approval binding, and delivery idempotency.
 - Do not weaken authentication, CSRF checks, runtime database isolation, artifact scope, or credential scanning.
 - Do not silently broaden `nuglet.lesson.v1` compatibility. Update the compatibility policy when a contract changes.
-- Do not add a `LICENSE` file or claim that the project is open source until the owner resolves the licensing decision.
+- Keep project-owned software and general documentation under the MIT license. Preserve separate terms for third-party material and identify any asset whose redistribution rights are unresolved.
 - Do not publish, change repository visibility, rewrite history, or alter production code as part of a documentation-only change.
 
 ## Pull request process

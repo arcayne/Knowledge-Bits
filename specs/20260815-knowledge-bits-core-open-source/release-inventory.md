@@ -87,7 +87,7 @@ The candidate excludes by default:
 
 ## Open owner decisions
 
-- License and coverage for code, prompts, documentation, fonts, images, and project-owned media.
+- MIT coverage for project-owned code and general documentation, plus separate terms for prompts, recipes, fonts, images, and project-owned media.
 - History retention versus clean-history export after the follow-up audit.
 - Maintainer, security contact, and release owner.
 - Public disposition of `.agents/`, `.superpowers/`, product-growth documents, migration inventories, and provider-specific examples.

@@ -17,7 +17,7 @@
 - [ ] I did not add credentials, private links, account identifiers, local paths, or personal data.
 - [ ] I did not weaken authentication, lease fencing, artifact isolation, approval binding, or delivery idempotency.
 - [ ] Any third-party, product-owned, or generated material has confirmed permission or is clearly identified for review.
-- [ ] This change does not add or imply a repository license.
+- [ ] Project-owned software and general documentation follow the MIT license; third-party material keeps its own terms and unresolved rights are identified.
 
 ## Validation
 

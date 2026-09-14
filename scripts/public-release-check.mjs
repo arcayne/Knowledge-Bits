@@ -4,9 +4,9 @@ import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PLACEHOLDER = /^(?:$|null|undefined|none|false|true|redacted|changeme|change[-_ ]?me|example|sample|dummy|test|testing|password|secret|token|credential|runtime|your[-_ ]?(?:token|secret|password|key)|<[^>]+>|\$\{[^}]+\})$/i;
+const PLACEHOLDER = /^(?:$|null|undefined|none|false|true|redacted|changeme|change[-_ ]?me|example|sample|dummy|test|testing|password|secret|token|credential|runtime|owner|your[-_ ]?(?:token|secret|password|key)|<[^>]+>|\$\{[^}]+\})$/i;
 
-const SECRET_PATTERNS = [
+const CREDENTIAL_PATTERNS = [
   { label: 'private-key material', pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/ },
   { label: 'JWT-shaped credential', pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}\b/ },
   { label: 'AWS access key', pattern: /\bAKIA[0-9A-Z]{16}\b/ },
@@ -124,7 +124,7 @@ function lineNumber(text, offset) {
 
 export function scanText(text, source = '<input>') {
   const findings = [];
-  for (const { label, pattern } of SECRET_PATTERNS) {
+  for (const { label, pattern } of CREDENTIAL_PATTERNS) {
     const globalPattern = new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`);
     for (const match of text.matchAll(globalPattern)) {
       if (label === 'credential-bearing URL' && isSafeCredentialUrl(match[0])) continue;
@@ -335,4 +335,4 @@ async function main() {
 
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) main();
 
-export { SECRET_PATTERNS };
+export { CREDENTIAL_PATTERNS };

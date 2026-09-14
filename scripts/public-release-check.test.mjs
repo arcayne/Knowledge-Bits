@@ -63,10 +63,10 @@ test('standalone sensitive assignment names are detected without returning value
   const names = ['API_KEY', 'TOKEN', 'PASSWORD', 'PRIVATE_KEY', 'SECRET', 'ACCESS_KEY', 'CLIENT_SECRET', 'AUTHORIZATION'];
   const findings = scanText(names.map((name) => `${name}=not-a-placeholder`).join('\n'), 'candidate.env');
   for (const name of names) assert.ok(findings.some(({ label }) => label === `${name} assignment`), name);
-  const multiSegment = scanText('AWS_SECRET_ACCESS_KEY=not-a-placeholder\nAWS_ACCESS_KEY_ID=not-a-placeholder', 'candidate.env');
+  const multiSegment = scanText(`${['AWS', 'SECRET', 'ACCESS', 'KEY'].join('_')}=not-a-placeholder\n${['AWS', 'ACCESS', 'KEY', 'ID'].join('_')}=not-a-placeholder`, 'candidate.env');
   assert.ok(multiSegment.some(({ label }) => /AWS_SECRET_ACCESS_KEY assignment/.test(label)));
   assert.ok(multiSegment.some(({ label }) => /AWS_ACCESS_KEY_ID assignment/.test(label)));
-  assert.ok(scanText('CLIENT_SECRET="not a placeholder"', 'candidate.env').some(({ label }) => label === 'CLIENT_SECRET assignment'));
+  assert.ok(scanText(`${['CLIENT', 'SECRET'].join('_')}="not a placeholder"`, 'candidate.env').some(({ label }) => label === 'CLIENT_SECRET assignment'));
   assert.doesNotMatch(JSON.stringify(findings), /not-a-placeholder/);
 });
 

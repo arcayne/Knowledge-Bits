@@ -1,7 +1,7 @@
 # Open-source readiness plan
 
 Date: 2026-09-14
-Status: proposed implementation backlog; no publication or license decision made.
+Status: MIT selected for project-owned software and general documentation; no publication decision made.
 
 ## Outcome and scope
 
@@ -66,7 +66,7 @@ Add or rewrite:
 - SECURITY.md: supported versions and a working private reporting channel.
 - LICENSE, third-party notices, CODE_OF_CONDUCT.md, issue templates and a PR template.
 
-Select a license and clarify coverage of code, prompts, documentation and project-owned media. Record separate third-party terms and any brand-use policy. License choice remains open.
+Apply MIT to project-owned software and general documentation. Clarify whether project-owned prompts, recipes, branding and media use MIT or a separate project-owned license. Record separate third-party terms and any brand-use policy.
 
 Acceptance: contributors need no internal instructions or private links to run the demo; integration prerequisites, license coverage and reporting contacts are complete.
 
@@ -96,7 +96,7 @@ Generic core extraction, product renaming, SQLite support, hosted multi-tenancy,
 
 ## Remaining decisions
 
-1. License and its coverage of code, prompts, docs and media.
+1. Confirm MIT coverage for project-owned code and general documentation, then resolve prompt, recipe, brand and media terms.
 2. Retain history or publish a clean-history candidate, based on audit findings.
 3. Maintainer, security contact and release owner.
 

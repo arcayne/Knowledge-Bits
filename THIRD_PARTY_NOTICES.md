@@ -1,6 +1,6 @@
 # Third-party notices
 
-This file records known third-party material. It is a notice, not a repository license. The repository owner must review all notices before selecting or granting a distribution license.
+This file records known third-party material. Project-owned software and general documentation are licensed under the [MIT License](LICENSE). The notices below continue to apply to third-party material and do not change its original license.
 
 ## Bricolage Grotesque
 
@@ -38,4 +38,4 @@ The following items are not covered by the font notices and require a separate r
 - generated audio, image, video, and other media;
 - source snapshots and provider responses included in package artifacts.
 
-See [License and rights](docs/license-and-rights.md). No license has been selected or granted for this repository yet. Do not infer permission from this notice.
+See [License and rights](docs/license-and-rights.md). Do not apply the repository MIT license to third-party fonts or to source, media, labels, or other material whose rights are not confirmed.

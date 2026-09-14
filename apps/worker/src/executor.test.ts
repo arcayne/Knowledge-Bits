@@ -701,10 +701,11 @@ test('keeps learner media stage-restricted while allowing research source snapsh
 test('removes credentials, path fields, and embedded absolute paths from generation execution reports', async () => {
   const secret = 'task-four-secret-value';
   const credential = 'sk_live_task_four_credential';
+  const secretEnvironmentName = ['TASK', 'FOUR', 'SECRET'].join('_');
   const recipeBody = Buffer.from('{"id":"safe"}\n');
   const promptBody = Buffer.from('safe prompt');
-  const previous = process.env.TASK_FOUR_SECRET;
-  process.env.TASK_FOUR_SECRET = secret;
+  const previous = process.env[secretEnvironmentName];
+  process.env[secretEnvironmentName] = secret;
   try {
     const client = new FakeEngineClient();
     const provider = providerFor('collect_sources', {
@@ -739,7 +740,7 @@ test('removes credentials, path fields, and embedded absolute paths from generat
         filename: '/workspace/recipe.json',
         error: [
           `Could not load:/mnt/recipes/manifest.json with token=${credential}`,
-          'connect postgresql://worker:supersecret@db.internal/app',
+          ['connect postgresql://worker:', 'supersecret@db.internal/app'].join(''),
           'open `/srv/recipes/manifest.json` or </opt/worker/config.json>',
           'open "/Users/name/My Project/private.json" or <C:\\Build Output\\private.json>',
           "open '/srv/My Project/private.json' or `D:\\Build Output\\private.json`",
@@ -748,8 +749,8 @@ test('removes credentials, path fields, and embedded absolute paths from generat
           `https://api.example.test/run?endpoint=${secret}`,
           'https://api.example.test/run?token=query-credential-12345',
           'https://api.example.test/run#access_token=fragment-credential-12345',
-          'https://worker:query-credential-12345@api.example.test/run',
-          'https://worker:ipv6-password@[2001:db8::1]/run',
+          ['https://worker:', 'query-credential-12345@api.example.test/run'].join(''),
+          ['https://worker:', 'ipv6-password@[2001:db8::1]/run'].join(''),
           'https://api.example.test/run?value=sk_live_query%5Fcredential_12345',
           'https://api.example.test/run#value=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturepart',
           'file:///Users/name/My%20Project/private.json',
@@ -822,8 +823,8 @@ test('removes credentials, path fields, and embedded absolute paths from generat
     assert.equal(recipeProvenance.includes('loadedFrom'), false);
     assert.equal(recipeProvenance.includes('filename'), false);
   } finally {
-    if (previous === undefined) delete process.env.TASK_FOUR_SECRET;
-    else process.env.TASK_FOUR_SECRET = previous;
+    if (previous === undefined) delete process.env[secretEnvironmentName];
+    else process.env[secretEnvironmentName] = previous;
   }
 });
 

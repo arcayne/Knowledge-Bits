@@ -29,8 +29,8 @@ Report sensitive conduct concerns privately through the [GitHub Security Advisor
 
 The current escalation owner is **arcayne**, the repository owner. Maintainers will review reports fairly, protect confidentiality as far as practical, and take action proportionate to the behavior. Possible actions include a request to stop, a warning, temporary limits, removal of content, or removal from project spaces. Retaliation against a good-faith report is not acceptable.
 
-The project has not yet assigned a permanent maintainer-ownership and escalation roster. That assignment is an explicit decision required before a public release.
+The project has not yet assigned a permanent maintainer-ownership and escalation roster. That assignment remains a release-governance decision.
 
 ## Attribution
 
-This document is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/), version 2.1. The project has not selected a repository license yet; this attribution does not grant a license to other repository material.
+This document is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/), version 2.1. It is covered as project documentation by the [MIT License](LICENSE); the attribution does not change the terms of the Contributor Covenant source.

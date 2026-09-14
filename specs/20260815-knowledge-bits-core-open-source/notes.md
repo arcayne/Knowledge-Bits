@@ -4,7 +4,7 @@
 
 ## Status
 
-The proposal defines a public core and private product layers. It does not authorize a public repository, license selection, or publication.
+The proposal defined a public core and private product layers. Nuglet information may now be public, and the release-preparation slice records MIT for project-owned software and general documentation. It does not authorize changing repository visibility or publishing a release.
 
 ## Private-boundary inventory
 

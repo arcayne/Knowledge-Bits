@@ -85,7 +85,7 @@ cp -R apps/worker/src/providers/fixtures /tmp/knowledge-bits-fixtures
 
 ```bash
 export ENGINE_API_BASE_URL=http://127.0.0.1:3000
-export ENGINE_WORKER_TOKEN=replace-with-your-local-worker-token
+export ENGINE_WORKER_TOKEN="<set in your local environment>"
 export WORKER_PROVIDER_MODE=fixture
 export WORKER_FIXTURE_DIRECTORY=/tmp/knowledge-bits-fixtures
 pnpm --filter @knowledge-bits/worker exec tsx src/index.ts

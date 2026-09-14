@@ -237,7 +237,7 @@ The recommended release boundary is:
 - enterprise SSO, RBAC, policy controls, and SLAs;
 - managed human review.
 
-The final license must be selected with legal review. The strategic goal is to preserve genuine self-hosting and inspectability while protecting the hosted and enterprise business.
+Project-owned software and general documentation are licensed under MIT. Third-party terms and rights for generated or bundled assets remain separate review items. The strategic goal is to preserve genuine self-hosting and inspectability while protecting the hosted and enterprise business.
 
 ## Defensibility
 

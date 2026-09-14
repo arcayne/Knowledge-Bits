@@ -41,7 +41,7 @@ The existing contract and end-to-end tests continue to cover negative invariants
 
 Before publication, the repository owner and legal/security reviewers still need to decide:
 
-- repository and package license, including whether the current unresolved workspace metadata is acceptable;
+- confirmation that the MIT license covers intended project-owned files and package metadata matches the root license;
 - third-party notices and compatibility for bundled fonts, dependencies, generated media, artwork, recipes, prompts, and source materials;
 - whether all reachable history and selected artifacts are suitable for publication, including a security review beyond pattern matching;
 - brand, trademark, privacy, and provider-use permissions; and
@@ -55,7 +55,7 @@ For this readiness branch, the following blockers are explicitly accepted as doc
 - the Docker-backed clean-clone demo has not run because the local Docker daemon is unavailable; and
 - local validation used Node 22 while the repository contract requires Node 24.
 
-This acceptance does not approve publication, history retention, a license, or a release merge. It records that the implementation and deterministic checks may be reviewed while these publication gates remain open.
+This acceptance does not approve publication, history retention, or a release merge. It records that the implementation and deterministic checks may be reviewed while these publication gates remain open.
 
 ## Post-publication verification checklist
 
@@ -67,4 +67,4 @@ Run these steps only after the owner authorizes publication:
 4. Verify that the README links, issue forms, security reporting channel, third-party notices, and release notes are reachable from the public repository.
 5. Record the tag, commit, validation date, unresolved limitations, and any corrective follow-up.
 
-This document does not select a license, publish anything, rewrite history, change visibility, or make those owner/legal/security decisions.
+This document does not publish anything, rewrite history, change visibility, or make the remaining owner/legal/security decisions.

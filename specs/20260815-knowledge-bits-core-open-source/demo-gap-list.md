@@ -67,7 +67,7 @@ Implement only the local demo foundation:
 ## Non-goals
 
 - Do not publish the repository.
-- Do not choose a license.
+- Do not change repository visibility or publish a release from the demo slice. MIT metadata is maintained in the release-preparation slice.
 - Do not rewrite Git history.
 - Do not remove Nuglet integrations.
 - Do not call NotebookLM, Vertex, media providers, external delivery endpoints, Supabase, or paid services from the demo path.
