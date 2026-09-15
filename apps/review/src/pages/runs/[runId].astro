@@ -1,0 +1,182 @@
+---
+import { createCsrfToken, REVIEW_CSRF_COOKIE } from '../../operator-auth.mjs';
+
+const { runId } = Astro.params;
+const csrfToken = Astro.cookies.get(REVIEW_CSRF_COOKIE)?.value ?? createCsrfToken();
+Astro.cookies.set(REVIEW_CSRF_COOKIE, csrfToken, {
+  httpOnly: true,
+  sameSite: 'strict',
+  secure: import.meta.env.PROD,
+  path: '/',
+});
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="review-csrf-token" content={csrfToken} />
+    <title>Content review</title>
+    <style>
+      :root { color: #202526; background: #f2f4f3; font-family: Arial, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding-bottom: 14rem; }
+      main { max-width: 980px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; overflow-wrap: anywhere; }
+      header { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; border-bottom: 1px solid #bcc4c2; padding-bottom: .9rem; }
+      h1, h2, h3, h4, p { margin-top: 0; }
+      h1 { font-size: 1.45rem; }
+      h2 { font-size: 1.05rem; margin-bottom: .75rem; }
+      h3 { font-size: 1.2rem; }
+      h4 { font-size: .78rem; text-transform: uppercase; color: #51605c; }
+      .status, .muted { color: #5f6967; }
+      .status { font-size: .875rem; }
+      .run-summary { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1rem 0 0; }
+      .run-chip { border: 1px solid #bcc4c2; background: #fff; padding: .35rem .55rem; font-size: .78rem; }
+      .run-chip[data-tone="active"] { border-color: #247264; color: #16584d; }
+      .pending-note { color: #5f6967; border-left: 3px solid #d6a93e; padding: .55rem .7rem; background: #fffaf0; }
+      .review-flow { margin-top: 1.25rem; }
+      .review-section { border-top: 2px solid #247264; padding: .8rem 0 1.5rem; }
+      .review-section ul { padding-left: 1.15rem; }
+      .story-block, .playbook-step { border-bottom: 1px solid #d5dad8; padding: .65rem 0; }
+      .story-block:last-child, .playbook-step:last-child { border-bottom: 0; }
+      .story-block p, .playbook-step p { margin-bottom: 0; }
+      .asset { border: 1px solid #bcc4c2; min-height: 6rem; padding: .65rem; margin-bottom: .75rem; background: #fff; }
+      .asset :global(img), .asset :global(audio), .asset :global(video) { display: block; max-width: 100%; width: 100%; }
+      .asset :global(img) { height: auto; }
+      #hero, #infographic { display: grid; place-items: center; min-height: 0; }
+      .asset :global(.full-size-link) { display: grid; place-items: center; width: 100%; max-width: 100%; overflow: hidden; }
+      #hero :global(.full-size-link) { height: min(36vh, 22rem); }
+      #infographic :global(.full-size-link) { height: min(58vh, 34rem); }
+      #hero :global(img) { width: 100%; max-width: 100%; height: min(36vh, 22rem); object-fit: contain; }
+      #infographic :global(img) { width: 100%; max-width: 100%; height: min(58vh, 34rem); object-fit: contain; }
+      .asset[data-state="pending"] { color: #5f6967; background: #f8f9f8; }
+      .crop-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: .75rem; margin: .75rem 0; }
+      .crop-preview { min-width: 0; }
+      .crop-preview h4 { margin-bottom: .35rem; }
+      .crop-frame { overflow: hidden; border: 1px solid #bcc4c2; background: #e8ebea; }
+      .crop-frame :global(img) { width: 100%; height: 100%; object-fit: cover; display: block; }
+      #hero-lesson-header { aspect-ratio: 16 / 5; }
+      #hero-card { aspect-ratio: 4 / 3; }
+      #hero-thumbnail { aspect-ratio: 1; }
+      .audio-layout { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.2fr); gap: 1rem; }
+      .transcript { white-space: pre-wrap; line-height: 1.55; }
+      .quiz-question { border-bottom: 1px solid #d5dad8; padding: .75rem 0; }
+      .quiz-question:last-child { border-bottom: 0; }
+      .quiz-question ol { margin-bottom: .5rem; }
+      details { border-top: 1px solid #aeb8b5; padding: .8rem 0; }
+      summary { cursor: pointer; font-weight: 700; }
+      .provenance-list { display: grid; gap: .65rem; padding-left: 1.15rem; }
+      .provenance-list a { color: #075ea8; }
+      button:disabled { cursor: not-allowed; opacity: .45; }
+      .decision-bar { position: fixed; inset: auto 0 0; z-index: 10; background: #202526; color: #fff; border-top: 1px solid #0f1112; padding: .75rem 1.25rem; }
+      .decision-inner { max-width: 980px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+      .editorial-warnings { flex: 1 1 100%; max-block-size: 8rem; overflow-y: auto; border-left: 3px solid #d7ee72; padding-left: .65rem; color: #fff; overscroll-behavior: contain; }
+      .editorial-warnings strong { display: block; }
+      .editorial-warnings ul { margin: .25rem 0 0; padding-left: 1.1rem; }
+      button { border: 1px solid transparent; padding: .55rem .8rem; font: inherit; cursor: pointer; }
+      button[data-decision="approve"] { background: #d7ee72; color: #202526; }
+      button[data-decision="request_changes"] { background: transparent; color: #fff; border-color: #c5d2cd; }
+      .asset-action { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; margin: .75rem 0 1rem; }
+      .asset-action button { background: #0b6664; color: #fff; }
+      .asset-action .muted { margin: 0; }
+      #change-form { display: none; flex: 1 1 100%; gap: .5rem; align-items: end; }
+      #change-form[data-open="true"] { display: flex; }
+      textarea { flex: 1; min-height: 3.5rem; font: inherit; }
+      #error { color: #a12525; }
+      @media (max-width: 720px) {
+        header { display: block; }
+        .crop-grid, .audio-layout { grid-template-columns: 1fr; }
+        #hero :global(.full-size-link) { height: min(30vh, 16rem); }
+        #infographic :global(.full-size-link) { height: min(50vh, 26rem); }
+        #hero :global(img) { height: min(30vh, 16rem); }
+        #infographic :global(img) { height: min(50vh, 26rem); }
+        .decision-inner { align-items: stretch; }
+        #change-form[data-open="true"] { display: grid; }
+      }
+    </style>
+  </head>
+  <body>
+    <main data-run-id={runId}>
+      <header>
+        <div><h1 id="title">Content review</h1><p class="status" id="status">Loading review data...</p></div>
+        <p class="status" id="checksum">Checksum unavailable</p>
+      </header>
+      <p id="error" role="alert" hidden></p>
+      <div class="run-summary" id="run-summary" hidden></div>
+      <div class="review-flow" id="review" hidden>
+        <section class="review-section" id="story-section">
+          <h2>Story</h2><h3 id="story-title"></h3><p class="muted" id="story-meta"></p><div id="story-blocks"></div>
+        </section>
+        <section class="review-section" id="playbook-section">
+          <h2>Playbook</h2><h3 id="playbook-title"></h3><p id="playbook-principle"></p><p id="playbook-why"></p>
+          <div id="playbook-steps"></div><div id="playbook-example"></div><ul id="playbook-watch-outs"></ul><p id="playbook-action"></p>
+        </section>
+        <section class="review-section" id="hero-section">
+          <h2>Hero</h2><div class="asset" id="hero">Missing hero preview.</div><p id="hero-alt" class="muted"></p><p id="hero-metadata" class="muted"></p>
+          <div class="crop-grid" aria-label="Hero crop previews">
+            <div class="crop-preview"><h4>Lesson-header crop</h4><div class="crop-frame" id="hero-lesson-header"></div></div>
+            <div class="crop-preview"><h4>Card crop</h4><div class="crop-frame" id="hero-card"></div></div>
+            <div class="crop-preview"><h4>Thumbnail crop</h4><div class="crop-frame" id="hero-thumbnail"></div></div>
+          </div>
+        </section>
+        <section class="review-section" id="infographic-section">
+          <h2>Infographic</h2><div class="asset" id="infographic">Missing infographic preview.</div><p id="infographic-alt" class="muted"></p>
+          <h4>Text equivalent</h4><ul id="infographic-text-equivalent"></ul>
+          <div class="asset-action">
+            <button type="button" id="regenerate-infographic" disabled>Replace with Nuglet infographic</button>
+            <p class="muted" id="regenerate-infographic-status">Available when a complete package is ready. This queues one new asset and returns it to human review.</p>
+          </div>
+        </section>
+        <section class="review-section" id="audio-brief-section">
+          <h2>Brief audio</h2><div class="audio-layout"><div class="asset" id="audio-brief">Missing Brief audio.</div><div><h4>Transcript</h4><p class="transcript" id="audio-brief-transcript"></p></div></div>
+        </section>
+        <section class="review-section" id="audio-discussion-section">
+          <h2>Discussion audio</h2><div class="audio-layout"><div class="asset" id="audio-discussion">Missing Discussion audio.</div><div><h4>Transcript</h4><p class="transcript" id="audio-discussion-transcript"></p></div></div>
+        </section>
+        <section class="review-section" id="public-preview-section">
+          <h2>Public preview Short</h2>
+          <div class="asset" id="public-preview">No public preview Short is queued for this package.</div>
+          <p class="muted">The Short remains inside this review package until the overall human decision is recorded.</p>
+        </section>
+        <section class="review-section" id="social-post-section">
+          <h2>Social post</h2>
+          <p class="muted" id="social-post-companion">This post is the companion copy for the public preview Short.</p>
+          <pre class="transcript" id="social-post-text"></pre>
+          <button type="button" id="copy-social-post">Copy social post</button>
+        </section>
+        <section class="review-section" id="quiz-section"><h2>Quiz</h2><div id="quiz"></div></section>
+        <section class="review-section" id="evidence-section">
+          <h2>Sources, claims, and QA</h2>
+          <h4>Accepted sources</h4><ul id="accepted-sources"></ul>
+          <h4>Rejected sources</h4><ul id="rejected-sources"></ul>
+          <h4>Coverage gaps</h4><ul id="coverage-gaps"></ul>
+          <h4>Claims and citations</h4><ul id="claims"></ul>
+          <h4>Claim coverage</h4><ul id="claim-coverage"></ul>
+          <h4>QA</h4><p id="qa" class="muted">Loading QA status...</p><ul id="qa-findings"></ul>
+        </section>
+        <details id="generation-provenance">
+          <summary>Generation provenance</summary>
+          <div id="generation-executions"></div>
+        </details>
+      </div>
+    </main>
+    <footer class="decision-bar" aria-label="Overall review decision">
+      <div class="decision-inner">
+        <span id="decision-status">One overall package decision</span>
+        <section class="editorial-warnings" id="editorial-warnings" aria-live="polite" hidden></section>
+        <button type="button" data-decision="approve" disabled>Approve</button>
+        <button type="button" data-decision="request_changes" disabled>Request changes</button>
+        <form id="change-form">
+          <label for="comment">Required comment</label>
+          <textarea id="comment" name="comment" required></textarea>
+          <button type="submit" disabled>Send changes</button>
+        </form>
+      </div>
+    </footer>
+    <script>
+      import { mountReviewPage } from '../../review-client.mjs';
+      mountReviewPage();
+    </script>
+  </body>
+</html>

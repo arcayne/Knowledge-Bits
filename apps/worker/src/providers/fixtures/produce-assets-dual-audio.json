@@ -1,0 +1,287 @@
+{
+  "fixtureSchemaVersion": "knowledge-bits.fixture-provider.v1",
+  "parsedOutput": {
+    "schemaVersion": "fixture.assets.v1.1",
+    "generationInputChecksum": "$generationInputChecksum",
+    "assets": [
+      {
+        "kind": "hero",
+        "mediaType": "image/webp",
+        "metadata": {
+          "byteSize": 23,
+          "width": 1200,
+          "height": 900,
+          "focalPoint": {
+            "x": 0.62,
+            "y": 0.44
+          },
+          "cropSafeArea": {
+            "x": 0.12,
+            "y": 0.1,
+            "width": 0.76,
+            "height": 0.8
+          },
+          "styleProfileChecksum": "sha256:09e81bb1b34007c6381e2d51043b5a45bb0625ee58b7c9cc904f0e461de4043f",
+          "referenceChecksums": [
+            "sha256:05ed5f7e2b3c3acb14676bd5d256ef4be6dc7935e0a2c765801dd8f5233d6d22",
+            "sha256:fb0e6ff662950d942765f735e65066c650d744ee5421a64debca79a656cdeae8"
+          ],
+          "heroDirection": {
+            "concept": "Returning to focused work",
+            "metaphor": "One marked step on an unfinished path",
+            "compositionFamily": "asymmetrical-story",
+            "mustInclude": [
+              "one clear restart marker"
+            ],
+            "mustAvoid": [
+              "rigid symmetry"
+            ]
+          }
+        }
+      },
+      {
+        "kind": "infographic",
+        "mediaType": "image/webp",
+        "metadata": {
+          "byteSize": 30,
+          "width": 1536,
+          "height": 2752
+        }
+      },
+      {
+        "kind": "audio_brief",
+        "mediaType": "audio/mp4",
+        "metadata": {
+          "byteSize": 30,
+          "durationSeconds": 91.25,
+          "transcript": "A brief guide to leaving one visible next step before stopping.",
+          "transcriptAudioChecksum": "sha256:1f6856176b0685cebe7090bd21530f7a0146593b581fffa28dafc30488f0c068",
+          "transcriptSource": "notebooklm"
+        }
+      },
+      {
+        "kind": "audio_discussion",
+        "mediaType": "audio/mp4",
+        "metadata": {
+          "byteSize": 35,
+          "durationSeconds": 287.5,
+          "transcript": "A practical discussion of restart friction and useful restart markers.",
+          "transcriptAudioChecksum": "sha256:20a73e7c2609c5bc54b29cb6abcdd3e9dd3312524a38475db7e7baba213011d1",
+          "transcriptSource": "vertex_gemini"
+        }
+      }
+    ]
+  },
+  "assets": [
+    {
+      "kind": "hero",
+      "mediaType": "image/webp",
+      "bodyBase64": "c2NoZW1hLTEuMS1oZXJvLWZpeHR1cmU=",
+      "inputChecksum": "$generationInputChecksum",
+      "provenance": {
+        "byteSize": 23,
+        "width": 1200,
+        "height": 900,
+        "focalPoint": {
+          "x": 0.62,
+          "y": 0.44
+        },
+        "cropSafeArea": {
+          "x": 0.12,
+          "y": 0.1,
+          "width": 0.76,
+          "height": 0.8
+        },
+        "styleProfileChecksum": "sha256:09e81bb1b34007c6381e2d51043b5a45bb0625ee58b7c9cc904f0e461de4043f",
+        "referenceChecksums": [
+          "sha256:05ed5f7e2b3c3acb14676bd5d256ef4be6dc7935e0a2c765801dd8f5233d6d22",
+          "sha256:fb0e6ff662950d942765f735e65066c650d744ee5421a64debca79a656cdeae8"
+        ],
+        "heroDirection": {
+          "concept": "Returning to focused work",
+          "metaphor": "One marked step on an unfinished path",
+          "compositionFamily": "asymmetrical-story",
+          "mustInclude": [
+            "one clear restart marker"
+          ],
+          "mustAvoid": [
+            "rigid symmetry"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "infographic",
+      "mediaType": "image/webp",
+      "bodyBase64": "c2NoZW1hLTEuMS1pbmZvZ3JhcGhpYy1maXh0dXJl",
+      "inputChecksum": "$generationInputChecksum",
+      "provenance": {
+        "byteSize": 30,
+        "width": 1536,
+        "height": 2752
+      }
+    },
+    {
+      "kind": "audio_brief",
+      "mediaType": "audio/mp4",
+      "bodyBase64": "c2NoZW1hLTEuMS1icmllZi1hdWRpby1maXh0dXJl",
+      "inputChecksum": "$generationInputChecksum",
+      "provenance": {
+        "byteSize": 30,
+        "durationSeconds": 91.25,
+        "transcript": "A brief guide to leaving one visible next step before stopping.",
+        "transcriptAudioChecksum": "sha256:1f6856176b0685cebe7090bd21530f7a0146593b581fffa28dafc30488f0c068",
+        "transcriptSource": "notebooklm"
+      }
+    },
+    {
+      "kind": "audio_discussion",
+      "mediaType": "audio/mp4",
+      "bodyBase64": "c2NoZW1hLTEuMS1kaXNjdXNzaW9uLWF1ZGlvLWZpeHR1cmU=",
+      "inputChecksum": "$generationInputChecksum",
+      "provenance": {
+        "byteSize": 35,
+        "durationSeconds": 287.5,
+        "transcript": "A practical discussion of restart friction and useful restart markers.",
+        "transcriptAudioChecksum": "sha256:20a73e7c2609c5bc54b29cb6abcdd3e9dd3312524a38475db7e7baba213011d1",
+        "transcriptSource": "vertex_gemini"
+      }
+    }
+  ],
+  "supportArtifacts": [
+    {
+      "kind": "generation.recipe.snapshot",
+      "mediaType": "application/json",
+      "bodyBase64": "eyJpZCI6Im51Z2xldC5oZXJvIiwidmVyc2lvbiI6IjEuMC4wIn0=",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.hero",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:09e81bb1b34007c6381e2d51043b5a45bb0625ee58b7c9cc904f0e461de4043f",
+        "promptChecksum": "sha256:d8cb140184cbfa456dde7414980796ed64c8cf09882b712d543b38d8f81bc522",
+        "model": "fixture-hero-model",
+        "outputKind": "hero",
+        "outputChecksum": "sha256:264dadcca833e276d1c84e061821b1f37bb6751e4d4600eb8b5771fdd077f483",
+        "referenceChecksums": [
+          "sha256:05ed5f7e2b3c3acb14676bd5d256ef4be6dc7935e0a2c765801dd8f5233d6d22",
+          "sha256:fb0e6ff662950d942765f735e65066c650d744ee5421a64debca79a656cdeae8"
+        ]
+      }
+    },
+    {
+      "kind": "generation.prompt.rendered",
+      "mediaType": "text/plain",
+      "bodyBase64": "UmVuZGVyIHRoZSBzY2hlbWEgMS4xLjAgaGVybyBmaXh0dXJlLg==",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.hero",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:09e81bb1b34007c6381e2d51043b5a45bb0625ee58b7c9cc904f0e461de4043f",
+        "promptChecksum": "sha256:d8cb140184cbfa456dde7414980796ed64c8cf09882b712d543b38d8f81bc522",
+        "model": "fixture-hero-model",
+        "outputKind": "hero",
+        "outputChecksum": "sha256:264dadcca833e276d1c84e061821b1f37bb6751e4d4600eb8b5771fdd077f483",
+        "referenceChecksums": [
+          "sha256:05ed5f7e2b3c3acb14676bd5d256ef4be6dc7935e0a2c765801dd8f5233d6d22",
+          "sha256:fb0e6ff662950d942765f735e65066c650d744ee5421a64debca79a656cdeae8"
+        ]
+      }
+    },
+    {
+      "kind": "generation.recipe.snapshot",
+      "mediaType": "application/json",
+      "bodyBase64": "eyJpZCI6Im51Z2xldC52aXN1YWwuaW5mb2dyYXBoaWMiLCJ2ZXJzaW9uIjoiMS4wLjAifQ==",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.visual.infographic",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:2069924f505538fe86a33d5e7d8f8e36304b6a902c9130f1370bb5ffd1fb8ff5",
+        "promptChecksum": "sha256:42be886bf784934d53c01defe00fe1045297e53680e5c4162540ac13baa04099",
+        "model": "fixture-infographic-model",
+        "outputKind": "infographic",
+        "outputChecksum": "sha256:4d56d80b2b85a4742d815830376136cc96d7cdbd76271dad80cd852d0fefaa68",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.prompt.rendered",
+      "mediaType": "text/plain",
+      "bodyBase64": "UmVuZGVyIHRoZSBzY2hlbWEgMS4xLjAgaW5mb2dyYXBoaWMgZml4dHVyZS4=",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.visual.infographic",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:2069924f505538fe86a33d5e7d8f8e36304b6a902c9130f1370bb5ffd1fb8ff5",
+        "promptChecksum": "sha256:42be886bf784934d53c01defe00fe1045297e53680e5c4162540ac13baa04099",
+        "model": "fixture-infographic-model",
+        "outputKind": "infographic",
+        "outputChecksum": "sha256:4d56d80b2b85a4742d815830376136cc96d7cdbd76271dad80cd852d0fefaa68",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.recipe.snapshot",
+      "mediaType": "application/json",
+      "bodyBase64": "eyJpZCI6Im51Z2xldC5hdWRpby5icmllZiIsInZlcnNpb24iOiIxLjAuMCJ9",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.audio.brief",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:10b1624214d25f9e282c6faf28ec404578dacd3f70199981893537cc0a4d58e4",
+        "promptChecksum": "sha256:d3a61cf2964bbddd43bc6fa79b655fcb4da2a4bf396f30fca61c77a3761733a4",
+        "model": "fixture-audioBrief-model",
+        "outputKind": "audio_brief",
+        "outputChecksum": "sha256:1f6856176b0685cebe7090bd21530f7a0146593b581fffa28dafc30488f0c068",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.prompt.rendered",
+      "mediaType": "text/plain",
+      "bodyBase64": "UmVuZGVyIHRoZSBzY2hlbWEgMS4xLjAgYXVkaW9CcmllZiBmaXh0dXJlLg==",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.audio.brief",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:10b1624214d25f9e282c6faf28ec404578dacd3f70199981893537cc0a4d58e4",
+        "promptChecksum": "sha256:d3a61cf2964bbddd43bc6fa79b655fcb4da2a4bf396f30fca61c77a3761733a4",
+        "model": "fixture-audioBrief-model",
+        "outputKind": "audio_brief",
+        "outputChecksum": "sha256:1f6856176b0685cebe7090bd21530f7a0146593b581fffa28dafc30488f0c068",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.recipe.snapshot",
+      "mediaType": "application/json",
+      "bodyBase64": "eyJpZCI6Im51Z2xldC5hdWRpby5kaXNjdXNzaW9uIiwidmVyc2lvbiI6IjEuMC4wIn0=",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.audio.discussion",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:b16b3dfc7ac8c4bb251b20f042bd78060e3d797eb6a75260bc8532528f80b5b7",
+        "promptChecksum": "sha256:30960d56c9e84cc6c904d5cd55000a483e203b1d6d10a01312364e1f7039dd00",
+        "model": "fixture-audioDiscussion-model",
+        "outputKind": "audio_discussion",
+        "outputChecksum": "sha256:20a73e7c2609c5bc54b29cb6abcdd3e9dd3312524a38475db7e7baba213011d1",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.prompt.rendered",
+      "mediaType": "text/plain",
+      "bodyBase64": "UmVuZGVyIHRoZSBzY2hlbWEgMS4xLjAgYXVkaW9EaXNjdXNzaW9uIGZpeHR1cmUu",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.audio.discussion",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:b16b3dfc7ac8c4bb251b20f042bd78060e3d797eb6a75260bc8532528f80b5b7",
+        "promptChecksum": "sha256:30960d56c9e84cc6c904d5cd55000a483e203b1d6d10a01312364e1f7039dd00",
+        "model": "fixture-audioDiscussion-model",
+        "outputKind": "audio_discussion",
+        "outputChecksum": "sha256:20a73e7c2609c5bc54b29cb6abcdd3e9dd3312524a38475db7e7baba213011d1",
+        "referenceChecksums": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+# Release inventory and history audit
+
+Date: 2026-09-15
+Status: published clean-history candidate; post-public verification complete
+Scope: published candidate tree and reachable Git references; `main` is the only remote branch and the repository is public.
+
+## Result
+
+The inherited repository is not ready for publication as-is. The current candidate retains the product implementation and provider integrations but removes live-account migration state, private migration inventories, and internal agent reports.
+
+History strategy: **publish a clean-history candidate**. Reachable history preserved live-account-adjacent registry metadata, developer-local paths, internal operational reports, and undocumented media provenance. The published candidate has one new root commit; old remote branches and tags were deleted before visibility changed.
+
+## Repository inventory
+
+`git ls-files` reports 303 tracked files in the current index.
+
+| Area | Tracked files | Initial disposition | Review required |
+| --- | ---: | --- | --- |
+| `apps/` | 167 | Candidate application, worker, provider, media, and review code | Provider, media, URL, rights, and personal-data review |
+| `packages/` | 13 | Candidate contracts and pipeline code; evaluation additions are currently untracked | Dependency, fixture, and package-scope review |
+| `examples/` | 2 | Synthetic local-demo and migration-schema examples | Source and redistribution-rights review |
+| `recipes/` | 11 | Candidate recipe and prompt material | Rights, third-party text, and brand-use review |
+| `docs/` | 10 | Mixed product and engineering documentation | Remove private operational material or classify it explicitly |
+| `specs/` | 15 | Design and operational history | Classify before release; do not include local run artifacts |
+| `test/` | 13 | Candidate automated checks and fixtures | Personal-data, URL, and fixture-rights review |
+| `.agents/` | 7 | Project skills and operational instructions | Decide whether these are public project materials |
+| `.superpowers/` | 12 | Tracked agent workflow reports | Removed from release candidate |
+| Root configuration | 10 | Build, workspace, CI, lockfile, environment template, README | Replace production-specific setup with portable demo setup |
+
+The inventory above is a classification baseline. It is not an allowlist.
+
+## Current checkout state
+
+The working tree is dirty. It has modified source files and untracked work from other tasks, including `.pi/`, `.pi-subagents/`, `.codex-work/`, `evals/`, model-quality files, community-distribution files, and several specs. These files are not release contents by default. The release candidate must be selected from an explicit clean export, not from the current working tree.
+
+Ignored local state includes `.env`, `.local-artifacts/`, `.local-supervisor/`, build outputs, Turbo state, Vercel state, and dependency directories. The repository `.gitignore` does not currently cover all local tool directories observed in this checkout, including `.pi/`, `.pi-subagents/`, `.codex-work/`, `tmp/`, and `.worktrees/`.
+
+## Sensitive-content findings
+
+The following are observed facts, not proof of a credential leak:
+
+- `README.md` contains production-oriented Supabase setup, Nuglet API and media hostnames, delivery configuration, local provider paths, and provider-specific operating instructions.
+- `.env.example` contains production-mode variables, Nuglet host references, R2 bucket configuration, provider configuration, and absolute-path examples.
+- `apps/worker/src/providers/notebooklm.ts`, media providers, recipes, and related tests contain production integration behavior.
+- `examples/nuglet-migrations/` contained product-specific inventories and a live NotebookLM registry; removed from the release candidate.
+- `docs/NUGLET_KNOWLEDGE_BITS_PRODUCT_GROWTH_STRATEGY.md`, `.superpowers/sdd/`, and selected engineering documents are operational or product material. Their public disposition is unresolved.
+- Three font files are covered by adjacent OFL notices. Five PNGs are owner-authorized Nuglet assets recorded in `docs/release-rights.md`; trademarks remain reserved.
+- `git rev-list --all --count` reports 225 commits across reachable references. The history includes product and provider implementation commits and many branches.
+- A narrow history scan found no JWT-shaped value, private-key block, Supabase host, or obvious credential assignment matching the scan patterns used for this audit. The same-pattern history scan and current-file scan are limited controls. They do not replace a general secret scan, manual review, or a third-party rights audit.
+- The repository credential scanner passed for 503 tracked and non-ignored paths in the current checkout. The command ran under Node 22 and reported the repository's Node 24 engine warning; this is a scan result, not a clean-release result.
+- The public-release checker passed its focused tests and did not print matched values, but the current candidate/history run remains blocked by pre-existing credential-shaped local/test fixtures, reachable-history findings, and untracked candidate paths. This is publication-review evidence, not proof of a credential leak.
+- The read-only audit confirmed that 28 migration inventories contained developer-local absolute paths and that the registry contained live-account-adjacent notebook/run/status metadata. These files are removed from the candidate; inherited history remains excluded by the clean export.
+
+No secret value is copied into this report.
+
+## Historical review
+
+No `.env` file, `.pi/`, `.pi-subagents/`, `.codex-work/`, `tmp/`, or local supervisor directory was found in the reachable history path review. Reachable history still contains product-specific code, docs, fixtures, provider configuration references, local paths, and account-adjacent registry metadata; the clean export excludes it.
+
+The independent read-only audit recommends a clean-history candidate. It found one tag and many reachable branches, and it confirmed that the problematic inventories, operational reports, and media provenance are preserved in reachable objects. The candidate therefore starts from a new root commit.
+
+Required follow-up checks:
+
+1. Run a dedicated history scanner that checks all reachable blobs and packed objects without printing matched values.
+2. Review historical source snapshots, media, fonts, fixtures, inventories, and reports for personal data and third-party rights.
+3. Review historical production URLs, IDs, account names, source excerpts, and provider instructions.
+4. Compare the release allowlist with every commit and tag that the selected publication strategy will retain.
+5. Record the named owner decision for history retention or clean-history export.
+
+## Intended release contents
+
+The readiness plan permits the existing monorepo and Nuglet implementation to remain in scope. The intended candidate therefore includes, subject to rights and sensitive-data review:
+
+- six-stage workflow, contracts, package building, review, fixture worker, and fixture destination;
+- Nuglet schemas, recipes, prompts, branding, integrations, documentation, and examples that the project owns or may redistribute;
+- evaluation tooling and corpora that pass content and rights review;
+- portable local-demo configuration, setup scripts, CI, and contributor documentation;
+- production integrations with clear optional-status documentation.
+
+The candidate excludes by default:
+
+- credentials, `.env` files, account/session state, local artifacts, caches, scratch work, and agent-run directories;
+- customer or personal data;
+- third-party source text, media, fonts, or labels without redistribution rights;
+- private deployment values and unreviewed operational reports;
+- unclassified dirty-worktree additions.
+
+## Post-public follow-up
+
+- Replace `arcayne` in `LICENSE` with a legal or registered copyright name if the owner wants the notice to identify an entity.
+- Keep the rights inventory current when adding prompts, recipes, fonts, images, generated media, source material, or branding.
+- Configure protected provider identity and model-quality credentials before a future descendant push that changes provider-backed paths.
+
+## Next action
+
+Verify the published README and issue/security links periodically, and keep release checks green on future descendant pushes.

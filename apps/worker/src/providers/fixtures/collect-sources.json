@@ -1,0 +1,27 @@
+{
+  "assets": [
+    {
+      "bodyBase64": "QSBicmllZiBwYXVzZSBmb2xsb3dlZCBieSBhIGRlZmluZWQgbmV4dCBhY3Rpb24gY2FuIHJlZHVjZSByZXN0YXJ0IGZyaWN0aW9uLg==",
+      "inputChecksum": null,
+      "kind": "source_snapshot",
+      "mediaType": "text/plain",
+      "provenance": { "sourceId": "11111111-1111-4111-8111-111111111111" }
+    }
+  ],
+  "fixtureSchemaVersion": "knowledge-bits.fixture-provider.v1",
+  "parsedOutput": {
+    "acceptedSources": [
+      {
+        "credibility": { "passed": true, "policy": "fixture-trusted-host", "reason": null },
+        "readability": { "passed": true, "reason": null },
+        "retrievedAt": "2026-07-13T09:00:00.000Z",
+        "snapshotChecksum": "b6fa0ffd25e02d3740be6936e0327b02c45bdb9f30daf476294f80391a00fa67",
+        "sourceId": "11111111-1111-4111-8111-111111111111",
+        "title": "Returning to focused work",
+        "url": "https://example.test/attention-recovery/focused-return"
+      }
+    ],
+    "coverageGaps": [],
+    "rejectedSources": []
+  }
+}

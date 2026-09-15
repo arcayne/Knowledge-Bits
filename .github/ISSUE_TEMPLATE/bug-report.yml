@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a reproducible problem in the repository.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include secrets, credentials, personal data, private URLs, or vulnerability details. Use SECURITY.md for suspected security vulnerabilities.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: State what failed and what you expected.
+      placeholder: The local demo fails during ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest safe sequence of commands or actions.
+      placeholder: |
+        1. Run ...
+        2. Configure ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual and expected behavior
+      description: Include the error text or relevant output after removing sensitive values.
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or version
+      placeholder: git commit or package version
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Node, pnpm, PostgreSQL, Docker, and relevant adapter modes.
+      placeholder: macOS; Node 24.x; pnpm 9.12.0; PostgreSQL 16; fixture mode
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Paste only logs with credentials, tokens, IDs, private paths, and personal data removed.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I removed secrets and private information.
+          required: true
+        - label: This is not a suspected security vulnerability.
+          required: true

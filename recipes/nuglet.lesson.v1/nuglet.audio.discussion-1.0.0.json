@@ -1,0 +1,10 @@
+{
+  "id": "nuglet.audio.discussion",
+  "instructions": [
+    "Produce a longer two-voice Discussion that explores the practical tension behind the lesson.",
+    "Add useful nuance and an example without repeating the Brief word for word.",
+    "Treat this recipe as provenance-only when published Nuglet audio is explicitly reused."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

@@ -1,0 +1,187 @@
+{
+  "workflow": "agentic-delivery-playbook",
+  "workflowVersion": "0.2",
+  "phase": "closeout",
+  "status": "complete",
+  "taskFit": "broad-ticket",
+  "riskTier": "orange",
+  "specPath": "specs/20260801-0009-agent-review-pilot/spec.md",
+  "activeRole": "parent",
+  "activeAgent": "root",
+  "activeModel": "runtime-default",
+  "approval": {
+    "status": "approved",
+    "source": "user-attached Days 1-5 implementation brief"
+  },
+  "reviewGates": {
+    "specCritic": "accepted",
+    "implementationQa": "passed",
+    "externalEnforcement": "blocked_by_github_plan"
+  },
+  "modelLedger": [
+    {
+      "role": "spec_author",
+      "agent": "root",
+      "model": "runtime-default",
+      "source": "runtime-default"
+    },
+    {
+      "role": "pr_51_independent_reviewer",
+      "agent": "pr51_independent_review",
+      "model": "gpt-5.6-sol",
+      "reasoning": "high",
+      "source": "explicit"
+    },
+    {
+      "role": "spec_critic",
+      "agent": "pilot_spec_critic",
+      "model": "gpt-5.6-sol",
+      "reasoning": "high",
+      "source": "explicit"
+    },
+    {
+      "role": "revised_spec_gate",
+      "agent": "revised_spec_gate",
+      "model": "gpt-5.6-terra",
+      "reasoning": "medium",
+      "source": "explicit"
+    },
+    {
+      "role": "implementation_qa",
+      "agent": "pilot_implementation_qa",
+      "model": "gpt-5.6-sol",
+      "reasoning": "high",
+      "source": "explicit"
+    },
+    {
+      "role": "closeout_gate",
+      "agent": "pilot_closeout_gate",
+      "model": "gpt-5.6-terra",
+      "reasoning": "medium",
+      "source": "explicit"
+    }
+  ],
+  "changedFiles": [
+    "specs/20260801-0009-agent-review-pilot/spec.md",
+    "specs/20260801-0009-agent-review-pilot/run.json",
+    "specs/20260801-0009-agent-review-pilot/notes.md",
+    "README.md",
+    "docs/engineering/system-map.md",
+    "docs/engineering/pr-baseline.csv",
+    "docs/engineering/risk-map.md",
+    "docs/engineering/independent-review.md",
+    "docs/engineering/reviews/pr-51-5b2e7a9.md",
+    "test/deployment-contracts.test.mjs",
+    "test/e2e/legacy-review-flow.test.mjs",
+    "test/e2e/review-flow.test.mjs"
+  ],
+  "validationEvidence": [
+    {
+      "command": "pnpm install --frozen-lockfile",
+      "environment": "Node 24.18.0; pnpm 9.12.0",
+      "result": "passed"
+    },
+    {
+      "command": "pnpm typecheck",
+      "environment": "Node 24.18.0",
+      "result": "passed; 5 of 5 workspace tasks"
+    },
+    {
+      "command": "pnpm test",
+      "environment": "Node 24.18.0",
+      "result": "passed after fix cycle 1; contract checks 11 passed; workspace test tasks 10 of 10; E2E 3 of 3"
+    },
+    {
+      "command": "pnpm build",
+      "environment": "Node 24.18.0",
+      "result": "passed; 5 of 5 workspace tasks"
+    },
+    {
+      "command": "pnpm exec turbo run typecheck --force",
+      "environment": "Node 24.18.0",
+      "result": "passed; 5 of 5 tasks; 0 cached"
+    },
+    {
+      "command": "pnpm exec turbo run build --force",
+      "environment": "Node 24.18.0",
+      "result": "passed; 5 of 5 tasks; 0 cached"
+    },
+    {
+      "command": "pnpm exec turbo run test --concurrency=1 --force",
+      "environment": "Node 24.18.0",
+      "result": "passed; 10 of 10 tasks; 0 cached"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "source": "GitHub Actions API",
+      "result": "workflow 312160979 state active at 2026-08-01T00:30:10+02:00"
+    },
+    {
+      "source": "GitHub branch protection and rulesets APIs",
+      "result": "HTTP 403 plan limitation confirmed; no enforcement write attempted"
+    },
+    {
+      "source": "PR #51 live head and comment",
+      "result": "head matched 5b2e7a932b7f6eda9e1735ed06bb7bba329e07a2; verdict posted at issuecomment-5148012020"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "category": "external_enforcement",
+      "status": "blocked_by_github_plan",
+      "summary": "GitHub branch protection and rulesets return HTTP 403 for the private repository on its current plan."
+    },
+    {
+      "severity": "high",
+      "category": "ci_state",
+      "status": "resolved",
+      "summary": "The existing Quality workflow was restored from disabled_manually to active; a future PR event is still needed for successful exact-head Actions evidence."
+    },
+    {
+      "severity": "high",
+      "category": "evidence_integrity",
+      "status": "resolved_in_spec",
+      "summary": "Workflow enablement is not retroactive PR #51 evidence; exact-head evidence and stale-review rules are now explicit."
+    },
+    {
+      "severity": "high",
+      "category": "spec_precision",
+      "status": "resolved_in_spec",
+      "summary": "CSV change-area values, reviewer identity formatting, and the concrete boundary-to-risk mapping are now explicit."
+    },
+    {
+      "severity": "medium",
+      "category": "baseline_test_drift",
+      "status": "resolved",
+      "summary": "Two E2E assertions predated the optional publicPreview review state; expectations now cover four required available assets and the optional missing preview without changing runtime behavior."
+    },
+    {
+      "severity": "medium",
+      "category": "missing_validation",
+      "status": "resolved",
+      "summary": "Implementation QA found an empty validation ledger and stale next action; actual Node 24 and GitHub evidence is now recorded."
+    }
+  ],
+  "knownGaps": [
+    "Nuglet internals are intentionally not verified in this run.",
+    "Historical acceptance and human-minute evidence are incomplete.",
+    "GitHub cannot enforce the Quality check on this private repository under the current plan.",
+    "PR #51 has independent local reviewer evidence but no successful GitHub Actions run for its exact head."
+  ],
+  "fixCycles": 1,
+  "qaSummary": "Final fresh-context QA found no remaining blocker, high, or medium issue and returned pass.",
+  "implementationModelEvaluation": "Runtime-default parent implementation completed the approved scope; independent QA caught one missing closeout-evidence issue, which was resolved before the final pass.",
+  "escalations": [
+    {
+      "category": "external_enforcement",
+      "owner": "repository administrator",
+      "action": "Upgrade the GitHub plan or make the repository public before configuring Quality / quality as a required check."
+    }
+  ],
+  "recommendationForNextRun": "Use the same SHA-bound reviewer artifact for the next 10 PRs; after GitHub plan capability changes, require Quality / quality and verify one successful exact-head run before counting independently verified coverage.",
+  "nextAction": "GitHub publication and merge were authorized by the user on 2026-08-01; refer to the pull request for delivery status."
+}

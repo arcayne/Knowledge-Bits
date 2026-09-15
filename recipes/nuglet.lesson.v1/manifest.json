@@ -1,0 +1,76 @@
+{
+  "contentKind": "nuglet.lesson.v1",
+  "recipes": [
+    {
+      "checksum": "sha256:f48e77547bf0d1b1890bc4118902fbcae185d6b55ec21c929410adab02677206",
+      "id": "nuglet.visual.infographic",
+      "path": "nuglet.visual.infographic-2.0.0.json",
+      "status": "approved",
+      "version": "2.0.0"
+    },
+    {
+      "checksum": "sha256:759dccde9da000a17644a3eb7a46a1e3cbeac76caaf7530b0676b19465b0e5b3",
+      "id": "nuglet.visual.infographic",
+      "path": "nuglet.visual.infographic-1.1.0.json",
+      "status": "approved",
+      "version": "1.1.0"
+    },
+    {
+      "checksum": "sha256:f6a9c3ae729cce5a9f29a4f28abdc6f9145050fdb54a4803995de9c775cde407",
+      "id": "nuglet.audio.brief",
+      "path": "nuglet.audio.brief-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:ea43603f59f08552319c736727288b1acafe6466653605a2d278a9e207ee0e5c",
+      "id": "nuglet.audio.discussion",
+      "path": "nuglet.audio.discussion-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:a520d1bef433a9cc263cc661b6e70f1c4bcf870f9985bfba9074f77ccf924713",
+      "id": "nuglet.challenge",
+      "path": "nuglet.challenge-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:c746be68da1739b51d3fee6278012fbfa3d5eb1890bc11cff9c6aa86174be571",
+      "id": "nuglet.hero",
+      "path": "nuglet.hero-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:6c6342977dce5d473a0644215556f2f1b98f04985b2f945c8776078077334c4a",
+      "id": "nuglet.lesson.playbook",
+      "path": "nuglet.lesson.playbook-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:763e8a42ab8fc9fa23f098f11d9daa5b9042ee342bd92a7c1313a9b0714b220b",
+      "id": "nuglet.lesson.story",
+      "path": "nuglet.lesson.story-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:034bae01bae4a5cba84b3ed0e03239a50eb1bddfe28d9a40b5bb9dfd2bc61667",
+      "id": "nuglet.qa.editorial",
+      "path": "nuglet.qa.editorial-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    },
+    {
+      "checksum": "sha256:aedcfff0b483b5b8e49ed5734a79c644e992fbadd299786f7782c47c01f0fdfe",
+      "id": "nuglet.visual.infographic",
+      "path": "nuglet.visual.infographic-1.0.0.json",
+      "status": "approved",
+      "version": "1.0.0"
+    }
+  ],
+  "registryVersion": "2.0.0"
+}

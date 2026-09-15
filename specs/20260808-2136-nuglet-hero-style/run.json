@@ -1,0 +1,25 @@
+{
+  "workflow": "agentic-delivery-playbook v0.2",
+  "phase": "implementation",
+  "status": "in_progress",
+  "taskFit": "broad-ticket",
+  "specPath": "specs/20260808-2136-nuglet-hero-style/spec.md",
+  "activeRole": "primary",
+  "modelLedger": {"source": "runtime-default"},
+  "approval": "User explicitly requested the fix end-to-end.",
+  "changedFiles": [
+    "apps/worker/scripts/nuglet-media-command.mjs",
+    "apps/worker/scripts/nuglet-media-command.test.mjs",
+    "/Users/dearkane/.local/share/knowledge-bits-supervisor/apps/worker/scripts/nuglet-media-command.mjs",
+    "/Users/dearkane/.local/share/knowledge-bits-supervisor/apps/worker/scripts/nuglet-media-command.test.mjs"
+  ],
+  "validation": [
+    {"command": "node --test scripts/nuglet-media-command.test.mjs", "cwd": "apps/worker", "result": "20 passed (supervisor runtime)"},
+    {"command": "node --test scripts/nuglet-media-command.test.mjs", "cwd": "apps/worker", "result": "14 passed (main checkout)"}
+  ],
+  "findings": [
+    {"severity": "warning", "finding": "The regenerated hero reached human review and restored the curated paper/watercolor/ink style, but the stored semantic brief remains the old split-screen/briefcase direction; the rendered scene does not clearly express that metaphor."}
+  ],
+  "knownGaps": ["Runtime supervisor checkout is ahead of the main checkout and has local changes; keep patches narrow."],
+  "nextAction": "Do not approve this hero yet; revise the Second Shift semantic hero brief, then regenerate only the hero."
+}

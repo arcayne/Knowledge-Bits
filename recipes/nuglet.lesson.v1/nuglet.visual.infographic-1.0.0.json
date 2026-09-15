@@ -1,0 +1,10 @@
+{
+  "id": "nuglet.visual.infographic",
+  "instructions": [
+    "Create one readable Nuglet visual that teaches the lesson through a clear editorial hierarchy.",
+    "Use sparse warm editorial styling, one central idea, and no decorative clutter.",
+    "Treat this recipe as provenance-only when a published Nuglet infographic is explicitly reused."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

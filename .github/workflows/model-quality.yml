@@ -1,0 +1,395 @@
+name: Model quality release gate
+
+on:
+  pull_request:
+    paths:
+      - "packages/contracts/**"
+      - "packages/pipeline/**"
+      - "packages/evaluation/**"
+      - "apps/**"
+      - "prompts/**"
+      - "recipes/**"
+      - "research/**"
+      - "create/**"
+      - "check/**"
+      - "sources/**"
+      - "providers/**"
+      - "models/**"
+      - "evals/**"
+      - "scripts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/model-quality.yml"
+  pull_request_target:
+    paths:
+      - "research/**"
+      - "**/research/**"
+      - "create/**"
+      - "**/create/**"
+      - "check/**"
+      - "**/check/**"
+      - "source/**"
+      - "sources/**"
+      - "**/source/**"
+      - "**/sources/**"
+      - "prompt/**"
+      - "prompts/**"
+      - "**/prompt/**"
+      - "**/prompts/**"
+      - "recipe/**"
+      - "recipes/**"
+      - "**/recipe/**"
+      - "**/recipes/**"
+      - "providers/**"
+      - "provider/**"
+      - "**/providers/**"
+      - "**/provider/**"
+      - "models/**"
+      - "model/**"
+      - "**/models/**"
+      - "**/model/**"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      trusted_sha:
+        description: "Trusted immutable evaluator SHA. It must differ from the candidate SHA."
+        required: true
+        type: string
+      changed_paths:
+        description: "Comma-separated changed paths that require Lane 1"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Lane 0 runs evaluator code and reads the baseline from the PR base commit.
+# The candidate checkout is data only. This job receives no provider credentials.
+jobs:
+  deterministic-lane-0:
+    name: Deterministic Lane 0
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the trusted base evaluator
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out the candidate as data
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+          run_install: false
+
+      - name: Use Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: trusted/pnpm-lock.yaml
+
+      - name: Verify trusted evaluator bootstrap
+        working-directory: trusted
+        run: |
+          set -euo pipefail
+          test -f packages/evaluation/package.json || {
+            echo 'Trusted evaluator is not established at the base ref. Complete the protected bootstrap action before enforcing this gate.' >&2
+            exit 2
+          }
+
+      - name: Install trusted dependencies without lifecycle credentials
+        working-directory: trusted
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build trusted contracts, pipeline, and evaluation packages
+        working-directory: trusted
+        run: |
+          set -euo pipefail
+          pnpm --filter @knowledge-bits/contracts build
+          pnpm --filter @knowledge-bits/pipeline build
+          pnpm --filter @knowledge-bits/evaluation build
+
+      - name: Collect and verify the exact candidate SHA and changed paths
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git -C candidate rev-parse HEAD)"
+          test "$actual_sha" = "$CANDIDATE_SHA"
+          changed_paths="$(git -C candidate diff --name-only "$BASE_SHA" "$CANDIDATE_SHA" | paste -sd, -)"
+          test -n "$changed_paths"
+          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+          echo "changed_paths=$changed_paths" >> "$GITHUB_OUTPUT"
+          printf 'Evaluating exact candidate %s\nChanged paths: %s\n' "$CANDIDATE_SHA" "$changed_paths"
+
+      - name: Run the trusted offline deterministic evaluator
+        working-directory: trusted
+        env:
+          CANDIDATE_SHA: ${{ steps.changes.outputs.candidate_sha }}
+          CHANGED_PATHS: ${{ steps.changes.outputs.changed_paths }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../candidate/artifacts/model-quality
+          pnpm evaluate:model-release -- \
+            --project-root ../candidate \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --corpus ../candidate/evals/knowledge-bits.v1 \
+            --trusted-baseline ../trusted/evals/knowledge-bits.v1/baselines/baseline-20260809-01.json \
+            --baseline-id baseline-20260809-01 \
+            --baseline-checksum bc773fed4e32a7e272b43ffbcd353ebcebc4b268aed0acfd82966d3d40aa1cd9 \
+            --changed-paths "$CHANGED_PATHS" \
+            --provider fixture-provider \
+            --model fixture-model-v1 \
+            --output artifacts/model-quality/lane-0-report.json
+
+      - name: Upload Lane 0 report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-quality-lane-0-${{ github.event.pull_request.head.sha }}
+          path: candidate/artifacts/model-quality/lane-0-report.json
+          if-no-files-found: error
+
+  provider-lane-1:
+    name: Provider-backed Lane 1
+    # This job is intentionally impossible on pull_request, including forks.
+    # pull_request_target runs trusted base workflow code. The candidate checkout is data only.
+    # pull_request never enters this credentialed job.
+    if: github.event_name == 'pull_request_target' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: model-quality-evaluation
+    permissions:
+      contents: read
+    steps:
+      - name: Select trusted evaluator and candidate SHAs
+        id: refs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_CANDIDATE_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          DISPATCH_TRUSTED_SHA: ${{ inputs.trusted_sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = 'pull_request_target' ]; then
+            candidate_sha="$PR_HEAD_SHA"
+            trusted_sha="$PR_BASE_SHA"
+            candidate_repo="$PR_HEAD_REPO"
+            test -n "$candidate_sha" && test -n "$trusted_sha" && test "$candidate_sha" != "$trusted_sha"
+          elif [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            candidate_sha="$EVENT_CANDIDATE_SHA"
+            trusted_sha="${DISPATCH_TRUSTED_SHA:-}"
+            candidate_repo="$REPOSITORY"
+            test -n "$trusted_sha" || { echo 'workflow_dispatch requires an explicit trusted_sha' >&2; exit 2; }
+            test "$candidate_sha" != "$trusted_sha" || { echo 'trusted_sha must differ from candidate SHA' >&2; exit 2; }
+          else
+            candidate_sha="$EVENT_CANDIDATE_SHA"
+            trusted_sha="${EVENT_BEFORE:-}"
+            candidate_repo="$REPOSITORY"
+          fi
+          echo "trusted_sha=$trusted_sha" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+          echo "candidate_repo=$candidate_repo" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the candidate as data
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.refs.outputs.candidate_repo }}
+          ref: ${{ steps.refs.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve the trusted evaluator ref
+        id: history
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          CANDIDATE_SHA: ${{ steps.refs.outputs.candidate_sha }}
+          INITIAL_TRUSTED_SHA: ${{ steps.refs.outputs.trusted_sha }}
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          trusted_sha="$INITIAL_TRUSTED_SHA"
+          clean_history=false
+          if [ "$EVENT_NAME" = 'push' ]; then
+            parent_count="$(git rev-list --parents -n 1 "$CANDIDATE_SHA" | awk '{print NF - 1}')"
+            if [ "$parent_count" -eq 0 ] || [ -z "$trusted_sha" ] || printf '%s' "$trusted_sha" | grep -Eq '^0+$' || ! git cat-file -e "${trusted_sha}^{commit}" 2>/dev/null; then
+              echo 'Push does not have a reachable trusted base; using the parentless candidate as the evaluator bootstrap.'
+              trusted_sha="$CANDIDATE_SHA"
+              clean_history=true
+            fi
+          fi
+          test -n "$trusted_sha"
+          if [ "$clean_history" != true ]; then
+            test "$CANDIDATE_SHA" != "$trusted_sha" || { echo 'trusted_sha must differ from candidate SHA' >&2; exit 2; }
+          fi
+          echo "trusted_sha=$trusted_sha" >> "$GITHUB_OUTPUT"
+          echo "clean_history=$clean_history" >> "$GITHUB_OUTPUT"
+          printf 'Trusted evaluator: %s\nClean history bootstrap: %s\n' "$trusted_sha" "$clean_history"
+
+      - name: Check out the trusted evaluator
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.history.outputs.trusted_sha }}
+          path: trusted
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+          run_install: false
+
+      - name: Use Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: trusted/pnpm-lock.yaml
+
+      - name: Verify trusted evaluator bootstrap
+        working-directory: trusted
+        run: |
+          set -euo pipefail
+          test -f packages/evaluation/package.json || {
+            echo 'Trusted evaluator is not established at the selected trusted ref. Complete the protected bootstrap action before enforcing this gate.' >&2
+            exit 2
+          }
+
+      - name: Install trusted dependencies without lifecycle credentials
+        working-directory: trusted
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build trusted contracts, pipeline, and evaluation packages
+        working-directory: trusted
+        run: |
+          set -euo pipefail
+          pnpm --filter @knowledge-bits/contracts build
+          pnpm --filter @knowledge-bits/pipeline build
+          pnpm --filter @knowledge-bits/evaluation build
+
+      - name: Select Lane 1 paths and verify the exact candidate SHA
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TRUSTED_SHA: ${{ steps.history.outputs.trusted_sha }}
+          CANDIDATE_SHA: ${{ steps.refs.outputs.candidate_sha }}
+          CLEAN_HISTORY: ${{ steps.history.outputs.clean_history }}
+          DISPATCH_CHANGED_PATHS: ${{ inputs.changed_paths }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git -C candidate rev-parse HEAD)"
+          test "$actual_sha" = "$CANDIDATE_SHA"
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            changed_paths="$DISPATCH_CHANGED_PATHS"
+          elif [ "$CLEAN_HISTORY" = 'true' ]; then
+            # A parentless publication root has no distinct trusted commit to
+            # compare. Defer the provider-backed lane until its first
+            # descendant push supplies a reachable predecessor.
+            changed_paths=''
+          else
+            changed_paths="$(git -C candidate diff --name-only "$TRUSTED_SHA" "$CANDIDATE_SHA" | paste -sd, -)"
+          fi
+
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            test -n "$changed_paths" || { echo 'workflow_dispatch requires nonempty changed_paths' >&2; exit 2; }
+          fi
+          run_lane1=false
+          old_ifs="$IFS"
+          IFS=','
+          for path in $changed_paths; do
+            case "/$path/" in
+              */research/*|*/create/*|*/check/*|*/source/*|*/sources/*|*/prompt/*|*/prompts/*|*/recipe/*|*/recipes/*|*/provider/*|*/providers/*|*/model/*|*/models/*)
+                run_lane1=true
+                ;;
+            esac
+          done
+          IFS="$old_ifs"
+
+          if [ "$CLEAN_HISTORY" = 'true' ]; then
+            echo 'Provider-backed Lane 1 deferred for the parentless publication root.'
+          fi
+
+          echo "run_lane1=$run_lane1" >> "$GITHUB_OUTPUT"
+          echo "changed_paths=$changed_paths" >> "$GITHUB_OUTPUT"
+          printf 'Candidate %s\nSelected Lane 1: %s\nChanged paths: %s\n' "$CANDIDATE_SHA" "$run_lane1" "$changed_paths"
+
+      - name: Run the trusted provider-backed evaluator
+        if: steps.changes.outputs.run_lane1 == 'true'
+        working-directory: trusted
+        env:
+          CANDIDATE_SHA: ${{ steps.refs.outputs.candidate_sha }}
+          CHANGED_PATHS: ${{ steps.changes.outputs.changed_paths }}
+          EVAL_PROVIDER: ${{ vars.EVAL_PROVIDER }}
+          EVAL_MODEL: ${{ vars.EVAL_MODEL }}
+          EVAL_PROVIDER_COMMAND: ${{ vars.EVAL_PROVIDER_COMMAND }}
+          EVAL_PROVIDER_API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
+        run: |
+          set -u -o pipefail
+          # Missing protected inputs are passed as empty values. The evaluator
+          # then writes an inconclusive report instead of passing the candidate.
+          EVAL_PROVIDER="${EVAL_PROVIDER:-}"
+          EVAL_MODEL="${EVAL_MODEL:-}"
+          EVAL_PROVIDER_COMMAND="${EVAL_PROVIDER_COMMAND:-}"
+          if [ -z "${EVAL_PROVIDER_API_KEY:-}" ]; then
+            EVAL_PROVIDER=''
+            EVAL_MODEL=''
+            EVAL_PROVIDER_COMMAND=''
+          fi
+          mkdir -p ../candidate/artifacts/model-quality
+          set +e
+          pnpm evaluate:model-release -- \
+            --project-root ../candidate \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --corpus ../candidate/evals/knowledge-bits.v1 \
+            --trusted-baseline ../trusted/evals/knowledge-bits.v1/baselines/baseline-20260809-01.json \
+            --baseline-id baseline-20260809-01 \
+            --baseline-checksum bc773fed4e32a7e272b43ffbcd353ebcebc4b268aed0acfd82966d3d40aa1cd9 \
+            --changed-paths "$CHANGED_PATHS" \
+            --provider "$EVAL_PROVIDER" \
+            --model "$EVAL_MODEL" \
+            --provider-command "$EVAL_PROVIDER_COMMAND" \
+            --output artifacts/model-quality/lane-1-report.json
+          status=$?
+          set -e
+          test -f ../candidate/artifacts/model-quality/lane-1-report.json
+          exit "$status"
+
+      - name: Upload Lane 1 report
+        if: always() && steps.changes.outputs.run_lane1 == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-quality-lane-1-${{ steps.refs.outputs.candidate_sha }}
+          path: candidate/artifacts/model-quality/lane-1-report.json
+          if-no-files-found: error

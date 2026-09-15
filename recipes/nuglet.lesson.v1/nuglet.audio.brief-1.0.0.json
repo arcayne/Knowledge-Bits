@@ -1,0 +1,10 @@
+{
+  "id": "nuglet.audio.brief",
+  "instructions": [
+    "Produce a concise one-voice Brief that explains the core insight and today's action.",
+    "Keep it focused, warm, and distinct from the longer Discussion.",
+    "Treat this recipe as provenance-only when published Nuglet audio is explicitly reused."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

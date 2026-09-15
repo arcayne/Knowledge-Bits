@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "agentic-delivery-playbook.v0.2",
+  "runId": "20260818-joan-photo-infographic-series",
+  "phase": "implementation",
+  "status": "complete",
+  "riskTier": "orange",
+  "humanApproval": {
+    "required": true,
+    "reason": "The asset contract and future image generation affect brand output and evidence-bound claims."
+  },
+  "input": {
+    "sourceRunId": "cde5ebe5-eb9f-4e98-9cba-fcdfc385b6d6",
+    "sourceVideoId": "-QFHIoCo-Ko",
+    "assetKind": "joan.photo-infographic-series.v1",
+    "cardCount": {
+      "min": 4,
+      "max": 8,
+      "selection": "structure-driven-no-padding"
+    },
+    "format": "1080x1350 portrait 4:5"
+  },
+  "changes": [
+    "Added the Joan photo-infographic series contract.",
+    "Added deterministic claim-reference validation.",
+    "Added a Joan fixture provider route with four ordered assets for the first use case."
+  ],
+  "validation": {
+    "contractsBuild": "passed",
+    "contractsTests": "passed: 45",
+    "workerTypecheck": "passed",
+    "workerJoanTests": "passed: 2",
+    "workerBuild": "passed",
+    "workerFullSuite": "179 passed, 1 environment failure: pnpm executable unavailable",
+    "apiRunRouteTests": "passed: 11",
+    "gitDiffCheck": "passed"
+  },
+  "knownGaps": [
+    "The fixture assets are deterministic SVG placeholders, not final photo generation.",
+    "Production Joan image generation is not wired to an external provider.",
+    "Review-package assembly does not yet display ordered Joan card assets.",
+    "NotebookLM provisioning and source ingestion remain separate blocked boundaries."
+  ],
+  "nextAction": "Approve the contract, then implement the Joan checked-content output and production image-provider adapter against the same series schema."
+}

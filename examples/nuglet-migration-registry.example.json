@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "knowledge-bits.notebooklm-migration-registry.v1",
+  "inventoryDate": "example",
+  "purpose": "Synthetic fixture for validating the migration registry schema without live account data.",
+  "summary": {
+    "notebookCount": 1,
+    "canonicalNugletCount": 1,
+    "representedInKnowledgeBitsCount": 1,
+    "pendingCanonicalMigrationCount": 0,
+    "duplicateCount": 0,
+    "manualReviewCount": 0,
+    "discardCount": 0,
+    "completeNotebookMediaCount": 1,
+    "partialNotebookMediaCount": 0,
+    "missingNotebookMediaCount": 0
+  },
+  "notebooks": [
+    {
+      "notebookId": "00000000-0000-4000-8000-000000000001",
+      "notebookTitle": "Example fixture notebook",
+      "nugletTitle": "Example Nuglet",
+      "nugletSlug": "example-nuglet",
+      "classification": "canonical",
+      "catalogueStatus": "published",
+      "migrationStatus": "represented",
+      "knowledgeBitsRunId": "00000000-0000-4000-8000-000000000002",
+      "sourceCount": 1,
+      "completedArtifacts": {
+        "audio": 2,
+        "infographic": 1,
+        "quiz": 0,
+        "other": 0
+      },
+      "mediaReadiness": "complete"
+    }
+  ]
+}

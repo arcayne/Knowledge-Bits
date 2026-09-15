@@ -1,0 +1,39 @@
+{
+  "title": "Return to one task",
+  "locale": "en",
+  "notebookLmNotebookId": "local-demo-notebook",
+  "brief": {
+    "objective": "Help an adult learner return to one task after an interruption.",
+    "audience": "Adults rebuilding focused work habits",
+    "notebookLmNotebookId": "local-demo-notebook",
+    "sourceUrls": ["https://example.test/attention-recovery/focused-return"],
+    "fixtureSourcePath": "examples/local-demo/source.txt",
+    "contentKind": "nuglet.lesson.v1",
+    "generationPlan": {
+      "contentKind": "nuglet.lesson.v1",
+      "schemaVersion": "1.1.0",
+      "heroMode": "deferred",
+      "mediaMode": "generate",
+      "recipes": {
+        "story": { "id": "nuglet.lesson.story", "version": "1.0.0", "checksum": "sha256:28f221fd7c93b7622a869a2cdac9fa637f496a292263935d4745a30f8019d172" },
+        "playbook": { "id": "nuglet.lesson.playbook", "version": "1.0.0", "checksum": "sha256:939bcb0f1cd4b867b82e334f282a98f059c7d523a4311586fcf42fc8529ee837" },
+        "challenge": { "id": "nuglet.challenge", "version": "1.0.0", "checksum": "sha256:422834b48ef09aa287ec52b35a15b541c81a82bbe908bd0a870f2633c5ba0ad4" },
+        "hero": { "id": "nuglet.hero", "version": "1.0.0", "checksum": "sha256:09e81bb1b34007c6381e2d51043b5a45bb0625ee58b7c9cc904f0e461de4043f" },
+        "infographic": { "id": "nuglet.visual.infographic", "version": "1.0.0", "checksum": "sha256:2069924f505538fe86a33d5e7d8f8e36304b6a902c9130f1370bb5ffd1fb8ff5" },
+        "audioBrief": { "id": "nuglet.audio.brief", "version": "1.0.0", "checksum": "sha256:10b1624214d25f9e282c6faf28ec404578dacd3f70199981893537cc0a4d58e4" },
+        "audioDiscussion": { "id": "nuglet.audio.discussion", "version": "1.0.0", "checksum": "sha256:b16b3dfc7ac8c4bb251b20f042bd78060e3d797eb6a75260bc8532528f80b5b7" },
+        "editorialQa": { "id": "nuglet.qa.editorial", "version": "1.0.0", "checksum": "sha256:034bae01bae4a5cba84b3ed0e03239a50eb1bddfe28d9a40b5bb9dfd2bc61667" }
+      },
+      "heroDirection": {
+        "concept": "Returning to focused work",
+        "metaphor": "One marked step on an unfinished path",
+        "compositionFamily": "asymmetrical-story",
+        "mustInclude": ["one clear restart marker"],
+        "mustAvoid": ["rigid symmetry"]
+      }
+    },
+    "intake": {
+      "requestedFormat": "story_playbook"
+    }
+  }
+}

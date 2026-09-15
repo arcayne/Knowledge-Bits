@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "joan-ai-video.evaluation-case.v1",
+  "id": "unsupported-claims-01",
+  "title": "Unsupported critical claims fail",
+  "coverage": ["unsupported-claims"],
+  "tags": ["grounding", "regression", "joan"],
+  "source": {"id": "joan-fixture-source", "path": "sources/ai-coding-workflow.txt", "bodyChecksum": "d20ad1ff1e03785a5ac835660df50d504eff50702d118598ff5405243164f571", "artifactId": "joan-fixture-source"},
+  "expected": {"materialClaimIds": ["claim-agent-ready", "claim-vertical-slice"], "requiredTopicSignals": ["agent-ready requirements", "vertical slices", "test-driven development", "autonomous coding agents", "agent-effective codebases"], "requiredSourceIds": ["joan-fixture-source"]},
+  "label": {"hardGates": ["claim-grounding"], "critical": true},
+  "labelPath": "labels/joan.v1.json",
+  "labelChecksum": "48f923d68b668db3d106d805748c5d1c0c7b0fb9d7420b4e262d1160778188ac",
+  "checksum": "b837f3902dd3cbeb9bbdda369b42077a3649e4668cc81f009d2e07377b20353d"
+}

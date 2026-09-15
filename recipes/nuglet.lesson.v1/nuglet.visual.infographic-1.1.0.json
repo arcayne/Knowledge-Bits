@@ -1,0 +1,18 @@
+{
+  "id": "nuglet.visual.infographic",
+  "instructions": [
+    "Create one portrait Nuglet visual summary for a curious adult. It must feel like a calm, useful page from the Nuglet app, not a classroom poster, academic chart, vintage print, or generic AI infographic.",
+    "Teach one central idea through a clear sequence: the idea, the common trap, the better reframe, and one action the learner can use today. Use no more than four teaching modules.",
+    "Build the composition around one memorable editorial metaphor that occupies roughly one third of the page. Arrange the remaining modules asymmetrically around it with generous breathing room. Do not use a rigid equal-card grid.",
+    "Use short, plain copy: one concise title, an optional one-line deck, and at most one heading plus one short sentence per module. Prefer 70 words or fewer across the entire image. Keep every line large enough to read on a phone.",
+    "Use Nuglet's visual language: warm ivory paper, subtle natural grain, deep charcoal ink, restrained clay-orange as the primary accent, and small supporting touches of moss, dusty blue, pale blush, or stone.",
+    "Illustrations should look hand-painted and editorial: soft gouache or watercolor forms, fine graphite or ink contours, simple symbolic objects, gentle shadows, and tactile paper texture. Keep the result refined, warm, quiet, and contemporary.",
+    "Panels may use pale paper tints and thin soft-stone rules, but keep containers minimal. Avoid heavy outlines, deep shadows, glossy surfaces, decorative frames, ornamental corners, ribbons, badges, and excessive rounded cards.",
+    "Do not create a dense encyclopedic poster, Victorian or retro scientific plate, corporate presentation, SaaS dashboard, worksheet, sticker sheet, icon collection, flowchart maze, or motivational poster. Do not use photorealism, 3D rendering, neon, blue-purple gradients, dark backgrounds, or decorative clutter.",
+    "Do not show source names, citations, logos, product branding, or invented interface elements inside the teaching area. Check spelling carefully and omit any nonessential copy.",
+    "Reserve the bottom 4 percent of the full canvas as a disposable footer: uninterrupted warm ivory paper only. Put no border, ornament, panel, illustration, line, label, or essential content in this band. NotebookLM's own product mark may occupy only this footer because the production pipeline crops the band away.",
+    "Treat this recipe as provenance-only when a published Nuglet infographic is explicitly reused."
+  ],
+  "status": "approved",
+  "version": "1.1.0"
+}

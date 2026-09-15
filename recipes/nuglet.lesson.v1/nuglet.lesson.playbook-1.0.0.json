@@ -1,0 +1,11 @@
+{
+  "id": "nuglet.lesson.playbook",
+  "instructions": [
+    "Turn the central idea into a practical playbook that a learner can use in five minutes.",
+    "Use concrete steps, a realistic example, and one watch-out that prevents a common mistake.",
+    "Keep the language calm, specific, and non-judgmental.",
+    "Reuse the same action and terminology as the Story rather than introducing a second lesson."
+  ],
+  "status": "approved",
+  "version": "1.0.0"
+}

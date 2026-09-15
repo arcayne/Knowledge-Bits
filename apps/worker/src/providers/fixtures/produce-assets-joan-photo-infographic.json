@@ -1,0 +1,90 @@
+{
+  "fixtureSchemaVersion": "knowledge-bits.fixture-provider.v1",
+  "parsedOutput": {
+    "contentKind": "joan.photo-infographic-series.v1",
+    "schemaVersion": "1.0.0",
+    "sourceVideoId": "$youtubeVideoId",
+    "format": {
+      "width": 1080,
+      "height": 1350,
+      "aspectRatio": "4:5"
+    },
+    "selection": {
+      "cardCount": 4,
+      "rule": "structure-driven-no-padding",
+      "rationale": "The video forms four useful units: make requirements agent-ready, build a vertical slice, run agents with tests, and improve the codebase for agents."
+    },
+    "cards": [
+      {
+        "sequence": 1,
+        "assetKind": "joan.photo-infographic.card.01",
+        "title": "Make the work agent-ready",
+        "body": "Turn an ambiguous request into a plan with clear boundaries, acceptance checks, and small executable steps.",
+        "visualDirection": "A marked route from a rough brief to a clear workboard.",
+        "imagePrompt": "Editorial documentary photo of a developer turning a messy wall of notes into a clean engineering workboard, warm natural light, restrained blue and amber palette, portrait composition.",
+        "altText": "A developer organizes ambiguous requirements into a clear engineering workboard.",
+        "textEquivalent": ["Start with explicit requirements, boundaries, and acceptance checks."],
+        "claimRefs": ["11111111-1111-4111-8111-111111111111"]
+      },
+      {
+        "sequence": 2,
+        "assetKind": "joan.photo-infographic.card.02",
+        "title": "Ship a vertical slice",
+        "body": "Choose the smallest end-to-end path that proves the system can work before expanding its scope.",
+        "visualDirection": "A thin highlighted slice through a larger layered system.",
+        "imagePrompt": "Editorial documentary photo of a narrow illuminated path through layered software architecture sketches, realistic desk scene, portrait composition, quiet high-contrast lighting.",
+        "altText": "A highlighted vertical slice crosses the layers of a software system.",
+        "textEquivalent": ["Prove one complete path before building every feature."],
+        "claimRefs": ["22222222-2222-4222-8222-222222222222"]
+      },
+      {
+        "sequence": 3,
+        "assetKind": "joan.photo-infographic.card.03",
+        "title": "Use tests as guardrails",
+        "body": "Autonomous coding becomes safer when tests define the expected behavior and expose regressions quickly.",
+        "visualDirection": "A test suite represented as guardrails around an automated build path.",
+        "imagePrompt": "Editorial documentary photo of automated software tests running on a monitor beside a protected build pipeline diagram, realistic workspace, portrait composition, crisp but human.",
+        "altText": "Automated tests form guardrails around a software build path.",
+        "textEquivalent": ["Tests make autonomous changes observable and safer to review."],
+        "claimRefs": ["33333333-3333-4333-8333-333333333333"]
+      },
+      {
+        "sequence": 4,
+        "assetKind": "joan.photo-infographic.card.04",
+        "title": "Design for effective agents",
+        "body": "Codebases become easier for agents when their structure, commands, tests, and conventions make the right action obvious.",
+        "visualDirection": "A well-labeled workshop where tools, instructions, and components are easy to find.",
+        "imagePrompt": "Editorial documentary photo of a well-organized software workshop with labeled tools, diagrams, and a visible test command, natural light, portrait composition, premium educational brand feel.",
+        "altText": "A well-organized software workspace makes tools and instructions easy to find.",
+        "textEquivalent": ["Make the repository legible: structure, commands, tests, and conventions should guide the agent."],
+        "claimRefs": ["44444444-4444-4444-8444-444444444444"]
+      }
+    ]
+  },
+  "assets": [
+    {
+      "kind": "joan.photo-infographic.card.01",
+      "mediaType": "image/svg+xml",
+      "bodyBase64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDgwIiBoZWlnaHQ9IjEzNTAiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxMTE4MjciLz48dGV4dCB4PSI2MCIgeT0iMTIwIiBmaWxsPSIjZmZmZmZmIiBmb250LXNpemU9IjcyIj5Kb2FuIGNhcmQgMTwvdGV4dD48L3N2Zz4=",
+      "inputChecksum": null
+    },
+    {
+      "kind": "joan.photo-infographic.card.02",
+      "mediaType": "image/svg+xml",
+      "bodyBase64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDgwIiBoZWlnaHQ9IjEzNTAiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxMTE4MjciLz48dGV4dCB4PSI2MCIgeT0iMTIwIiBmaWxsPSIjZmZmZmZmIiBmb250LXNpemU9IjcyIj5Kb2FuIGNhcmQgMjwvdGV4dD48L3N2Zz4=",
+      "inputChecksum": null
+    },
+    {
+      "kind": "joan.photo-infographic.card.03",
+      "mediaType": "image/svg+xml",
+      "bodyBase64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDgwIiBoZWlnaHQ9IjEzNTAiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxMTE4MjciLz48dGV4dCB4PSI2MCIgeT0iMTIwIiBmaWxsPSIjZmZmZmZmIiBmb250LXNpemU9IjcyIj5Kb2FuIGNhcmQgMzwvdGV4dD48L3N2Zz4=",
+      "inputChecksum": null
+    },
+    {
+      "kind": "joan.photo-infographic.card.04",
+      "mediaType": "image/svg+xml",
+      "bodyBase64": "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDgwIiBoZWlnaHQ9IjEzNTAiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMxMTE4MjciLz48dGV4dCB4PSI2MCIgeT0iMTIwIiBmaWxsPSIjZmZmZmZmIiBmb250LXNpemU9IjcyIj5Kb2FuIGNhcmQgNDwvdGV4dD48L3N2Zz4=",
+      "inputChecksum": null
+    }
+  ]
+}

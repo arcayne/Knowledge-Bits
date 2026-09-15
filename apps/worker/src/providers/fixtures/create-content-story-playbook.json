@@ -1,0 +1,416 @@
+{
+  "fixtureSchemaVersion": "knowledge-bits.fixture-provider.v1",
+  "parsedOutput": {
+    "kind": "nuglet.lesson.v1",
+    "schemaVersion": "1.1.0",
+    "payload": {
+      "materialization": "draft",
+      "contentModel": "story-playbook.v1",
+      "identity": {
+        "locale": "en-GB",
+        "topic": {
+          "label": "Focused work",
+          "categoryId": null
+        },
+        "tags": [
+          "focus",
+          "restart friction"
+        ],
+        "title": "Leave a clear way back",
+        "deck": "A visible next step makes interrupted work easier to resume.",
+        "slugSuggestion": "leave-a-clear-way-back"
+      },
+      "learning": {
+        "centralIdea": "A visible next step reduces restart friction.",
+        "whyItMatters": "Returning is easier when the next decision has already been made.",
+        "oneLineToKeep": "Leave a visible next step before you stop.",
+        "terminology": [
+          "restart marker"
+        ],
+        "action": {
+          "label": "Write the next step",
+          "instruction": "Write the next visible step and work on it for five minutes."
+        }
+      },
+      "socialPost": {
+        "platform": "cross-platform",
+        "text": "A visible next step makes it easier to return to interrupted work without starting over. #Focus #WorkHabits #Productivity"
+      },
+      "hero": {
+        "altText": "A single marked step beside an unfinished path.",
+        "accessibilityPurpose": "informative",
+        "mediaBrief": {
+          "concept": "Returning to focused work",
+          "metaphor": "One marked step on an unfinished path",
+          "compositionFamily": "asymmetrical-story"
+        }
+      },
+      "read": {
+        "story": {
+          "title": "The note beside the keyboard",
+          "estimatedMinutes": 4,
+          "blocks": [
+            {
+              "type": "opening",
+              "text": "Mara returned to a half-finished report without a restart marker and spent ten minutes reconstructing what she meant to do next. A visible next step reduces restart friction.",
+              "claimRefs": []
+            },
+            {
+              "type": "evidence",
+              "text": "A concrete next action can reduce the effort required to resume interrupted work.",
+              "claimRefs": [
+                "22222222-2222-4222-8222-222222222222"
+              ]
+            },
+            {
+              "type": "turning_point",
+              "text": "She began ending each work block with one line: Leave a visible next step before you stop.",
+              "claimRefs": [
+                "22222222-2222-4222-8222-222222222222"
+              ]
+            },
+            {
+              "type": "practical_bridge",
+              "text": "Write the next visible step and work on it for five minutes.",
+              "claimRefs": [
+                "22222222-2222-4222-8222-222222222222"
+              ]
+            }
+          ]
+        },
+        "playbook": {
+          "title": "Create a restart marker",
+          "estimatedMinutes": 4,
+          "principle": "A visible next step reduces restart friction.",
+          "whyItMatters": "Leave a visible next step before you stop, so returning does not begin with another planning pass.",
+          "steps": [
+            {
+              "id": "step-1",
+              "title": "Name the result",
+              "body": "State what the next small piece of progress should produce.",
+              "claimRefs": [
+                "22222222-2222-4222-8222-222222222222"
+              ]
+            },
+            {
+              "id": "step-2",
+              "title": "Make it visible",
+              "body": "Put the next step where you will see it when you return.",
+              "claimRefs": [
+                "22222222-2222-4222-8222-222222222222"
+              ]
+            },
+            {
+              "id": "step-3",
+              "title": "Start for five minutes",
+              "body": "Use the restart marker before deciding whether to continue longer.",
+              "claimRefs": [
+                "22222222-2222-4222-8222-222222222222"
+              ]
+            }
+          ],
+          "example": {
+            "title": "A useful marker",
+            "body": "Replace work on report with draft the first paragraph of the recommendation.",
+            "claimRefs": [
+              "22222222-2222-4222-8222-222222222222"
+            ]
+          },
+          "watchOuts": [
+            "Do not write a vague category such as email or planning; name the visible next step."
+          ],
+          "action": "Write the next visible step and work on it for five minutes."
+        }
+      },
+      "visual": {
+        "title": "The restart marker",
+        "altText": "A three-step sequence from stopping to leaving a marker to restarting.",
+        "textEquivalent": [
+          "Pause after a meaningful unit of work.",
+          "Write the next visible step.",
+          "Restart with that step for five minutes."
+        ],
+        "claimRefs": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "mediaBrief": {
+          "objective": "Show how a visible next step reduces restart friction.",
+          "structure": "three-step sequence"
+        }
+      },
+      "listen": {
+        "brief": {
+          "editorialBrief": {
+            "objective": "Explain the restart marker in a concise lesson.",
+            "tone": "warm and direct",
+            "keyPoints": [
+              "Name the next step.",
+              "Make it visible.",
+              "Restart for five minutes."
+            ]
+          }
+        },
+        "discussion": {
+          "editorialBrief": {
+            "objective": "Explore why interrupted work can feel difficult to resume.",
+            "tone": "practical and conversational",
+            "keyPoints": [
+              "Reduce the next decision.",
+              "Avoid vague restart markers."
+            ]
+          }
+        }
+      },
+      "quiz": {
+        "questions": [
+          {
+            "id": "q1",
+            "prompt": "Which note is the strongest restart marker?",
+            "options": [
+              {
+                "id": "a",
+                "text": "Work on report"
+              },
+              {
+                "id": "b",
+                "text": "Draft the first recommendation paragraph"
+              },
+              {
+                "id": "c",
+                "text": "Be productive"
+              }
+            ],
+            "correctOptionId": "b",
+            "rationale": "It names a visible next step that can be started immediately.",
+            "reviewConcept": "Concrete restart markers",
+            "claimRefs": [
+              "22222222-2222-4222-8222-222222222222"
+            ]
+          },
+          {
+            "id": "q2",
+            "prompt": "When should you create the restart marker?",
+            "options": [
+              {
+                "id": "a",
+                "text": "Before leaving the task"
+              },
+              {
+                "id": "b",
+                "text": "Only after forgetting the task"
+              },
+              {
+                "id": "c",
+                "text": "After completing every project"
+              }
+            ],
+            "correctOptionId": "a",
+            "rationale": "The marker preserves the next decision while the work is still clear.",
+            "reviewConcept": "Leave a visible next step before you stop",
+            "claimRefs": [
+              "22222222-2222-4222-8222-222222222222"
+            ]
+          },
+          {
+            "id": "q3",
+            "prompt": "What is the shared action?",
+            "options": [
+              {
+                "id": "a",
+                "text": "Plan the whole project again"
+              },
+              {
+                "id": "b",
+                "text": "Wait until motivation returns"
+              },
+              {
+                "id": "c",
+                "text": "Write the next visible step and work on it for five minutes"
+              }
+            ],
+            "correctOptionId": "c",
+            "rationale": "The action makes the restart marker concrete and immediately usable.",
+            "reviewConcept": "Shared practical action",
+            "claimRefs": [
+              "22222222-2222-4222-8222-222222222222"
+            ]
+          }
+        ]
+      },
+      "publicSources": [
+        {
+          "evidenceSourceId": "11111111-1111-4111-8111-111111111111",
+          "label": "Focused work evidence",
+          "publisher": "Example publisher"
+        }
+      ],
+      "claims": [
+        {
+          "claimId": "22222222-2222-4222-8222-222222222222",
+          "statement": "A concrete next action can reduce restart friction.",
+          "citations": [
+            {
+              "sourceId": "11111111-1111-4111-8111-111111111111",
+              "snapshotArtifactId": "$snapshotArtifactId:11111111-1111-4111-8111-111111111111",
+              "excerpt": "A defined next action lowers restart friction."
+            }
+          ]
+        }
+      ],
+      "claimCoverage": [
+        {
+          "path": "identity.title",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "learning.centralIdea",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "learning.whyItMatters",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "learning.oneLineToKeep",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "learning.action",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "read.story",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "read.playbook",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "visual",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "listen.brief",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "listen.discussion",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        },
+        {
+          "path": "quiz",
+          "claimIds": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      ]
+    }
+  },
+  "supportArtifacts": [
+    {
+      "kind": "generation.recipe.snapshot",
+      "mediaType": "application/json",
+      "bodyBase64": "eyJpZCI6Im51Z2xldC5sZXNzb24uc3RvcnkiLCJ2ZXJzaW9uIjoiMS4wLjAifQ==",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.lesson.story",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:28f221fd7c93b7622a869a2cdac9fa637f496a292263935d4745a30f8019d172",
+        "promptChecksum": "sha256:2a107b97c80eb4203edb922045d3c62c5e91871d6ccd8a9fbc30ddf7ce9f68de",
+        "model": "fixture-story-model",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.prompt.rendered",
+      "mediaType": "text/plain",
+      "bodyBase64": "UmVuZGVyIHRoZSBzY2hlbWEgMS4xLjAgc3RvcnkgZml4dHVyZS4=",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.lesson.story",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:28f221fd7c93b7622a869a2cdac9fa637f496a292263935d4745a30f8019d172",
+        "promptChecksum": "sha256:2a107b97c80eb4203edb922045d3c62c5e91871d6ccd8a9fbc30ddf7ce9f68de",
+        "model": "fixture-story-model",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.recipe.snapshot",
+      "mediaType": "application/json",
+      "bodyBase64": "eyJpZCI6Im51Z2xldC5sZXNzb24ucGxheWJvb2siLCJ2ZXJzaW9uIjoiMS4wLjAifQ==",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.lesson.playbook",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:939bcb0f1cd4b867b82e334f282a98f059c7d523a4311586fcf42fc8529ee837",
+        "promptChecksum": "sha256:94a6377f5c93958dabe2fc970f9985b74b9b3bdc1d212d7682088d884cb6f02b",
+        "model": "fixture-playbook-model",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.prompt.rendered",
+      "mediaType": "text/plain",
+      "bodyBase64": "UmVuZGVyIHRoZSBzY2hlbWEgMS4xLjAgcGxheWJvb2sgZml4dHVyZS4=",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.lesson.playbook",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:939bcb0f1cd4b867b82e334f282a98f059c7d523a4311586fcf42fc8529ee837",
+        "promptChecksum": "sha256:94a6377f5c93958dabe2fc970f9985b74b9b3bdc1d212d7682088d884cb6f02b",
+        "model": "fixture-playbook-model",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.recipe.snapshot",
+      "mediaType": "application/json",
+      "bodyBase64": "eyJpZCI6Im51Z2xldC5jaGFsbGVuZ2UiLCJ2ZXJzaW9uIjoiMS4wLjAifQ==",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.challenge",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:422834b48ef09aa287ec52b35a15b541c81a82bbe908bd0a870f2633c5ba0ad4",
+        "promptChecksum": "sha256:29d3980381569d12764c8699b5472e8fd5a13965c77eb3245500e4394ac03488",
+        "model": "fixture-challenge-model",
+        "referenceChecksums": []
+      }
+    },
+    {
+      "kind": "generation.prompt.rendered",
+      "mediaType": "text/plain",
+      "bodyBase64": "UmVuZGVyIHRoZSBzY2hlbWEgMS4xLjAgY2hhbGxlbmdlIGZpeHR1cmUu",
+      "inputChecksum": null,
+      "provenance": {
+        "recipeId": "nuglet.challenge",
+        "recipeVersion": "1.0.0",
+        "recipeChecksum": "sha256:422834b48ef09aa287ec52b35a15b541c81a82bbe908bd0a870f2633c5ba0ad4",
+        "promptChecksum": "sha256:29d3980381569d12764c8699b5472e8fd5a13965c77eb3245500e4394ac03488",
+        "model": "fixture-challenge-model",
+        "referenceChecksums": []
+      }
+    }
+  ]
+}

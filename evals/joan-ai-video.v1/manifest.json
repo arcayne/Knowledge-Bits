@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "joan-ai-video.v1",
+  "version": "1.0.0",
+  "cases": [
+    {"id": "briefing-compression-01", "checksum": "b10381143ab1c6e0a5d3f42f50b4f6be4c5faf653c4959515e3bf8d362275fea"},
+    {"id": "claim-grounding-01", "checksum": "1a588a84c80d21c9508194f083ff40286f12bebb45528978914936f5ef25bac7"},
+    {"id": "duration-01", "checksum": "833a4a6d5ca4c992f9507d0ba94987b80c940e6604a632e468e54664e3ede7a1"},
+    {"id": "infographic-grounding-01", "checksum": "591824d3c3bbb93101e447c0104466cec4ff300329e361d3ef55c372da6c407e"},
+    {"id": "infographic-readability-01", "checksum": "a1662f2e5a66e9ca8041c7083eb3affdf003ca6443dc00da104e1c69570480c0"},
+    {"id": "media-consistency-01", "checksum": "fc37279174a4369a0f175b31eb45ed0f7e384f2a7c8b92790487a0ca9704b568"},
+    {"id": "package-integrity-01", "checksum": "4f6ce9d116791e7be95334609b85fb1a96b66841a173a76f57acc0ed0fda0d89"},
+    {"id": "prompt-injection-01", "checksum": "bfb3e64f26ecf0ccf999ab93bcfb1290d2c91470bc779a8ba7f168dde49a98e8"},
+    {"id": "research-completeness-01", "checksum": "682c89c7bdddf696f61954f0d6197ee40d322e16e62c423e8fb14ad1ae4fae79"},
+    {"id": "social-attribution-01", "checksum": "bd1a58614b5864dea7d5561991510c0fc9c5d614b730401f92ed651de737f2dc"},
+    {"id": "source-boundary-01", "checksum": "b03fc07a731f6036424ed6752414d59db20eba1d8e3e9954bbeb8b1dc259df26"},
+    {"id": "unsupported-claims-01", "checksum": "b837f3902dd3cbeb9bbdda369b42077a3649e4668cc81f009d2e07377b20353d"}
+  ],
+  "corpusChecksum": "d6b29d99f93a1ce63888bedb176a2a3e3fb9ed3257d0cf13789d7dd28799cc74"
+}
