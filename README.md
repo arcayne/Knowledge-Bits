@@ -92,6 +92,18 @@ pnpm --filter @knowledge-bits/worker exec tsx src/index.ts
 
 The recipe-root example is a placeholder path only. Do not put provider credentials in source control.
 
+### NotebookLM provider
+
+The production worker invokes the `nlm` command from the external [`notebooklm-mcp-cli`](https://github.com/jacob-bd/gemini-notebook-mcp-cli) project. Knowledge Bits does not vendor this tool or include it in the Node workspace dependencies. Install it on the worker host, then authenticate it with the Google account that owns the NotebookLM notebooks:
+
+```bash
+uv tool install notebooklm-mcp-cli
+nlm --version
+nlm login
+```
+
+The worker uses `nlm` by default. Set `NOTEBOOKLM_COMMAND` when the executable is installed at a different path. This integration depends on NotebookLM's undocumented interfaces, so the external CLI and its authentication flow can change independently of Knowledge Bits. The local demo uses fixtures and does not require this provider.
+
 ## Delivery
 
 Production delivery uses a configured destination adapter. Keep destination credentials outside source control and configure the adapter through the deployment environment; endpoint values are deployment-specific and are not documented here.
